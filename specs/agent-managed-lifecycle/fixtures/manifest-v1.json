@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "path": "runtime/study-repository",
+    "model": null
+  },
+  "courses": [
+    {
+      "course_id": "anatomy-example",
+      "title": "Anatomy example",
+      "language": "en",
+      "exam_date": null,
+      "learning_goals": [
+        "Explain the supplied source material"
+      ],
+      "assessment_styles": [],
+      "sources": [
+        {
+          "source_id": "anatomy-notes",
+          "path": "materials/anatomy-notes.md",
+          "title": "Anatomy notes",
+          "trust_level": 80,
+          "source_role": "course_material"
+        }
+      ]
+    }
+  ]
+}
