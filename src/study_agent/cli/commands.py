@@ -26,7 +26,7 @@ from study_agent.domain import (
 )
 from study_agent.domain._validation import JsonObject
 from study_agent.domain.course import CourseProfile, SourcePolicy, TerminologyPolicy
-from study_agent.domain.session import SessionStatus
+from study_agent.domain.session import SessionStatus, StudySessionRecord
 from study_agent.ingestion.projection import source_manifest
 from study_agent.sessions.events import grounded_answer_manifest
 
@@ -99,6 +99,12 @@ async def handle_course_create(
     return await _course_create(_required_repository(repository), request.values)
 
 
+async def handle_course_list(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _course_list(_required_repository(repository), request.values)
+
+
 async def handle_source_add(
     request: CommandRequest, repository: LocalRepository | None
 ) -> CommandOutcome:
@@ -121,6 +127,18 @@ async def handle_session_list(
     request: CommandRequest, repository: LocalRepository | None
 ) -> CommandOutcome:
     return await _session_list(_required_repository(repository), request.values)
+
+
+async def handle_session_start(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _session_start(_required_repository(repository), request.values)
+
+
+async def handle_session_get(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _session_get(_required_repository(repository), request.values)
 
 
 async def handle_session_resume(
@@ -217,6 +235,15 @@ async def _course_create(repository: LocalRepository, values: dict[str, object])
     )
     created = repository.course_service.create(profile, _context(course_id))
     return CommandOutcome("course.create", course_profile_manifest(created))
+
+
+async def _course_list(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:
+    del values
+    courses = tuple(
+        course_profile_manifest(profile)
+        for profile in repository.course_catalog.list_courses()
+    )
+    return CommandOutcome("course.list", {"courses": courses})
 
 
 async def _source_add(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:
@@ -334,6 +361,22 @@ async def _session_list(repository: LocalRepository, values: dict[str, object]) 
     return CommandOutcome("session.list", {"course_id": str(course_id), "sessions": sessions})
 
 
+async def _session_start(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:
+    course_id = CourseId(_text(values, "course_id"))
+    session_id = SessionId(_text(values, "session_id"))
+    session = repository.session_service.start(_context(course_id, session_id=session_id))
+    return CommandOutcome("session.start", _session_receipt(session))
+
+
+async def _session_get(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:
+    course_id = CourseId(_text(values, "course_id"))
+    session_id = SessionId(_text(values, "session_id"))
+    return CommandOutcome(
+        "session.get",
+        _session_receipt(repository.sessions.get_session(course_id, session_id)),
+    )
+
+
 async def _session_resume(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:
     course_id = CourseId(_text(values, "course_id"))
     session_id = SessionId(_text(values, "session_id"))
@@ -346,6 +389,22 @@ async def _session_resume(repository: LocalRepository, values: dict[str, object]
             "status": session.status.value,
         },
     )
+
+
+def _session_receipt(session: StudySessionRecord) -> JsonObject:
+    return {
+        "course_id": str(session.course_id),
+        "session_id": str(session.id),
+        "status": session.status.value,
+        "started_at": session.started_at.isoformat(),
+        "suspended_at": (
+            None if session.suspended_at is None else session.suspended_at.isoformat()
+        ),
+        "resumed_at": None if session.resumed_at is None else session.resumed_at.isoformat(),
+        "ended_at": None if session.ended_at is None else session.ended_at.isoformat(),
+        "interaction_count": len(session.interaction_ids),
+        "answer_count": len(session.run_ids),
+    }
 
 
 async def _export(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:

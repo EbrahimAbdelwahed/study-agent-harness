@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from study_agent.courses import course_profile_manifest
@@ -30,6 +30,21 @@ if TYPE_CHECKING:
 
 _VERSION = "1.0.0"
 _ERRORS = tuple(ToolErrorCode)
+
+
+@dataclass(slots=True)
+class GroundingAskServiceProvider:
+    """Resolve and retain the model-backed service when ``grounding.ask`` first runs."""
+
+    factory: Callable[[], GroundingAskService]
+    _service: GroundingAskService | None = field(default=None, init=False, repr=False)
+
+    def resolve(self) -> GroundingAskService:
+        service = self._service
+        if service is None:
+            service = self.factory()
+            self._service = service
+        return service
 
 
 def _object(properties: JsonObject, required: tuple[str, ...] = ()) -> JsonObject:
@@ -385,7 +400,7 @@ class SessionRecordNoteTool:
 
 @dataclass(frozen=True, slots=True)
 class GroundingAskTool:
-    service: GroundingAskService
+    service: GroundingAskService | GroundingAskServiceProvider
     manifest = _manifest(
         "grounding.ask",
         _object({"question": _TEXT}, ("question",)),
@@ -422,7 +437,12 @@ class GroundingAskTool:
     )
 
     async def invoke(self, arguments: JsonObject, context: ExecutionContext) -> ToolResult:
-        result = await self.service.ask(str(arguments["question"]), context)
+        service = (
+            self.service.resolve()
+            if isinstance(self.service, GroundingAskServiceProvider)
+            else self.service
+        )
+        result = await service.ask(str(arguments["question"]), context)
         events = tuple(_study_event(item) for item in result.events)
         record: JsonObject = {
             "id": str(result.answer.id),
@@ -449,7 +469,7 @@ def builtin_tools(
     retrieval: RetrievalPort,
     content: SourceContentPort,
     sessions: SessionService,
-    grounding: GroundingAskService,
+    grounding: GroundingAskService | GroundingAskServiceProvider,
 ) -> tuple[object, ...]:
     return (
         CourseGetTool(courses),

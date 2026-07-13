@@ -233,6 +233,19 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
             commands.handle_course_create,
         ),
         _registration(
+            "course.list",
+            "List canonical course profiles in deterministic order.",
+            OperationEffect.READ_ONLY,
+            RepositoryRequirement.REQUIRED,
+            NetworkRequirement.NEVER,
+            "not applicable",
+            "safe to retry",
+            (),
+            "study-agent --json --repository REPOSITORY course list",
+            _add_course_list,
+            commands.handle_course_list,
+        ),
+        _registration(
             "source.add",
             "Ingest a text or Markdown source.",
             OperationEffect.CANONICAL_WRITE,
@@ -279,12 +292,13 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
         ),
         _registration(
             "ask",
-            "Ask a grounded question.",
+            "Ask a grounded question; automatic identities are convenience-only.",
             OperationEffect.EXTERNAL_MODEL,
             RepositoryRequirement.REQUIRED,
             NetworkRequirement.MODEL_ONLY,
-            "host-supplied session and idempotency keys are retry-safe",
-            "retry only with the same explicit session-id and idempotency-key",
+            "agent-safe only with host-supplied session and idempotency identities",
+            "automatic identities are not crash-retry-safe; retry only with the same explicit "
+            "session-id, idempotency-key, and question",
             (
                 _argument("course_id", ArgumentKind.POSITIONAL, ArgumentValueType.STRING, True),
                 _argument("question", ArgumentKind.POSITIONAL, ArgumentValueType.STRING, True),
@@ -307,6 +321,38 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
             "study-agent --json --repository REPOSITORY session list COURSE_ID",
             _add_session_list,
             commands.handle_session_list,
+        ),
+        _registration(
+            "session.start",
+            "Start an explicitly identified session idempotently.",
+            OperationEffect.CANONICAL_WRITE,
+            RepositoryRequirement.REQUIRED,
+            NetworkRequirement.NEVER,
+            "stable host-supplied course and session identity",
+            "safe to retry with the same course and session identities",
+            (
+                _argument("course_id", ArgumentKind.POSITIONAL, ArgumentValueType.STRING, True),
+                _argument("session_id", ArgumentKind.OPTION, ArgumentValueType.STRING, True),
+            ),
+            "study-agent --json --repository REPOSITORY session get COURSE_ID SESSION_ID",
+            _add_session_start,
+            commands.handle_session_start,
+        ),
+        _registration(
+            "session.get",
+            "Read one explicitly identified session receipt.",
+            OperationEffect.READ_ONLY,
+            RepositoryRequirement.REQUIRED,
+            NetworkRequirement.NEVER,
+            "not applicable",
+            "safe to retry",
+            (
+                _argument("course_id", ArgumentKind.POSITIONAL, ArgumentValueType.STRING, True),
+                _argument("session_id", ArgumentKind.POSITIONAL, ArgumentValueType.STRING, True),
+            ),
+            "study-agent --json --repository REPOSITORY session get COURSE_ID SESSION_ID",
+            _add_session_get,
+            commands.handle_session_get,
         ),
         _registration(
             "session.resume",
@@ -521,6 +567,15 @@ def _add_course_create(topology: _ParserTopology) -> None:
     parser.add_argument("--assessment-style", dest="assessment_styles", action="append", default=[])
 
 
+def _add_course_list(topology: _ParserTopology) -> None:
+    _leaf(
+        topology.group("course", "course commands").add_parser(
+            "list", help="list canonical course profiles"
+        ),
+        "course.list",
+    )
+
+
 def _add_source_add(topology: _ParserTopology) -> None:
     parser = _leaf(
         topology.group("source", "source commands").add_parser(
@@ -562,6 +617,28 @@ def _add_session_list(topology: _ParserTopology) -> None:
         "session.list",
     )
     parser.add_argument("course_id")
+
+
+def _add_session_start(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("session", "session commands").add_parser(
+            "start", help="start an explicitly identified session"
+        ),
+        "session.start",
+    )
+    parser.add_argument("course_id")
+    parser.add_argument("--session-id", required=True)
+
+
+def _add_session_get(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("session", "session commands").add_parser(
+            "get", help="read one explicitly identified session"
+        ),
+        "session.get",
+    )
+    parser.add_argument("course_id")
+    parser.add_argument("session_id")
 
 
 def _add_session_resume(topology: _ParserTopology) -> None:

@@ -6,18 +6,17 @@ Last updated: 2026-07-13
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and slices 02 and 03. Slice 01 is complete. The next wave is slice 02 (offline
-tool composition) and slice 03 (explicit lifecycle/retry), which may proceed in
-parallel only with disjoint file ownership; both feed slice 04. Do not implement
-slice 05 or later before the complete 0.1.1 lane (slices 01–04) has passed its
+and slice 04. Slices 01–03 are complete. The current pickup is the operator
+skill, external-agent journey, packaging, and 0.1.1 release gates in slice 04.
+Do not implement slice 05 or later before the complete 0.1.1 lane has passed its
 release gates. Keep the exact seven v0.1 StudyTool contracts and fingerprints
 unchanged. Update this section before ending a pass.
 
 Global TODO:
 
 - [x] [01 — operation discovery](slices/01-agent-operation-discovery.md)
-- [ ] [02 — offline tool composition](slices/02-offline-tool-composition.md)
-- [ ] [03 — explicit lifecycle and retry](slices/03-explicit-lifecycle-and-retry.md)
+- [x] [02 — offline tool composition](slices/02-offline-tool-composition.md)
+- [x] [03 — explicit lifecycle and retry](slices/03-explicit-lifecycle-and-retry.md)
 - [ ] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
 - [ ] [05 — manifest contract](slices/05-manifest-contract.md)
 - [ ] [06 — safe repository target](slices/06-safe-repository-target.md)
@@ -25,10 +24,8 @@ Global TODO:
 - [ ] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
 - [ ] [09 — convergent apply and recovery](slices/09-convergent-apply-and-recovery.md)
 
-Active warning: `LocalRepository.study_tools()` currently resolves a model even
-when a caller only needs manifests or read tools. Slice 02 must correct this
-without changing the seven manifest fingerprints or moving behavior into a
-model adapter.
+Active warning: none in the 0.1.1 implementation lane. Slice 04 must still prove
+the installed-wheel external-agent journey and release compatibility.
 
 Evidence ledger:
 
@@ -36,6 +33,10 @@ Evidence ledger:
   CLI discovery landed with 425 tests passing, one opt-in network smoke skipped,
   Ruff and mypy green. Independent review found and closed the `model_setting`
   wire-type mismatch before approval.
+- Slices 02–03: offline lazy tool composition and explicit course/session
+  lifecycle landed together with 434 tests passing, one opt-in network smoke
+  skipped, Ruff and mypy green. Review closed retryable-conflict mapping and
+  callable-provider ambiguity before approval.
 
 ## Goal
 

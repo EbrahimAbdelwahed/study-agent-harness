@@ -27,6 +27,8 @@ from study_agent.adapters.sqlite import SQLiteEventStore, SQLiteFtsRetrieval, SQ
 from study_agent.adapters.system import SystemClock
 from study_agent.application import (
     GroundingAskConfiguration,
+    GroundingAskError,
+    GroundingAskErrorCode,
     GroundingAskService,
     GroundingEngineFactory,
 )
@@ -607,19 +609,34 @@ class LocalRepository:
     def study_tools(self, course_id: CourseId) -> StudyToolRegistry:
         """Compose the exact public tool registry from this repository's services."""
         from study_agent.tools import StudyToolRegistry
+        from study_agent.tools.builtin import GroundingAskServiceProvider
 
-        receipt = self.rebuild_retrieval()
         course = self.for_course(course_id)
-        grounding = self.grounding_service(
-            course_id, self.course_index_receipt(course_id, receipt)
-        )
+
+        def resolve_grounding() -> GroundingAskService:
+            if self.config.model is None:
+                raise GroundingAskError(
+                    GroundingAskErrorCode.INCOMPATIBLE_RUNTIME,
+                    "grounding requires a configured model adapter",
+                )
+            try:
+                receipt = self.rebuild_retrieval()
+                return self.grounding_service(
+                    course_id, self.course_index_receipt(course_id, receipt)
+                )
+            except ModelAdapterConfigurationError as error:
+                raise GroundingAskError(
+                    GroundingAskErrorCode.INCOMPATIBLE_RUNTIME,
+                    "grounding model configuration is unavailable",
+                ) from error
+
         return StudyToolRegistry(
             courses=self.courses,
             catalog=course.content,
             retrieval=course.retrieval,
             content=course.content,
             sessions=self.session_service,
-            grounding=grounding,
+            grounding=GroundingAskServiceProvider(resolve_grounding),
         )
 
     def close(self) -> None:

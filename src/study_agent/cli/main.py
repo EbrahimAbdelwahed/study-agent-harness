@@ -16,6 +16,7 @@ from typing import Never, cast
 from study_agent.application import GroundingAskError
 from study_agent.domain._validation import JsonObject
 from study_agent.ports import CourseNotFoundError, SessionNotFoundError
+from study_agent.sessions import RetryableSessionConflictError
 
 from .commands import SourceIndexError, _DeferredSigint, execute, execute_without_repository
 from .config import LocalConfigError, LocalRepositoryConfig, ModelAdapterConfig
@@ -131,6 +132,13 @@ def main(
         return 3
     except GroundingAskError as error:
         emit_error(error.code.value, str(error), json_mode=json_mode)
+        return 4
+    except RetryableSessionConflictError:
+        emit_error(
+            "retryable_conflict",
+            "session state changed concurrently; retry with the same host-supplied identity",
+            json_mode=json_mode,
+        )
         return 4
     except (OSError, RuntimeError):
         emit_error(

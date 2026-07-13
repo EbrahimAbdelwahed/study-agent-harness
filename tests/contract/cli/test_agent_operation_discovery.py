@@ -84,12 +84,21 @@ _PARSER_INVOCATIONS = {
         "--learning-goal",
         "Goal",
     ),
+    "course.list": ("course", "list"),
     "describe": ("describe",),
     "doctor": ("doctor",),
     "export": ("export", "course-1", "--output", "export"),
     "init": ("init", "repository"),
     "session.list": ("session", "list", "course-1"),
+    "session.get": ("session", "get", "course-1", "session-1"),
     "session.resume": ("session", "resume", "course-1", "session-1"),
+    "session.start": (
+        "session",
+        "start",
+        "course-1",
+        "--session-id",
+        "session-1",
+    ),
     "source.add": ("source", "add", "course-1", "source.md"),
     "source.list": ("source", "list", "course-1"),
     "tool.describe": ("tool", "describe", "grounding.ask"),
@@ -214,8 +223,8 @@ def test_each_discovered_command_maps_to_exactly_one_parser_leaf(
     assert len(parsed_names) == len(set(parsed_names))
 
     expected_groups = {
-        "course": "{create}",
-        "session": "{list,resume}",
+        "course": "{create,list}",
+        "session": "{list,start,get,resume}",
         "source": "{add,list}",
         "tool": "{list,describe}",
     }

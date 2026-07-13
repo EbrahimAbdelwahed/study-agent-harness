@@ -105,7 +105,9 @@ def _run(
     return code, json.loads(captured.out)
 
 
-def _run_in_fresh_process(counter: Path, *arguments: str) -> dict[str, Any]:
+def _run_in_fresh_process(
+    counter: Path, *arguments: str, expected_code: int = 0
+) -> dict[str, Any]:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join(
         (str(_PROJECT_ROOT / "src"), str(_PROJECT_ROOT))
@@ -126,7 +128,7 @@ def _run_in_fresh_process(counter: Path, *arguments: str) -> dict[str, Any]:
         capture_output=True,
         check=False,
     )
-    assert process.returncode == 0, process.stdout + process.stderr
+    assert process.returncode == expected_code, process.stdout + process.stderr
     assert process.stderr == ""
     assert process.stdout.count("\n") == 1
     value = json.loads(process.stdout)
@@ -198,24 +200,61 @@ def test_offline_release_journey_survives_restart_and_is_deterministic(
         "--idempotency-key",
         "ask-release-1",
     )
-    # Start canonically because an explicitly supplied session must already exist.
-    with LocalRepository.open(root, model_adapters=registry, environment={}) as repository:
-        repository.session_service.start(
-            ExecutionContext(
-                PrincipalKind.HUMAN,
-                "offline-host",
-                CourseId("course-anatomy"),
-                CorrelationId("correlation-session-start"),
-                session_id=SessionId("session-release"),
-            )
-        )
     counter = tmp_path / "model-calls.txt"
+    started = _run_in_fresh_process(
+        counter,
+        *base,
+        "session",
+        "start",
+        "course-anatomy",
+        "--session-id",
+        "session-release",
+    )
+    assert started["data"]["status"] == "active"
+    assert _run(
+        capsys,
+        registry,
+        *base,
+        "session",
+        "start",
+        "course-anatomy",
+        "--session-id",
+        "session-release",
+    ) == (0, started)
+    code, session = _run(
+        capsys,
+        registry,
+        *base,
+        "session",
+        "get",
+        "course-anatomy",
+        "session-release",
+    )
+    assert code == 0
+    assert session["data"] == started["data"]
+    # The first process succeeds canonically but its stdout is deliberately discarded.
+    _run_in_fresh_process(counter, *ask)
     first = _run_in_fresh_process(counter, *ask)
     assert first["data"]["answer"]["status"] == "answered"
     assert counter.read_text(encoding="utf-8") == "1"
 
     retried = _run_in_fresh_process(counter, *ask)
     assert retried == first
+    assert counter.read_text(encoding="utf-8") == "1"
+
+    conflict = _run_in_fresh_process(
+        counter,
+        *base,
+        "ask",
+        "course-anatomy",
+        "changed question",
+        "--session-id",
+        "session-release",
+        "--idempotency-key",
+        "ask-release-1",
+        expected_code=4,
+    )
+    assert conflict["error"]["code"] == "conflict"
     assert counter.read_text(encoding="utf-8") == "1"
 
     with LocalRepository.open(root, model_adapters=registry, environment={}) as repository:
