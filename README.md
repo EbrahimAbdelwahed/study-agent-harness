@@ -30,8 +30,7 @@ trusted execution context separately from model-proposed arguments; the
 without coupling it to an agent SDK.
 
 The reference CLI is another composition adapter over the same application
-services. It is not a second behaviour layer. The repository is intentionally
-isolated from Sbobby Web and other applications in the surrounding workspace.
+services. It is not a second behaviour layer.
 
 ## Install and first local workflow
 
