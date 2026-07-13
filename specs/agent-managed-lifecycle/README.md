@@ -6,10 +6,10 @@ Last updated: 2026-07-13
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and slice 07. Slices 01–06 are complete. The current pickup is the immutable,
-bounded source-snapshot boundary shared by procedural ingestion and future
-declarative reconciliation. Extract the existing CLI reader into the sole
-filesystem adapter; do not add lifecycle apply/plan behavior or a second reader.
+and slice 08. Slices 01–07 are complete. The current pickup is pure,
+deterministic lifecycle observation and planning over validated manifests,
+repository state and immutable source snapshots. Do not mutate repository state,
+re-read sources inside the planner, or implement apply/recovery before slice 09.
 Keep the exact seven v0.1 StudyTool contracts and fingerprints unchanged. Update
 this section before ending a pass.
 
@@ -21,13 +21,13 @@ Global TODO:
 - [x] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
 - [x] [05 — manifest contract](slices/05-manifest-contract.md)
 - [x] [06 — safe repository target](slices/06-safe-repository-target.md)
-- [ ] [07 — safe source snapshots](slices/07-safe-source-snapshots.md)
+- [x] [07 — safe source snapshots](slices/07-safe-source-snapshots.md)
 - [ ] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
 - [ ] [09 — convergent apply and recovery](slices/09-convergent-apply-and-recovery.md)
 
-Active warning: slice 07 owns all source-file opening and snapshot bounds. Do not
-leave the old CLI reader in place, add a lifecycle-specific reader, or introduce
-plan/status/apply behavior before slices 08–09.
+Active warning: slice 08 is observation-only. Plans and status may consume the
+shared source snapshots but cannot perform writes, model/network calls, direct
+SQLite access or acquire domain authority.
 
 Evidence ledger:
 
@@ -55,6 +55,10 @@ Evidence ledger:
   passed 592 tests with one opt-in network smoke skipped, Ruff and strict mypy.
   Semantic and security reviews approved after closing forged-target escape,
   stable-read, lock-replacement and crash-window hard-link findings.
+- Slice 07: the immutable strict-UTF-8 `SourceSnapshot` port, sole no-follow
+  filesystem reader and procedural CLI migration passed 682 tests with two
+  declared skips, Ruff and strict mypy. Semantic and security reviews approved
+  after closing explicit dot/traversal normalization and forged snapshot gaps.
 
 ## Goal
 

@@ -13,6 +13,7 @@ from hashlib import sha256
 from typing import Any, cast
 
 from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.ports.source_input import MAX_TOTAL_SOURCES
 from study_agent.repository_config import (
     LocalConfigError,
     LocalRepositoryConfig,
@@ -24,7 +25,6 @@ MANIFEST_SCHEMA_VERSION = 1
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_COURSES = 128
 MAX_SOURCES_PER_COURSE = 1024
-MAX_TOTAL_SOURCES = 4096
 MAX_SETTINGS_DEPTH = 16
 MAX_SETTINGS_NODES = 1024
 MAX_CONTAINER_MEMBERS = 256

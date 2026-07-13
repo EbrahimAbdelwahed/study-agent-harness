@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import signal
-import stat
 import threading
 from collections.abc import Mapping
 from datetime import date
@@ -13,7 +11,7 @@ from pathlib import Path
 from types import FrameType
 from uuid import uuid4
 
-from study_agent.adapters.filesystem import FilesystemExportWriter
+from study_agent.adapters.filesystem import FilesystemExportWriter, FilesystemSourceInput
 from study_agent.adapters.filesystem.lifecycle import load_lifecycle_manifest
 from study_agent.application import ExportService
 from study_agent.courses import course_profile_manifest
@@ -49,7 +47,6 @@ from .repository import (
 )
 
 _HOST_PRINCIPAL = "study-agent-cli"
-_MAX_SOURCE_BYTES = 16 * 1024 * 1024
 
 
 async def execute(
@@ -290,20 +287,18 @@ async def _course_list(repository: LocalRepository, values: dict[str, object]) -
 
 async def _source_add(repository: LocalRepository, values: dict[str, object]) -> CommandOutcome:
     course_id = CourseId(_text(values, "course_id"))
-    path, content = _read_source(repository.paths.root, _text(values, "path"))
-    try:
-        relative = path.relative_to(repository.paths.root.absolute())
-    except ValueError as error:
-        raise ValueError("source path must be inside the repository") from error
+    snapshot = FilesystemSourceInput(repository.paths.root).snapshot_explicit(
+        _text(values, "path")
+    )
     source_id = SourceId(
-        str(values.get("source_id") or _derived_id("source", relative.as_posix()))
+        str(values.get("source_id") or _derived_id("source", snapshot.relative_path))
     )
     course = repository.for_course(course_id)
     result = course.ingestion.ingest(
-        filename=path.name,
-        content=content,
+        filename=snapshot.filename,
+        content=snapshot.content,
         source_id=source_id,
-        title=str(values.get("title") or path.stem),
+        title=str(values.get("title") or Path(snapshot.filename).stem),
         trust_level=_integer(values, "trust_level"),
         source_role=_text(values, "source_role"),
         context=_context(course_id),
@@ -543,56 +538,6 @@ def _integer(values: dict[str, object], name: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{name} must be an integer")
     return value
-
-
-def _read_source(repository_root: Path, supplied: str) -> tuple[Path, bytes]:
-    root = repository_root.resolve(strict=True)
-    requested = Path(supplied).expanduser()
-    lexical = requested if requested.is_absolute() else root / requested
-    try:
-        lexical_relative = lexical.relative_to(root)
-    except ValueError as error:
-        raise ValueError("source path must be lexically inside the repository") from error
-    parts = lexical_relative.parts
-    if not parts or any(part in {"", ".", ".."} for part in parts):
-        raise ValueError("source path must be a direct lexical descendant")
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
-    opened_directories: list[int] = []
-    try:
-        current = os.open(root, directory_flags)
-        opened_directories.append(current)
-        for part in parts[:-1]:
-            current = os.open(part, directory_flags, dir_fd=current)
-            opened_directories.append(current)
-        descriptor = os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=current)
-        try:
-            before = os.fstat(descriptor)
-            if not stat.S_ISREG(before.st_mode):
-                raise ValueError("source path must be a regular file")
-            if before.st_size > _MAX_SOURCE_BYTES:
-                raise ValueError(f"source file exceeds the {_MAX_SOURCE_BYTES}-byte limit")
-            with os.fdopen(descriptor, "rb", closefd=False) as stream:
-                content = stream.read(_MAX_SOURCE_BYTES + 1)
-            after = os.fstat(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError as error:
-        raise ValueError(
-            "source path must contain only real repository directories and a regular file"
-        ) from error
-    finally:
-        for directory in reversed(opened_directories):
-            os.close(directory)
-    if len(content) > _MAX_SOURCE_BYTES:
-        raise ValueError(f"source file exceeds the {_MAX_SOURCE_BYTES}-byte limit")
-    if (
-        (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
-        or after.st_size != before.st_size
-        or after.st_size != len(content)
-    ):
-        raise ValueError("source file changed while it was being read")
-    return root.joinpath(*parts), content
 
 
 class _DeferredSigint:

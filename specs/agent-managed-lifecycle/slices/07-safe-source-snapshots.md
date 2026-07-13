@@ -2,6 +2,7 @@
 
 Release: 0.2
 Depends on: slices 05–06
+Status: Complete (2026-07-13)
 
 ## Contract unlocked
 
@@ -38,3 +39,18 @@ non-regular, invalid UTF-8, per-file, count, and total-byte adversarial fixtures
 
 Security-review the source boundary. Remote/archive acquisition requires a
 separate future adapter and ADR.
+
+Resolved: the trusted root remains explicit host authority; every declared
+component beneath it is opened no-follow and the complete source path is rebound
+after capture. Semantic and security review approved strict UTF-8 snapshot
+values, full file metadata checks, lexical dot/traversal rejection, bounds and
+the single-reader ownership model.
+
+## Completion evidence
+
+- Focused port, filesystem, CLI and architecture suite: 106 passed, one
+  sandbox-only pathname-socket skip.
+- Full offline-default suite: 682 passed, two declared skips (pathname socket in
+  sandbox and opt-in network model smoke).
+- Ruff and strict mypy: green across 180 source files.
+- CLI-private source I/O and duplicated bounds were deleted in the same pass.

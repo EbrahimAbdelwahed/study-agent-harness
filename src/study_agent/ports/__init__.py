@@ -32,6 +32,13 @@ from .retrieval import (
     retrieval_read_set_fingerprint,
 )
 from .session import AnswerNotFoundError, SessionNotFoundError, SessionViewPort
+from .source_input import (
+    MAX_SOURCE_BYTES,
+    MAX_TOTAL_SOURCE_BYTES,
+    MAX_TOTAL_SOURCES,
+    SourceInputPort,
+    SourceSnapshot,
+)
 from .storage import (
     BlobStore,
     EventSequenceConflictError,
@@ -42,6 +49,9 @@ from .storage import (
 from .tools import StudyTool
 
 __all__ = [
+    "MAX_SOURCE_BYTES",
+    "MAX_TOTAL_SOURCES",
+    "MAX_TOTAL_SOURCE_BYTES",
     "AnswerNotFoundError",
     "BlobStore",
     "CancellationToken",
@@ -74,6 +84,8 @@ __all__ = [
     "SessionNotFoundError",
     "SessionViewPort",
     "SourceContentPort",
+    "SourceInputPort",
+    "SourceSnapshot",
     "StructuredOutputConstraint",
     "StudyTool",
     "ToolCall",

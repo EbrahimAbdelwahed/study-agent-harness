@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,71 @@ def test_source_paths_outside_repository_and_symlinks_are_rejected(
         assert code == 2
         assert document["error"]["code"] == "invalid_request"
         assert "untrusted source" not in json.dumps(document)
+
+
+def test_relative_and_absolute_source_paths_capture_the_same_repository_bytes(
+    tmp_path: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    root = tmp_path / "repository"
+    _initialize_course(root, capsys)
+    content = b"# Cardiology\n\nThe mitral valve separates the left chambers.\n"
+    source = root / "materials" / "valves.md"
+    source.parent.mkdir()
+    source.write_bytes(content)
+    elsewhere = tmp_path / "process-cwd"
+    elsewhere.mkdir()
+    (elsewhere / "materials").mkdir()
+    (elsewhere / "materials" / "valves.md").write_bytes(b"wrong process bytes")
+    monkeypatch.chdir(elsewhere)
+
+    first_code, first = _run(
+        capsys,
+        "--repository",
+        str(root),
+        "source",
+        "add",
+        "course-a",
+        "materials/valves.md",
+    )
+    second_code, second = _run(
+        capsys,
+        "--repository",
+        str(root),
+        "source",
+        "add",
+        "course-a",
+        str(source),
+    )
+
+    assert first_code == second_code == 0
+    assert first["data"]["status"] == "emitted"
+    assert second["data"]["status"] == "idempotent"
+    expected_checksum = sha256(content).hexdigest()
+    for document in (first, second):
+        assert document["data"]["source"]["checksum_sha256"] == expected_checksum
+        assert document["data"]["source"]["byte_length"] == len(content)
+    assert first["data"]["source"] == second["data"]["source"]
+
+
+def test_source_add_rejects_dot_and_parent_path_components(
+    tmp_path: Path, capsys: Any
+) -> None:
+    root = tmp_path / "repository"
+    _initialize_course(root, capsys)
+    (root / "notes.md").write_text("bounded source", encoding="utf-8")
+
+    for declared in ("./notes.md", "nested/../notes.md"):
+        code, document = _run(
+            capsys,
+            "--repository",
+            str(root),
+            "source",
+            "add",
+            "course-a",
+            declared,
+        )
+        assert code == 2
+        assert document["error"]["code"] == "invalid_request"
 
 
 def test_course_isolation_export_determinism_and_doctor_replay(
