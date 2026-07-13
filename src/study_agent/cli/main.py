@@ -16,10 +16,14 @@ from typing import Never, cast
 from study_agent.application import GroundingAskError
 from study_agent.domain._validation import JsonObject
 from study_agent.ports import CourseNotFoundError, SessionNotFoundError
+from study_agent.repository_config import (
+    LocalConfigError,
+    LocalRepositoryConfig,
+    ModelAdapterConfig,
+)
 from study_agent.sessions import RetryableSessionConflictError
 
 from .commands import SourceIndexError, _DeferredSigint, execute, execute_without_repository
-from .config import LocalConfigError, LocalRepositoryConfig, ModelAdapterConfig
 from .output import CommandOutcome, emit_error, emit_success
 from .registry import CommandRequest, RepositoryRequirement, configure_parser, registration_for
 from .repository import (

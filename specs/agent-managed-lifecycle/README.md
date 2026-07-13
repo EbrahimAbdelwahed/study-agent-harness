@@ -6,12 +6,12 @@ Last updated: 2026-07-13
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and slice 05. Slices 01–04 are complete and the 0.1.1 release lane has passed
-its gates. The current pickup is the pure manifest contract: strict bounded
-parsing, canonicalization and fingerprinting plus effect-free `manifest
-schema|validate`. Do not open a repository or source, read credentials, invoke
-a model, or implement slice 06 or later. Keep the exact seven v0.1 StudyTool
-contracts and fingerprints unchanged. Update this section before ending a pass.
+and slice 06. Slices 01–05 are complete. The current pickup is the safe
+repository target boundary shared by procedural init and future declarative
+setup. Preserve lexical manifest paths until the dedicated no-follow resolver,
+and do not read declared sources or implement slice 07 or later. Keep the exact
+seven v0.1 StudyTool contracts and fingerprints unchanged. Update this section
+before ending a pass.
 
 Global TODO:
 
@@ -19,15 +19,15 @@ Global TODO:
 - [x] [02 — offline tool composition](slices/02-offline-tool-composition.md)
 - [x] [03 — explicit lifecycle and retry](slices/03-explicit-lifecycle-and-retry.md)
 - [x] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
-- [ ] [05 — manifest contract](slices/05-manifest-contract.md)
+- [x] [05 — manifest contract](slices/05-manifest-contract.md)
 - [ ] [06 — safe repository target](slices/06-safe-repository-target.md)
 - [ ] [07 — safe source snapshots](slices/07-safe-source-snapshots.md)
 - [ ] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
 - [ ] [09 — convergent apply and recovery](slices/09-convergent-apply-and-recovery.md)
 
-Active warning: slice 05 is a public, security-sensitive validation contract.
-It must remain structurally pure and effect-free; filesystem resolution belongs
-to slices 06–07.
+Active warning: slice 06 owns repository directory resolution/initialization.
+Do not reuse the manifest-file reader for directory targets and do not introduce
+source snapshot I/O before slice 07.
 
 Evidence ledger:
 
@@ -44,6 +44,12 @@ Evidence ledger:
   smoke skipped, Ruff, strict mypy, skill validation, wheel/sdist build, clean
   wheel install and deterministic offline journey. Semantic and security review
   approved the final no-follow/no-replace extraction and host-authority model.
+- Slice 05: the pure manifest values, bounded canonical parser/fingerprint,
+  neutral repository-config owner, stable no-follow manifest reader and
+  effect-free schema/validate commands passed 556 tests with one opt-in network
+  smoke skipped, Ruff and strict mypy. Architecture, semantic and security
+  review approved after closing special-file blocking, portable-path, behavior
+  vocabulary, reader-race coverage and single-owner findings.
 
 ## Goal
 

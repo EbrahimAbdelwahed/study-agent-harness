@@ -13,10 +13,9 @@ from typing import TYPE_CHECKING, Protocol
 from study_agent import __version__
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.operator_skill import skill_metadata
+from study_agent.repository_config import CONFIG_SCHEMA_VERSION
 from study_agent.tools.builtin import public_study_tool_manifests
 from study_agent.tools.contracts import ToolManifest
-
-from .config import CONFIG_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from .output import CommandOutcome
@@ -414,6 +413,40 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
             commands.handle_operator_skill,
         ),
         _registration(
+            "manifest.schema",
+            "Describe the closed lifecycle manifest v1 schema without file access.",
+            OperationEffect.READ_ONLY,
+            RepositoryRequirement.NONE,
+            NetworkRequirement.NEVER,
+            "not applicable",
+            "safe to retry",
+            (),
+            "study-agent --json manifest schema",
+            _add_manifest_schema,
+            commands.handle_manifest_schema,
+        ),
+        _registration(
+            "manifest.validate",
+            "Validate and fingerprint one bounded lifecycle manifest.",
+            OperationEffect.READ_ONLY,
+            RepositoryRequirement.NONE,
+            NetworkRequirement.NEVER,
+            "content-addressed by the canonical manifest fingerprint",
+            "safe to retry while the selected manifest is unchanged",
+            (
+                _argument(
+                    "path",
+                    ArgumentKind.POSITIONAL,
+                    ArgumentValueType.PATH,
+                    False,
+                    default_json="./study-agent.manifest.json",
+                ),
+            ),
+            "compare the reported fingerprint and counts",
+            _add_manifest_validate,
+            commands.handle_manifest_validate,
+        ),
+        _registration(
             "describe",
             "Describe the agent-operable harness contract.",
             OperationEffect.READ_ONLY,
@@ -686,6 +719,30 @@ def _add_operator_skill(topology: _ParserTopology) -> None:
         "operator.skill",
     )
     parser.add_argument("--output", required=True)
+
+
+def _add_manifest_schema(topology: _ParserTopology) -> None:
+    _leaf(
+        topology.group("manifest", "lifecycle manifest operations").add_parser(
+            "schema", help="describe the closed lifecycle manifest v1 schema"
+        ),
+        "manifest.schema",
+    )
+
+
+def _add_manifest_validate(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("manifest", "lifecycle manifest operations").add_parser(
+            "validate", help="validate and fingerprint a lifecycle manifest"
+        ),
+        "manifest.validate",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        default=Path("./study-agent.manifest.json"),
+    )
 
 
 def _add_describe(topology: _ParserTopology) -> None:

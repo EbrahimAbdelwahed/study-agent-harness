@@ -14,6 +14,7 @@ from types import FrameType
 from uuid import uuid4
 
 from study_agent.adapters.filesystem import FilesystemExportWriter
+from study_agent.adapters.filesystem.lifecycle import load_lifecycle_manifest
 from study_agent.application import ExportService
 from study_agent.courses import course_profile_manifest
 from study_agent.domain import (
@@ -28,10 +29,11 @@ from study_agent.domain._validation import JsonObject
 from study_agent.domain.course import CourseProfile, SourcePolicy, TerminologyPolicy
 from study_agent.domain.session import SessionStatus, StudySessionRecord
 from study_agent.ingestion.projection import source_manifest
+from study_agent.lifecycle import manifest_schema
 from study_agent.operator_skill import extract_skill
+from study_agent.repository_config import EMPTY_CONFIG, LocalRepositoryConfig
 from study_agent.sessions.events import grounded_answer_manifest
 
-from .config import EMPTY_CONFIG, LocalRepositoryConfig
 from .output import CommandOutcome
 from .registry import (
     CommandRequest,
@@ -167,6 +169,35 @@ def handle_operator_skill(
         raise RuntimeError("operator skill extraction cannot use a repository")
     return CommandOutcome(
         "operator.skill", extract_skill(Path(_text(request.values, "output")))
+    )
+
+
+def handle_manifest_schema(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    del request
+    if repository is not None:
+        raise RuntimeError("manifest schema cannot use a repository")
+    return CommandOutcome("manifest.schema", {"schema": manifest_schema()})
+
+
+def handle_manifest_validate(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("manifest validation cannot use a repository")
+    raw_path = request.values.get("path")
+    if not isinstance(raw_path, Path):
+        raise ValueError("manifest path is invalid")
+    manifest = load_lifecycle_manifest(raw_path)
+    return CommandOutcome(
+        "manifest.validate",
+        {
+            "schema_version": manifest.schema_version,
+            "manifest_fingerprint": manifest.fingerprint,
+            "course_count": len(manifest.courses),
+            "source_count": manifest.source_count,
+        },
     )
 
 

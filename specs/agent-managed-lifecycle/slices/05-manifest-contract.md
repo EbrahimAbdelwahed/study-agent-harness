@@ -2,6 +2,7 @@
 
 Release: 0.2
 Depends on: released slice 04
+Status: Complete (2026-07-13)
 
 ## Contract unlocked
 

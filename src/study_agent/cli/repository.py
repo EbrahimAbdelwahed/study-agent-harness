@@ -56,6 +56,11 @@ from study_agent.playbooks.builtin import GROUNDED_ANSWER_FLOW
 from study_agent.ports import IndexReceipt, ModelCapabilities, ModelPort
 from study_agent.ports.retrieval import RetrievalDocument, retrieval_catalog_fingerprint
 from study_agent.prompts import GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer
+from study_agent.repository_config import (
+    CONFIG_FILENAME,
+    LocalRepositoryConfig,
+    ModelAdapterConfig,
+)
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import (
     GroundedSessionFinalizer,
@@ -66,8 +71,6 @@ from study_agent.sessions import (
 from study_agent.skills import ArtifactReference, SemanticVersion
 from study_agent.skills.builtin import GROUNDED_ANSWER_SKILL
 from study_agent.state import EventRegistry
-
-from .config import CONFIG_FILENAME, LocalRepositoryConfig, ModelAdapterConfig
 
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry

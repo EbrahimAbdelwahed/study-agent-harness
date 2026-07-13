@@ -13,7 +13,8 @@ from study_agent.sessions import RetryableSessionConflictError
 def test_parser_exposes_only_approved_top_level_commands() -> None:
     help_text = build_parser().format_help()
     assert (
-        "{init,course,source,ask,session,export,doctor,operator,describe,tool}" in help_text
+        "{init,course,source,ask,session,export,doctor,operator,manifest,describe,tool}"
+        in help_text
     )
 
 
