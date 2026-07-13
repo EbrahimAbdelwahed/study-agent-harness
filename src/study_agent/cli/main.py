@@ -17,9 +17,10 @@ from study_agent.application import GroundingAskError
 from study_agent.domain._validation import JsonObject
 from study_agent.ports import CourseNotFoundError, SessionNotFoundError
 
-from .commands import CommandRequest, SourceIndexError, _DeferredSigint, execute
+from .commands import SourceIndexError, _DeferredSigint, execute, execute_without_repository
 from .config import LocalConfigError, LocalRepositoryConfig, ModelAdapterConfig
 from .output import CommandOutcome, emit_error, emit_success
+from .registry import CommandRequest, RepositoryRequirement, configure_parser, registration_for
 from .repository import (
     LocalRepositoryError,
     ModelAdapterConfigurationError,
@@ -40,63 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(prog="study-agent", description="Local event-sourced study harness")
     parser.add_argument("--repository", type=Path, default=Path.cwd(), help="repository root")
     parser.add_argument("--json", action="store_true", help="emit one JSON document")
-    sub = parser.add_subparsers(dest="group", required=True)
-
-    init = sub.add_parser("init", help="initialize an offline local repository")
-    init.add_argument("directory", type=Path)
-    init.add_argument("--model-adapter")
-    init.add_argument(
-        "--model-setting",
-        action="append",
-        default=[],
-        metavar="NAME=JSON",
-        help="technical adapter setting; repeat for multiple values",
-    )
-    init.add_argument("--credential-env", help="environment-variable name, never its value")
-
-    course = sub.add_parser("course", help="course commands").add_subparsers(
-        dest="action", required=True
-    )
-    create = course.add_parser("create", help="create an immutable course profile")
-    create.add_argument("--course-id")
-    create.add_argument("--title", required=True)
-    create.add_argument("--language", default="en")
-    create.add_argument("--exam-date")
-    create.add_argument("--learning-goal", dest="learning_goals", action="append", required=True)
-    create.add_argument("--assessment-style", dest="assessment_styles", action="append", default=[])
-
-    source = sub.add_parser("source", help="source commands").add_subparsers(
-        dest="action", required=True
-    )
-    add = source.add_parser("add", help="ingest a text or Markdown source")
-    add.add_argument("course_id")
-    add.add_argument("path")
-    add.add_argument("--source-id")
-    add.add_argument("--title")
-    add.add_argument("--trust-level", type=int, default=50)
-    add.add_argument("--source-role", default="course_material")
-    listing = source.add_parser("list", help="list canonical source revisions")
-    listing.add_argument("course_id")
-
-    ask = sub.add_parser("ask", help="ask a grounded question")
-    ask.add_argument("course_id")
-    ask.add_argument("question")
-    ask.add_argument("--session-id")
-    ask.add_argument("--idempotency-key")
-
-    session = sub.add_parser("session", help="session commands").add_subparsers(
-        dest="action", required=True
-    )
-    session_list = session.add_parser("list", help="list sessions for a course")
-    session_list.add_argument("course_id")
-    resume = session.add_parser("resume", help="resume an explicitly identified session")
-    resume.add_argument("course_id")
-    resume.add_argument("session_id")
-
-    export = sub.add_parser("export", help="write deterministic export v1")
-    export.add_argument("course_id")
-    export.add_argument("--output", required=True)
-    sub.add_parser("doctor", help="run offline integrity diagnostics")
+    configure_parser(parser)
     return parser
 
 
@@ -126,18 +71,21 @@ def main(
         namespace = build_parser().parse_args(parse_arguments)
         namespace.json = json_mode
         request = _request(namespace)
+        registration = registration_for(request.name)
         # Auto-session creation and its run live in separate durable stores. Treat the
         # complete authoritative host operation, including its success emission, as one
         # narrow SIGINT-deferred region: success wins once canonical work has committed.
         with _DeferredSigint(enabled=_automatic_session_ask(request)):
-            if model_adapters is None and environment is None:
+            if registration.repository is RepositoryRequirement.NONE:
+                outcome = execute_without_repository(request)
+            elif model_adapters is None and environment is None:
                 outcome = asyncio.run(execute(request))
             else:
                 outcome = asyncio.run(
                     execute(
                         request,
                         model_adapters=model_adapters,
-                        environment=None if environment is None else dict(environment),
+                        environment=environment,
                     )
                 )
             emit_success(outcome, json_mode=json_mode)
@@ -198,16 +146,12 @@ def _request(namespace: argparse.Namespace) -> CommandRequest:
     values = vars(namespace).copy()
     repository = Path(values.pop("repository"))
     values.pop("json", None)
-    group = str(values.pop("group"))
-    action = values.pop("action", None)
-    if group == "init":
+    values.pop("group", None)
+    values.pop("action", None)
+    name = str(values.pop("command_name"))
+    if name == "init":
         repository = Path(values.pop("directory"))
         values["config"] = _init_config(values)
-        name = "init"
-    elif action is not None:
-        name = f"{group}.{action}"
-    else:
-        name = group
     return CommandRequest(repository, name, values)
 
 

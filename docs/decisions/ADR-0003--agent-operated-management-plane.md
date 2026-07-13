@@ -1,7 +1,7 @@
 # ADR-0003: Agent-operated management intent does not own domain state
 
 Date: 2026-07-13
-Status: Proposed
+Status: Accepted
 
 ## Context
 

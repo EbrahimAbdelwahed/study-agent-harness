@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from study_agent.application.grounding_ask import GroundingAskService, GroundingStudyEvent
 from study_agent.courses import course_profile_manifest
 from study_agent.domain import ChunkId, Citation, ExecutionContext, RevisionId, SourceId, SourceKind
 from study_agent.domain._validation import JsonObject, freeze_object
@@ -25,6 +24,9 @@ from .contracts import (
     ToolManifest,
     ToolResult,
 )
+
+if TYPE_CHECKING:
+    from study_agent.application.grounding_ask import GroundingAskService, GroundingStudyEvent
 
 _VERSION = "1.0.0"
 _ERRORS = tuple(ToolErrorCode)
@@ -458,6 +460,20 @@ def builtin_tools(
         SessionRecordNoteTool(sessions),
         GroundingAskTool(grounding),
     )
+
+
+def public_study_tool_manifests() -> tuple[ToolManifest, ...]:
+    """Return the exact public manifests without composing repositories or models."""
+    manifests = (
+        CourseGetTool.manifest,
+        SourceListTool.manifest,
+        SourceSearchTool.manifest,
+        CitationResolveTool.manifest,
+        SessionGetContextTool.manifest,
+        SessionRecordNoteTool.manifest,
+        GroundingAskTool.manifest,
+    )
+    return tuple(sorted(manifests, key=lambda item: item.name))
 
 
 def _citation_json(citation: Citation) -> JsonObject:

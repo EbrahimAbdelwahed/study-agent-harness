@@ -2,6 +2,7 @@
 
 Release: 0.1.1
 Depends on: none
+Status: Complete (2026-07-13)
 
 ## Contract unlocked
 

@@ -1,19 +1,21 @@
 # Agent-managed harness lifecycle
 
-Status: Draft for owner approval
+Status: Approved — implementation in progress
 Last updated: 2026-07-13
 
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and every slice referenced below. The current pickup point is slice 01. Do not
-implement slice 05 or later before the complete 0.1.1 lane (slices 01–04) has
-passed its release gates. Keep the exact seven v0.1 StudyTool contracts and
-their fingerprints unchanged. Update this section before ending a pass.
+and slices 02 and 03. Slice 01 is complete. The next wave is slice 02 (offline
+tool composition) and slice 03 (explicit lifecycle/retry), which may proceed in
+parallel only with disjoint file ownership; both feed slice 04. Do not implement
+slice 05 or later before the complete 0.1.1 lane (slices 01–04) has passed its
+release gates. Keep the exact seven v0.1 StudyTool contracts and fingerprints
+unchanged. Update this section before ending a pass.
 
 Global TODO:
 
-- [ ] [01 — operation discovery](slices/01-agent-operation-discovery.md)
+- [x] [01 — operation discovery](slices/01-agent-operation-discovery.md)
 - [ ] [02 — offline tool composition](slices/02-offline-tool-composition.md)
 - [ ] [03 — explicit lifecycle and retry](slices/03-explicit-lifecycle-and-retry.md)
 - [ ] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
@@ -27,6 +29,13 @@ Active warning: `LocalRepository.study_tools()` currently resolves a model even
 when a caller only needs manifests or read tools. Slice 02 must correct this
 without changing the seven manifest fingerprints or moving behavior into a
 model adapter.
+
+Evidence ledger:
+
+- Slice 01: `agent-operations@1`, static StudyTool discovery, and repository-free
+  CLI discovery landed with 425 tests passing, one opt-in network smoke skipped,
+  Ruff and mypy green. Independent review found and closed the `model_setting`
+  wire-type mismatch before approval.
 
 ## Goal
 

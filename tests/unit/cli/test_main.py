@@ -11,7 +11,9 @@ from study_agent.cli.output import CommandOutcome
 
 def test_parser_exposes_only_approved_top_level_commands() -> None:
     help_text = build_parser().format_help()
-    assert "{init,course,source,ask,session,export,doctor}" in help_text
+    assert (
+        "{init,course,source,ask,session,export,doctor,describe,tool}" in help_text
+    )
 
 
 def test_no_color_disables_color(monkeypatch: object) -> None:

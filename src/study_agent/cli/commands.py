@@ -6,7 +6,7 @@ import os
 import signal
 import stat
 import threading
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import date
 from hashlib import sha256
 from pathlib import Path
@@ -32,6 +32,13 @@ from study_agent.sessions.events import grounded_answer_manifest
 
 from .config import EMPTY_CONFIG, LocalRepositoryConfig
 from .output import CommandOutcome
+from .registry import (
+    CommandRequest,
+    RepositoryRequirement,
+    agent_operations_manifest,
+    public_study_tool_entries,
+    registration_for,
+)
 from .repository import (
     LocalRepository,
     ModelAdapterRegistry,
@@ -42,18 +49,11 @@ _HOST_PRINCIPAL = "study-agent-cli"
 _MAX_SOURCE_BYTES = 16 * 1024 * 1024
 
 
-@dataclass(frozen=True, slots=True)
-class CommandRequest:
-    repository: Path
-    name: str
-    values: dict[str, object]
-
-
 async def execute(
     request: CommandRequest,
     *,
     model_adapters: ModelAdapterRegistry | None = None,
-    environment: dict[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> CommandOutcome:
     """Execute through the production composition root.
 
@@ -61,24 +61,130 @@ async def execute(
     deliberately supplies neither argument, so test or embedding adapters can never
     become an implicit production fallback.
     """
-    if request.name == "init":
-        return _init(request)
+    registration = registration_for(request.name)
+    if registration.repository is RepositoryRequirement.NONE:
+        result = registration.handler(request, None)
+        return result if isinstance(result, CommandOutcome) else await result
     with LocalRepository.open(
         request.repository,
         model_adapters=model_adapters,
         environment=environment,
     ) as repository:
-        handlers = {
-            "course.create": _course_create,
-            "source.add": _source_add,
-            "source.list": _source_list,
-            "ask": _ask,
-            "session.list": _session_list,
-            "session.resume": _session_resume,
-            "export": _export,
-            "doctor": _doctor,
-        }
-        return await handlers[request.name](repository, request.values)
+        result = registration.handler(request, repository)
+        return result if isinstance(result, CommandOutcome) else await result
+
+
+def execute_without_repository(request: CommandRequest) -> CommandOutcome:
+    """Execute a synchronous repository-free operation without creating an event loop."""
+    registration = registration_for(request.name)
+    if registration.repository is not RepositoryRequirement.NONE:
+        raise RuntimeError("command requires repository-backed execution")
+    result = registration.handler(request, None)
+    if not isinstance(result, CommandOutcome):
+        raise RuntimeError("repository-free command must use a synchronous handler")
+    return result
+
+
+def handle_init(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("init cannot execute through an open repository")
+    return _init(request)
+
+
+async def handle_course_create(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _course_create(_required_repository(repository), request.values)
+
+
+async def handle_source_add(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _source_add(_required_repository(repository), request.values)
+
+
+async def handle_source_list(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _source_list(_required_repository(repository), request.values)
+
+
+async def handle_ask(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _ask(_required_repository(repository), request.values)
+
+
+async def handle_session_list(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _session_list(_required_repository(repository), request.values)
+
+
+async def handle_session_resume(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _session_resume(_required_repository(repository), request.values)
+
+
+async def handle_export(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _export(_required_repository(repository), request.values)
+
+
+async def handle_doctor(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    return await _doctor(_required_repository(repository), request.values)
+
+
+def handle_describe(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    del request
+    if repository is not None:
+        raise RuntimeError("describe cannot execute through an open repository")
+    return CommandOutcome("describe", agent_operations_manifest())
+
+
+def handle_tool_list(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    del request
+    if repository is not None:
+        raise RuntimeError("tool discovery cannot execute through an open repository")
+    return CommandOutcome("tool.list", {"tools": public_study_tool_entries()})
+
+
+def handle_tool_describe(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("tool discovery cannot execute through an open repository")
+    name = _text(request.values, "name")
+    try:
+        entry = next(
+            item
+            for item in public_study_tool_entries()
+            if _tool_entry_name(item) == name
+        )
+    except StopIteration as error:
+        raise FileNotFoundError(name) from error
+    return CommandOutcome("tool.describe", {"tool": entry})
+
+
+def _required_repository(repository: LocalRepository | None) -> LocalRepository:
+    if repository is None:
+        raise RuntimeError("command requires an open repository")
+    return repository
+
+
+def _tool_entry_name(entry: JsonObject) -> object:
+    manifest = entry.get("manifest")
+    return manifest.get("name") if isinstance(manifest, Mapping) else None
 
 
 def _init(request: CommandRequest) -> CommandOutcome:
@@ -410,4 +516,4 @@ class _DeferredSigint:
             signal.signal(signal.SIGINT, self._previous)
 
 
-__all__ = ["CommandRequest", "SourceIndexError", "execute"]
+__all__ = ["CommandRequest", "SourceIndexError", "execute", "execute_without_repository"]
