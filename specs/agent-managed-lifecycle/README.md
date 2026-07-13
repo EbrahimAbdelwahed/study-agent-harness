@@ -6,12 +6,12 @@ Last updated: 2026-07-13
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and slice 06. Slices 01–05 are complete. The current pickup is the safe
-repository target boundary shared by procedural init and future declarative
-setup. Preserve lexical manifest paths until the dedicated no-follow resolver,
-and do not read declared sources or implement slice 07 or later. Keep the exact
-seven v0.1 StudyTool contracts and fingerprints unchanged. Update this section
-before ending a pass.
+and slice 07. Slices 01–06 are complete. The current pickup is the immutable,
+bounded source-snapshot boundary shared by procedural ingestion and future
+declarative reconciliation. Extract the existing CLI reader into the sole
+filesystem adapter; do not add lifecycle apply/plan behavior or a second reader.
+Keep the exact seven v0.1 StudyTool contracts and fingerprints unchanged. Update
+this section before ending a pass.
 
 Global TODO:
 
@@ -20,14 +20,14 @@ Global TODO:
 - [x] [03 — explicit lifecycle and retry](slices/03-explicit-lifecycle-and-retry.md)
 - [x] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
 - [x] [05 — manifest contract](slices/05-manifest-contract.md)
-- [ ] [06 — safe repository target](slices/06-safe-repository-target.md)
+- [x] [06 — safe repository target](slices/06-safe-repository-target.md)
 - [ ] [07 — safe source snapshots](slices/07-safe-source-snapshots.md)
 - [ ] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
 - [ ] [09 — convergent apply and recovery](slices/09-convergent-apply-and-recovery.md)
 
-Active warning: slice 06 owns repository directory resolution/initialization.
-Do not reuse the manifest-file reader for directory targets and do not introduce
-source snapshot I/O before slice 07.
+Active warning: slice 07 owns all source-file opening and snapshot bounds. Do not
+leave the old CLI reader in place, add a lifecycle-specific reader, or introduce
+plan/status/apply behavior before slices 08–09.
 
 Evidence ledger:
 
@@ -50,6 +50,11 @@ Evidence ledger:
   smoke skipped, Ruff and strict mypy. Architecture, semantic and security
   review approved after closing special-file blocking, portable-path, behavior
   vocabulary, reader-race coverage and single-owner findings.
+- Slice 06: the descriptor-anchored repository target resolver and initializer,
+  no-replace config publication, exact-inode rollback and CLI ownership migration
+  passed 592 tests with one opt-in network smoke skipped, Ruff and strict mypy.
+  Semantic and security reviews approved after closing forged-target escape,
+  stable-read, lock-replacement and crash-window hard-link findings.
 
 ## Goal
 

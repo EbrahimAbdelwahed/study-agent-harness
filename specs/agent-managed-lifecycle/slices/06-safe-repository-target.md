@@ -2,6 +2,7 @@
 
 Release: 0.2
 Depends on: slice 05
+Status: Complete (2026-07-13)
 
 ## Contract unlocked
 
@@ -40,3 +41,16 @@ parents, parent replacement during creation, and a non-empty incompatible target
 
 Security-review the target-directory threat model. Extra roots remain explicit
 trusted-host inputs and are never read from manifest content.
+
+Resolved: semantic and security review approved descriptor-relative mutation,
+full-chain identity rebinding, no-replace hard-link publication, exact-inode
+rollback and trusted-host lexical compatibility. Manifest tails remain strict;
+explicit procedural paths are lexically normalized before no-follow traversal.
+
+## Completion evidence
+
+- Focused resolver, race, CLI and architecture suite: 54 passed.
+- Full offline-default suite: 592 passed, one opt-in network smoke skipped.
+- Ruff and strict mypy: green across the repository.
+- Security review closed forged public targets, stable config metadata, exact
+  lock ownership and interrupted hard-link alias recovery before approval.

@@ -71,3 +71,55 @@ def test_lifecycle_adds_no_study_tools_and_exact_seven_surface_is_unchanged() ->
         "source.search",
     )
     assert len({item.identity for item in manifests}) == 7
+
+
+def test_repository_target_adapter_owns_the_boundary_without_forbidden_imports() -> None:
+    adapter = ROOT / "adapters" / "filesystem" / "repository_target.py"
+    forbidden = (
+        "study_agent.application",
+        "study_agent.cli",
+        "study_agent.courses",
+        "study_agent.domain",
+        "study_agent.ingestion",
+        "study_agent.lifecycle",
+        "study_agent.ports",
+        "study_agent.retrieval",
+        "study_agent.sessions",
+        "study_agent.tools",
+        "study_agent.adapters.model",
+        "openai",
+        "anthropic",
+        "deepseek",
+        "httpx",
+        "requests",
+        "socket",
+        "sqlite3",
+    )
+
+    imports = _imports(adapter)
+
+    assert not {
+        item
+        for item in imports
+        if any(item == prefix or item.startswith(prefix + ".") for prefix in forbidden)
+    }
+
+
+def test_cli_repository_delegates_initialization_to_filesystem_adapter() -> None:
+    path = ROOT / "cli" / "repository.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    locally_defined = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    adapter_imports = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "study_agent.adapters.filesystem"
+        for alias in node.names
+    }
+
+    assert "initialize_local_repository" in adapter_imports
+    assert "initialize_local_repository" not in locally_defined

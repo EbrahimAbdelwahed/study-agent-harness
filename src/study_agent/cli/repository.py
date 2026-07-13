@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import fcntl
 import os
-import stat
 from collections.abc import Callable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol
 
-from study_agent.adapters.filesystem import FilesystemBlobStore
+from study_agent.adapters.filesystem import (
+    FilesystemBlobStore,
+    LocalRepositoryError,
+    LocalRepositoryPaths,
+    initialize_local_repository,
+    validate_local_repository_layout,
+)
 from study_agent.adapters.model import (
     ADAPTER_ID as OPENAI_COMPATIBLE_ADAPTER_ID,
 )
@@ -56,11 +59,7 @@ from study_agent.playbooks.builtin import GROUNDED_ANSWER_FLOW
 from study_agent.ports import IndexReceipt, ModelCapabilities, ModelPort
 from study_agent.ports.retrieval import RetrievalDocument, retrieval_catalog_fingerprint
 from study_agent.prompts import GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer
-from study_agent.repository_config import (
-    CONFIG_FILENAME,
-    LocalRepositoryConfig,
-    ModelAdapterConfig,
-)
+from study_agent.repository_config import LocalRepositoryConfig, ModelAdapterConfig
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import (
     GroundedSessionFinalizer,
@@ -75,19 +74,7 @@ from study_agent.state import EventRegistry
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry
 
-_STATE_DIRECTORY = "state"
-_BLOB_DIRECTORY = "blobs"
-_EXPORT_DIRECTORY = "exports"
-_EVENT_DATABASE = "events.sqlite3"
-_RUN_DATABASE = "runs.sqlite3"
-_RETRIEVAL_DATABASE = "retrieval.sqlite3"
-_REPOSITORY_LOCK = ".study-agent.lock"
-_CONFIG_TEMPORARY = ".study-agent.json.tmp"
 _V1 = SemanticVersion.parse("1.0.0")
-
-
-class LocalRepositoryError(RuntimeError):
-    """The path is not a safe compatible local repository."""
 
 
 class ModelAdapterConfigurationError(ValueError):
@@ -216,158 +203,6 @@ def _openai_compatible_model(
         raise ModelAdapterConfigurationError("model adapter configuration is invalid") from error
 
 
-@dataclass(frozen=True, slots=True)
-class LocalRepositoryPaths:
-    root: Path
-    config: Path
-    state: Path
-    events: Path
-    runs: Path
-    retrieval: Path
-    blobs: Path
-    exports: Path
-
-    @classmethod
-    def at(cls, root: str | Path) -> LocalRepositoryPaths:
-        base = Path(root).expanduser()
-        state = base / _STATE_DIRECTORY
-        return cls(
-            base,
-            base / CONFIG_FILENAME,
-            state,
-            state / _EVENT_DATABASE,
-            state / _RUN_DATABASE,
-            state / _RETRIEVAL_DATABASE,
-            base / _BLOB_DIRECTORY,
-            base / _EXPORT_DIRECTORY,
-        )
-
-
-def initialize_local_repository(
-    root: str | Path,
-    config: LocalRepositoryConfig,
-) -> LocalRepositoryPaths:
-    """Publish config only after a locked repository layout is durably persisted."""
-    paths = LocalRepositoryPaths.at(root)
-    if paths.root.is_symlink() or (paths.root.exists() and not paths.root.is_dir()):
-        raise LocalRepositoryError("repository root must be a real directory")
-    root_created = not paths.root.exists()
-    if not paths.root.exists():
-        paths.root.mkdir(parents=True, exist_ok=True)
-        _fsync_directory(paths.root)
-        _fsync_directory(paths.root.parent)
-    if paths.root.is_symlink() or not paths.root.is_dir():
-        raise LocalRepositoryError("repository root must be a real directory")
-    initial_entries = {entry.name for entry in paths.root.iterdir()}
-    if initial_entries and _REPOSITORY_LOCK not in initial_entries:
-        raise LocalRepositoryError("refusing to initialize a non-empty directory")
-    lock = paths.root / _REPOSITORY_LOCK
-    if lock.is_symlink():
-        raise LocalRepositoryError("repository lock is incompatible")
-    lock_fd: int | None = None
-    created_directories: list[Path] = []
-    try:
-        lock_fd = os.open(
-            lock,
-            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
-            raise LocalRepositoryError("repository lock is incompatible")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        os.fsync(lock_fd)
-        _fsync_directory(paths.root)
-        if paths.config.exists() or paths.config.is_symlink():
-            existing = LocalRepositoryConfig.load(paths.config)
-            if existing != config:
-                raise LocalRepositoryError("repository configuration is incompatible")
-            _validate_layout(paths)
-            return paths
-        allowed_recovery = {
-            _REPOSITORY_LOCK,
-            _CONFIG_TEMPORARY,
-            _STATE_DIRECTORY,
-            _BLOB_DIRECTORY,
-            _EXPORT_DIRECTORY,
-        }
-        current_entries = {entry.name for entry in paths.root.iterdir()}
-        if _REPOSITORY_LOCK in initial_entries:
-            if current_entries - allowed_recovery:
-                raise LocalRepositoryError(
-                    "interrupted repository initialization contains unknown paths"
-                )
-            for directory in (paths.state, paths.blobs, paths.exports):
-                if directory.exists() and (
-                    directory.is_symlink()
-                    or not directory.is_dir()
-                    or any(directory.iterdir())
-                ):
-                    raise LocalRepositoryError(
-                        "interrupted repository initialization is incompatible"
-                    )
-        for directory in (paths.state, paths.blobs, paths.exports):
-            if not directory.exists():
-                directory.mkdir()
-                created_directories.append(directory)
-            _fsync_directory(directory)
-        _fsync_directory(paths.root)
-        temporary = paths.root / _CONFIG_TEMPORARY
-        if temporary.is_symlink() or (temporary.exists() and not temporary.is_file()):
-            raise LocalRepositoryError("temporary configuration path is incompatible")
-        with temporary.open("wb") as stream:
-            stream.write(config.to_bytes())
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, paths.config)
-        _fsync_directory(paths.root)
-    except LocalRepositoryError:
-        _rollback_initialization(paths, created_directories)
-        raise
-    except OSError as error:
-        _rollback_initialization(paths, created_directories)
-        raise LocalRepositoryError("repository layout could not be initialized") from error
-    finally:
-        if lock_fd is not None:
-            os.close(lock_fd)
-        if root_created:
-            with suppress(OSError):
-                paths.root.rmdir()
-    _validate_layout(paths)
-    return paths
-
-
-def _rollback_initialization(
-    paths: LocalRepositoryPaths, created_directories: list[Path]
-) -> None:
-    with suppress(OSError):
-        (paths.root / _CONFIG_TEMPORARY).unlink(missing_ok=True)
-    for directory in reversed(created_directories):
-        with suppress(OSError):
-            directory.rmdir()
-
-
-def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _validate_layout(paths: LocalRepositoryPaths) -> None:
-    for directory in (paths.root, paths.state, paths.blobs, paths.exports):
-        if directory.is_symlink() or not directory.is_dir():
-            raise LocalRepositoryError("repository layout contains an incompatible directory")
-    if paths.config.is_symlink() or not paths.config.is_file():
-        raise LocalRepositoryError("repository configuration is incompatible")
-    lock = paths.root / _REPOSITORY_LOCK
-    if lock.is_symlink() or not lock.is_file():
-        raise LocalRepositoryError("repository lock is incompatible")
-    for database in (paths.events, paths.runs, paths.retrieval):
-        if database.is_symlink() or (database.exists() and not database.is_file()):
-            raise LocalRepositoryError("repository database path is incompatible")
-
-
 class _EngineFactory(GroundingEngineFactory):
     def __init__(
         self,
@@ -470,7 +305,7 @@ class LocalRepository:
         model_adapters: ModelAdapterRegistry | None = None,
         environment: Mapping[str, str] | None = None,
     ) -> None:
-        _validate_layout(paths)
+        validate_local_repository_layout(paths)
         persisted = LocalRepositoryConfig.load(paths.config)
         if persisted != config:
             raise LocalRepositoryError("loaded repository configuration is incompatible")

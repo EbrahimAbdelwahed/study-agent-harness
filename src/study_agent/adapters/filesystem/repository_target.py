@@ -1,0 +1,828 @@
+"""Read-only, descriptor-anchored resolution for local repository targets."""
+
+from __future__ import annotations
+
+import errno
+import fcntl
+import os
+import stat
+import unicodedata
+from contextlib import suppress
+from dataclasses import dataclass
+from pathlib import Path
+
+from study_agent.repository_config import (
+    CONFIG_FILENAME,
+    MAX_CONFIG_BYTES,
+    LocalConfigError,
+    LocalRepositoryConfig,
+)
+
+_STATE_DIRECTORY = "state"
+_BLOB_DIRECTORY = "blobs"
+_EXPORT_DIRECTORY = "exports"
+_EVENT_DATABASE = "events.sqlite3"
+_RUN_DATABASE = "runs.sqlite3"
+_RETRIEVAL_DATABASE = "retrieval.sqlite3"
+_REPOSITORY_LOCK = ".study-agent.lock"
+_CONFIG_TEMPORARY = ".study-agent.json.tmp"
+
+_DIRECTORY_OPEN_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+)
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CLOCK$"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
+
+
+class RepositoryTargetError(RuntimeError):
+    """The requested repository target is not a safe local directory target."""
+
+
+LocalRepositoryError = RepositoryTargetError
+
+
+@dataclass(frozen=True, slots=True)
+class LocalRepositoryPaths:
+    """The complete versioned filesystem layout beneath one repository root."""
+
+    root: Path
+    config: Path
+    state: Path
+    events: Path
+    runs: Path
+    retrieval: Path
+    blobs: Path
+    exports: Path
+
+    @classmethod
+    def at(cls, root: str | Path) -> LocalRepositoryPaths:
+        base = Path(root).expanduser()
+        state = base / _STATE_DIRECTORY
+        return cls(
+            base,
+            base / CONFIG_FILENAME,
+            state,
+            state / _EVENT_DATABASE,
+            state / _RUN_DATABASE,
+            state / _RETRIEVAL_DATABASE,
+            base / _BLOB_DIRECTORY,
+            base / _EXPORT_DIRECTORY,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRepositoryTarget:
+    """Lexical target plus identities observed through no-follow directory fds."""
+
+    trusted_root: Path
+    relative_parts: tuple[str, ...]
+    verified_root_identity: tuple[int, int]
+    existing_parts: tuple[str, ...]
+    existing_prefix_identities: tuple[tuple[int, int], ...]
+    missing_parts: tuple[str, ...]
+
+    @property
+    def root(self) -> Path:
+        """Return the lexical repository root without resolving it again."""
+        return self.trusted_root.joinpath(*self.relative_parts)
+
+    @property
+    def paths(self) -> LocalRepositoryPaths:
+        """Return layout paths rooted at the lexical repository target."""
+        return LocalRepositoryPaths.at(self.root)
+
+    @property
+    def exists(self) -> bool:
+        """Report whether the complete target existed during inspection."""
+        return not self.missing_parts
+
+
+def resolve_repository_target(
+    trusted_root: str | Path, relative_path: str | Path
+) -> ResolvedRepositoryTarget:
+    """Inspect a portable relative target beneath an explicit trusted root.
+
+    Resolution is read-only. Existing target components are opened relative to
+    the preceding verified directory descriptor and never followed through a
+    symlink. The first missing component ends inspection and the complete
+    unobserved tail is retained for a later fd-relative initializer.
+    """
+
+    root = _absolute_lexical_path(trusted_root)
+    parts = _portable_relative_parts(relative_path)
+    descriptors: list[int] = []
+    existing_parts: list[str] = []
+    identities: list[tuple[int, int]] = []
+    try:
+        root_descriptor = _open_directory(root)
+        descriptors.append(root_descriptor)
+        root_identity = _directory_identity(root_descriptor)
+
+        parent_descriptor = root_descriptor
+        for index, component in enumerate(parts):
+            try:
+                descriptor = os.open(
+                    component,
+                    _DIRECTORY_OPEN_FLAGS,
+                    dir_fd=parent_descriptor,
+                )
+            except OSError as error:
+                if error.errno == errno.ENOENT:
+                    return ResolvedRepositoryTarget(
+                        root,
+                        parts,
+                        root_identity,
+                        tuple(existing_parts),
+                        tuple(identities),
+                        parts[index:],
+                    )
+                raise RepositoryTargetError(
+                    "repository target contains an incompatible component"
+                ) from None
+            descriptors.append(descriptor)
+            identities.append(_directory_identity(descriptor))
+            existing_parts.append(component)
+            parent_descriptor = descriptor
+
+        return ResolvedRepositoryTarget(
+            root,
+            parts,
+            root_identity,
+            tuple(existing_parts),
+            tuple(identities),
+            (),
+        )
+    finally:
+        for descriptor in reversed(descriptors):
+            with suppress(OSError):
+                os.close(descriptor)
+
+
+def resolve_explicit_repository_target(path: str | Path) -> ResolvedRepositoryTarget:
+    """Resolve a trusted host path after lexical normalization."""
+
+    raw = os.fspath(path)
+    if not isinstance(raw, str):
+        raise RepositoryTargetError("repository target path must be text")
+    normalized = os.path.abspath(os.path.expanduser(raw))
+    anchor = Path(normalized).anchor
+    tail = normalized[len(anchor) :]
+    return resolve_repository_target(anchor, tail)
+
+
+def initialize_repository_target(
+    target: ResolvedRepositoryTarget, config: LocalRepositoryConfig
+) -> LocalRepositoryPaths:
+    """Initialize a resolved target without re-resolving its untrusted path."""
+
+    _validate_resolved_target(target)
+    descriptors: list[int] = []
+    owned_tail: list[tuple[int, str, tuple[int, int]]] = []
+    created_layout: list[tuple[int, str, tuple[int, int]]] = []
+    lock_descriptor: int | None = None
+    lock_created = False
+    lock_identity: tuple[int, int] | None = None
+    target_descriptor: int | None = None
+    temporary_created = False
+    temporary_identity: tuple[int, int] | None = None
+    config_created = False
+    binding_failed = False
+    try:
+        root_descriptor = _open_directory(target.trusted_root)
+        descriptors.append(root_descriptor)
+        if _directory_identity(root_descriptor) != target.verified_root_identity:
+            raise RepositoryTargetError("repository target identity changed")
+
+        parent_descriptor = root_descriptor
+        observed_identities: list[tuple[int, int]] = []
+        for component, expected in zip(
+            target.existing_parts, target.existing_prefix_identities, strict=True
+        ):
+            descriptor = _openat_directory(parent_descriptor, component)
+            descriptors.append(descriptor)
+            identity = _directory_identity(descriptor)
+            if identity != expected:
+                raise RepositoryTargetError("repository target identity changed")
+            observed_identities.append(identity)
+            parent_descriptor = descriptor
+
+        for component in target.missing_parts:
+            created = False
+            try:
+                os.mkdir(component, 0o700, dir_fd=parent_descriptor)
+                created = True
+            except FileExistsError:
+                pass
+            descriptor = _openat_directory(parent_descriptor, component)
+            descriptors.append(descriptor)
+            identity = _directory_identity(descriptor)
+            if created:
+                owned_tail.append((parent_descriptor, component, identity))
+                os.fsync(descriptor)
+                os.fsync(parent_descriptor)
+            _verify_child_binding(parent_descriptor, component, identity)
+            observed_identities.append(identity)
+            _verify_prefix_binding(
+                target,
+                target.relative_parts[: len(observed_identities)],
+                tuple(observed_identities),
+            )
+            parent_descriptor = descriptor
+
+        target_descriptor = parent_descriptor
+        _verify_complete_binding(target, tuple(observed_identities))
+        initial_entries = _directory_entries(target_descriptor)
+        if initial_entries and _REPOSITORY_LOCK not in initial_entries:
+            raise RepositoryTargetError("refusing to initialize a non-empty directory")
+
+        lock_flags = (
+            os.O_RDWR
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        try:
+            lock_descriptor = os.open(
+                _REPOSITORY_LOCK,
+                lock_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=target_descriptor,
+            )
+            lock_created = True
+        except FileExistsError:
+            lock_descriptor = os.open(
+                _REPOSITORY_LOCK, lock_flags, dir_fd=target_descriptor
+            )
+        if not stat.S_ISREG(os.fstat(lock_descriptor).st_mode):
+            raise RepositoryTargetError("repository lock is incompatible")
+        lock_metadata = os.fstat(lock_descriptor)
+        lock_identity = (lock_metadata.st_dev, lock_metadata.st_ino)
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        _verify_regular_binding(
+            target_descriptor, _REPOSITORY_LOCK, lock_identity, "repository lock"
+        )
+        os.fsync(lock_descriptor)
+        os.fsync(target_descriptor)
+
+        existing_config = _read_config(target_descriptor, missing_ok=True)
+        if existing_config is not None:
+            if existing_config != config:
+                raise RepositoryTargetError("repository configuration is incompatible")
+            _remove_verified_regular(target_descriptor, _CONFIG_TEMPORARY)
+            os.fsync(target_descriptor)
+            if _read_config(target_descriptor, missing_ok=False) != config:
+                raise RepositoryTargetError("repository configuration is incompatible")
+            _validate_layout_fd(target_descriptor)
+            _verify_complete_binding(target, tuple(observed_identities))
+            return target.paths
+
+        allowed_recovery = {
+            _REPOSITORY_LOCK,
+            _CONFIG_TEMPORARY,
+            _STATE_DIRECTORY,
+            _BLOB_DIRECTORY,
+            _EXPORT_DIRECTORY,
+        }
+        current_entries = _directory_entries(target_descriptor)
+        if current_entries - allowed_recovery:
+            raise RepositoryTargetError(
+                "interrupted repository initialization contains unknown paths"
+            )
+        _remove_verified_regular(target_descriptor, _CONFIG_TEMPORARY)
+        for directory_name in (
+            _STATE_DIRECTORY,
+            _BLOB_DIRECTORY,
+            _EXPORT_DIRECTORY,
+        ):
+            directory_descriptor, created = _ensure_empty_directory(
+                target_descriptor, directory_name
+            )
+            descriptors.append(directory_descriptor)
+            identity = _directory_identity(directory_descriptor)
+            if created:
+                created_layout.append((target_descriptor, directory_name, identity))
+            os.fsync(directory_descriptor)
+        os.fsync(target_descriptor)
+
+        payload = config.to_bytes()
+        temporary_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        temporary_descriptor = os.open(
+            _CONFIG_TEMPORARY,
+            temporary_flags,
+            0o600,
+            dir_fd=target_descriptor,
+        )
+        temporary_created = True
+        try:
+            _write_all(temporary_descriptor, payload)
+            os.fsync(temporary_descriptor)
+            temporary_metadata = os.fstat(temporary_descriptor)
+            temporary_identity = (
+                temporary_metadata.st_dev,
+                temporary_metadata.st_ino,
+            )
+        finally:
+            os.close(temporary_descriptor)
+
+        _verify_complete_binding(target, tuple(observed_identities))
+        _verify_regular_binding(
+            target_descriptor,
+            _REPOSITORY_LOCK,
+            lock_identity,
+            "repository lock",
+        )
+        _verify_regular_binding(
+            target_descriptor,
+            _CONFIG_TEMPORARY,
+            temporary_identity,
+            "temporary configuration path",
+        )
+        try:
+            os.link(
+                _CONFIG_TEMPORARY,
+                CONFIG_FILENAME,
+                src_dir_fd=target_descriptor,
+                dst_dir_fd=target_descriptor,
+                follow_symlinks=False,
+            )
+            config_created = True
+            _verify_regular_binding(
+                target_descriptor,
+                CONFIG_FILENAME,
+                temporary_identity,
+                "repository configuration",
+            )
+        except FileExistsError:
+            existing_config = _read_config(target_descriptor, missing_ok=False)
+            if existing_config != config:
+                raise RepositoryTargetError(
+                    "repository configuration is incompatible"
+                ) from None
+        _remove_verified_regular(target_descriptor, _CONFIG_TEMPORARY)
+        temporary_created = False
+        os.fsync(target_descriptor)
+        _verify_complete_binding(target, tuple(observed_identities))
+        _validate_layout_fd(target_descriptor)
+        return target.paths
+    except RepositoryTargetError as error:
+        binding_failed = "identity changed" in str(error)
+        _rollback_created(
+            target_descriptor,
+            temporary_created,
+            temporary_identity,
+            config_created,
+            created_layout,
+            owned_tail,
+            lock_created and binding_failed,
+            lock_identity,
+        )
+        raise
+    except (LocalConfigError, OSError):
+        _rollback_created(
+            target_descriptor,
+            temporary_created,
+            temporary_identity,
+            config_created,
+            created_layout,
+            owned_tail,
+            lock_created and binding_failed,
+            lock_identity,
+        )
+        raise RepositoryTargetError("repository layout could not be initialized") from None
+    finally:
+        if lock_descriptor is not None:
+            with suppress(OSError):
+                os.close(lock_descriptor)
+        for descriptor in reversed(descriptors):
+            with suppress(OSError):
+                os.close(descriptor)
+
+
+def initialize_local_repository(
+    root: str | Path, config: LocalRepositoryConfig
+) -> LocalRepositoryPaths:
+    """Compatibility entry point for an explicit trusted host path."""
+
+    return initialize_repository_target(resolve_explicit_repository_target(root), config)
+
+
+def validate_local_repository_layout(paths: LocalRepositoryPaths) -> None:
+    """Validate an opened repository layout for compatibility."""
+
+    for directory in (paths.root, paths.state, paths.blobs, paths.exports):
+        if directory.is_symlink() or not directory.is_dir():
+            raise RepositoryTargetError(
+                "repository layout contains an incompatible directory"
+            )
+    if paths.config.is_symlink() or not paths.config.is_file():
+        raise RepositoryTargetError("repository configuration is incompatible")
+    lock = paths.root / _REPOSITORY_LOCK
+    if lock.is_symlink() or not lock.is_file():
+        raise RepositoryTargetError("repository lock is incompatible")
+    for database in (paths.events, paths.runs, paths.retrieval):
+        if database.is_symlink() or (database.exists() and not database.is_file()):
+            raise RepositoryTargetError("repository database path is incompatible")
+
+
+def _openat_directory(parent_descriptor: int, name: str) -> int:
+    try:
+        return os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor)
+    except OSError:
+        raise RepositoryTargetError(
+            "repository target contains an incompatible component"
+        ) from None
+
+
+def _verify_child_binding(
+    parent_descriptor: int, name: str, expected: tuple[int, int]
+) -> None:
+    try:
+        descriptor = _openat_directory(parent_descriptor, name)
+    except RepositoryTargetError:
+        raise RepositoryTargetError("repository target identity changed") from None
+    try:
+        if _directory_identity(descriptor) != expected:
+            raise RepositoryTargetError("repository target identity changed")
+    finally:
+        os.close(descriptor)
+
+
+def _verify_complete_binding(
+    target: ResolvedRepositoryTarget, expected_identities: tuple[tuple[int, int], ...]
+) -> None:
+    if len(expected_identities) != len(target.relative_parts):
+        raise RepositoryTargetError("repository target identity changed")
+    _verify_prefix_binding(target, target.relative_parts, expected_identities)
+
+
+def _verify_prefix_binding(
+    target: ResolvedRepositoryTarget,
+    components: tuple[str, ...],
+    expected_identities: tuple[tuple[int, int], ...],
+) -> None:
+    descriptors: list[int] = []
+    try:
+        root_descriptor = _open_directory(target.trusted_root)
+        descriptors.append(root_descriptor)
+        if _directory_identity(root_descriptor) != target.verified_root_identity:
+            raise RepositoryTargetError("repository target identity changed")
+        parent_descriptor = root_descriptor
+        for component, expected in zip(components, expected_identities, strict=True):
+            descriptor = _openat_directory(parent_descriptor, component)
+            descriptors.append(descriptor)
+            if _directory_identity(descriptor) != expected:
+                raise RepositoryTargetError("repository target identity changed")
+            parent_descriptor = descriptor
+    except RepositoryTargetError:
+        raise RepositoryTargetError("repository target identity changed") from None
+    finally:
+        for descriptor in reversed(descriptors):
+            with suppress(OSError):
+                os.close(descriptor)
+
+
+def _directory_entries(descriptor: int) -> set[str]:
+    try:
+        return set(os.listdir(descriptor))
+    except OSError:
+        raise RepositoryTargetError("repository directory could not be inspected") from None
+
+
+def _read_config(
+    directory_descriptor: int, *, missing_ok: bool
+) -> LocalRepositoryConfig | None:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(CONFIG_FILENAME, flags, dir_fd=directory_descriptor)
+    except OSError as error:
+        if missing_ok and error.errno == errno.ENOENT:
+            return None
+        raise RepositoryTargetError("repository configuration is incompatible") from None
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_CONFIG_BYTES:
+            raise RepositoryTargetError("repository configuration is incompatible")
+        chunks: list[bytes] = []
+        remaining = MAX_CONFIG_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        try:
+            final_name = os.stat(
+                CONFIG_FILENAME,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError:
+            raise RepositoryTargetError(
+                "repository configuration is incompatible"
+            ) from None
+        if (
+            _stable_file_identity(before) != _stable_file_identity(after)
+            or (before.st_dev, before.st_ino)
+            != (final_name.st_dev, final_name.st_ino)
+            or not stat.S_ISREG(final_name.st_mode)
+            or len(payload) > MAX_CONFIG_BYTES
+        ):
+            raise RepositoryTargetError("repository configuration is incompatible")
+        try:
+            return LocalRepositoryConfig.from_bytes(payload)
+        except LocalConfigError:
+            raise RepositoryTargetError(
+                "repository configuration is incompatible"
+            ) from None
+    finally:
+        os.close(descriptor)
+
+
+def _remove_verified_regular(directory_descriptor: int, name: str) -> None:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_descriptor)
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            return
+        raise RepositoryTargetError(
+            "temporary configuration path is incompatible"
+        ) from None
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise RepositoryTargetError(
+                "temporary configuration path is incompatible"
+            )
+        current = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+            raise RepositoryTargetError(
+                "temporary configuration path is incompatible"
+            )
+        os.unlink(name, dir_fd=directory_descriptor)
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _verify_regular_binding(
+    directory_descriptor: int,
+    name: str,
+    expected: tuple[int, int] | None,
+    label: str,
+) -> None:
+    if expected is None:
+        raise RepositoryTargetError(f"{label} is incompatible")
+    try:
+        metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except OSError:
+        raise RepositoryTargetError(f"{label} is incompatible") from None
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != expected
+    ):
+        raise RepositoryTargetError(f"{label} is incompatible")
+
+
+def _ensure_empty_directory(
+    parent_descriptor: int, name: str
+) -> tuple[int, bool]:
+    created = False
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_descriptor)
+        created = True
+    except FileExistsError:
+        pass
+    descriptor = _openat_directory(parent_descriptor, name)
+    if _directory_entries(descriptor):
+        os.close(descriptor)
+        raise RepositoryTargetError(
+            "interrupted repository initialization is incompatible"
+        )
+    _verify_child_binding(parent_descriptor, name, _directory_identity(descriptor))
+    if created:
+        os.fsync(parent_descriptor)
+    return descriptor, created
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        written = os.write(descriptor, payload[offset:])
+        if written <= 0:
+            raise OSError("configuration write did not progress")
+        offset += written
+
+
+def _rollback_created(
+    target_descriptor: int | None,
+    temporary_created: bool,
+    temporary_identity: tuple[int, int] | None,
+    config_created: bool,
+    created_layout: list[tuple[int, str, tuple[int, int]]],
+    owned_tail: list[tuple[int, str, tuple[int, int]]],
+    remove_lock: bool,
+    lock_identity: tuple[int, int] | None,
+) -> None:
+    if target_descriptor is not None:
+        if config_created and temporary_identity is not None:
+            _remove_owned_regular(
+                target_descriptor, CONFIG_FILENAME, temporary_identity
+            )
+        if temporary_created and temporary_identity is not None:
+            _remove_owned_regular(
+                target_descriptor, _CONFIG_TEMPORARY, temporary_identity
+            )
+        for parent, name, identity in reversed(created_layout):
+            _remove_owned_directory(parent, name, identity)
+        if remove_lock and lock_identity is not None:
+            _remove_owned_regular(
+                target_descriptor, _REPOSITORY_LOCK, lock_identity
+            )
+    for parent, name, identity in reversed(owned_tail):
+        _remove_owned_directory(parent, name, identity)
+
+
+def _remove_owned_regular(
+    parent_descriptor: int, name: str, identity: tuple[int, int]
+) -> None:
+    try:
+        current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except OSError:
+        return
+    if (current.st_dev, current.st_ino) != identity or not stat.S_ISREG(current.st_mode):
+        return
+    with suppress(OSError):
+        os.unlink(name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+
+
+def _remove_owned_directory(
+    parent_descriptor: int, name: str, identity: tuple[int, int]
+) -> None:
+    try:
+        current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except OSError:
+        return
+    if (current.st_dev, current.st_ino) != identity or not stat.S_ISDIR(current.st_mode):
+        return
+    with suppress(OSError):
+        os.rmdir(name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+
+
+def _validate_layout_fd(target_descriptor: int) -> None:
+    for name in (_STATE_DIRECTORY, _BLOB_DIRECTORY, _EXPORT_DIRECTORY):
+        descriptor = _openat_directory(target_descriptor, name)
+        os.close(descriptor)
+    _read_config(target_descriptor, missing_ok=False)
+    lock_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    descriptor = os.open(_REPOSITORY_LOCK, lock_flags, dir_fd=target_descriptor)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RepositoryTargetError("repository lock is incompatible")
+    finally:
+        os.close(descriptor)
+    state_descriptor = _openat_directory(target_descriptor, _STATE_DIRECTORY)
+    try:
+        for database in (_EVENT_DATABASE, _RUN_DATABASE, _RETRIEVAL_DATABASE):
+            try:
+                metadata = os.stat(
+                    database, dir_fd=state_descriptor, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise RepositoryTargetError("repository database path is incompatible")
+    finally:
+        os.close(state_descriptor)
+
+
+def _absolute_lexical_path(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return expanded.absolute()
+
+
+def _portable_relative_parts(path: str | Path) -> tuple[str, ...]:
+    raw = os.fspath(path)
+    if not isinstance(raw, str):
+        raise RepositoryTargetError("repository target path must be text")
+    if not raw or raw.startswith("/") or "\\" in raw or ":" in raw:
+        raise RepositoryTargetError("repository target path is not a portable relative path")
+    parts = tuple(raw.split("/"))
+    if any(not _portable_component(component) for component in parts):
+        raise RepositoryTargetError("repository target path is not a portable relative path")
+    return parts
+
+
+def _portable_component(component: str) -> bool:
+    if not component or component in {".", ".."}:
+        return False
+    if "/" in component or "\\" in component or ":" in component:
+        return False
+    if component.endswith((".", " ")):
+        return False
+    if any(unicodedata.category(character).startswith("C") for character in component):
+        return False
+    device_stem = component.split(".", 1)[0].upper()
+    return device_stem not in _WINDOWS_DEVICE_NAMES
+
+
+def _validate_resolved_target(target: ResolvedRepositoryTarget) -> None:
+    if not target.trusted_root.is_absolute():
+        raise RepositoryTargetError("resolved repository target is invalid")
+    if (
+        not target.relative_parts
+        or any(not _portable_component(part) for part in target.relative_parts)
+        or target.existing_parts + target.missing_parts != target.relative_parts
+        or len(target.existing_parts) != len(target.existing_prefix_identities)
+        or not _valid_identity(target.verified_root_identity)
+        or any(not _valid_identity(value) for value in target.existing_prefix_identities)
+    ):
+        raise RepositoryTargetError("resolved repository target is invalid")
+
+
+def _valid_identity(value: tuple[int, int]) -> bool:
+    return (
+        len(value) == 2
+        and all(isinstance(item, int) and item >= 0 for item in value)
+    )
+
+
+def _stable_file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _open_directory(path: Path) -> int:
+    try:
+        descriptor = os.open(path, _DIRECTORY_OPEN_FLAGS)
+    except OSError:
+        raise RepositoryTargetError("trusted repository root is not a real directory") from None
+    try:
+        _directory_identity(descriptor)
+    except RepositoryTargetError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _directory_identity(descriptor: int) -> tuple[int, int]:
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError:
+        raise RepositoryTargetError("repository target could not be inspected") from None
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RepositoryTargetError("repository target contains an incompatible component")
+    return metadata.st_dev, metadata.st_ino
+
+
+__all__ = [
+    "LocalRepositoryError",
+    "LocalRepositoryPaths",
+    "RepositoryTargetError",
+    "ResolvedRepositoryTarget",
+    "initialize_local_repository",
+    "initialize_repository_target",
+    "resolve_explicit_repository_target",
+    "resolve_repository_target",
+    "validate_local_repository_layout",
+]
