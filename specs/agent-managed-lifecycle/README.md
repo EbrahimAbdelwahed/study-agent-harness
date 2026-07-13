@@ -6,26 +6,28 @@ Last updated: 2026-07-13
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and slice 04. Slices 01–03 are complete. The current pickup is the operator
-skill, external-agent journey, packaging, and 0.1.1 release gates in slice 04.
-Do not implement slice 05 or later before the complete 0.1.1 lane has passed its
-release gates. Keep the exact seven v0.1 StudyTool contracts and fingerprints
-unchanged. Update this section before ending a pass.
+and slice 05. Slices 01–04 are complete and the 0.1.1 release lane has passed
+its gates. The current pickup is the pure manifest contract: strict bounded
+parsing, canonicalization and fingerprinting plus effect-free `manifest
+schema|validate`. Do not open a repository or source, read credentials, invoke
+a model, or implement slice 06 or later. Keep the exact seven v0.1 StudyTool
+contracts and fingerprints unchanged. Update this section before ending a pass.
 
 Global TODO:
 
 - [x] [01 — operation discovery](slices/01-agent-operation-discovery.md)
 - [x] [02 — offline tool composition](slices/02-offline-tool-composition.md)
 - [x] [03 — explicit lifecycle and retry](slices/03-explicit-lifecycle-and-retry.md)
-- [ ] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
+- [x] [04 — operator skill and 0.1.1 release](slices/04-operator-skill-and-release.md)
 - [ ] [05 — manifest contract](slices/05-manifest-contract.md)
 - [ ] [06 — safe repository target](slices/06-safe-repository-target.md)
 - [ ] [07 — safe source snapshots](slices/07-safe-source-snapshots.md)
 - [ ] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
 - [ ] [09 — convergent apply and recovery](slices/09-convergent-apply-and-recovery.md)
 
-Active warning: none in the 0.1.1 implementation lane. Slice 04 must still prove
-the installed-wheel external-agent journey and release compatibility.
+Active warning: slice 05 is a public, security-sensitive validation contract.
+It must remain structurally pure and effect-free; filesystem resolution belongs
+to slices 06–07.
 
 Evidence ledger:
 
@@ -37,6 +39,11 @@ Evidence ledger:
   lifecycle landed together with 434 tests passing, one opt-in network smoke
   skipped, Ruff and mypy green. Review closed retryable-conflict mapping and
   callable-provider ambiguity before approval.
+- Slice 04: the packaged operator skill, discovery/extraction receipt, external
+  agent journey and 0.1.1 version lane passed 444 tests with one opt-in network
+  smoke skipped, Ruff, strict mypy, skill validation, wheel/sdist build, clean
+  wheel install and deterministic offline journey. Semantic and security review
+  approved the final no-follow/no-replace extraction and host-authority model.
 
 ## Goal
 

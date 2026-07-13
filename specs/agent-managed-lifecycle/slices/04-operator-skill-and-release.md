@@ -2,6 +2,7 @@
 
 Release: 0.1.1
 Depends on: slices 01–03, with slices 02 and 03 independently depending on 01
+Status: Complete (2026-07-13)
 
 ## Contract unlocked
 

@@ -28,6 +28,7 @@ from study_agent.domain._validation import JsonObject
 from study_agent.domain.course import CourseProfile, SourcePolicy, TerminologyPolicy
 from study_agent.domain.session import SessionStatus, StudySessionRecord
 from study_agent.ingestion.projection import source_manifest
+from study_agent.operator_skill import extract_skill
 from study_agent.sessions.events import grounded_answer_manifest
 
 from .config import EMPTY_CONFIG, LocalRepositoryConfig
@@ -157,6 +158,16 @@ async def handle_doctor(
     request: CommandRequest, repository: LocalRepository | None
 ) -> CommandOutcome:
     return await _doctor(_required_repository(repository), request.values)
+
+
+def handle_operator_skill(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("operator skill extraction cannot use a repository")
+    return CommandOutcome(
+        "operator.skill", extract_skill(Path(_text(request.values, "output")))
+    )
 
 
 def handle_describe(

@@ -43,6 +43,7 @@ _ARGUMENT_KEYS = {
     "secret",
 }
 _TOOL_ENTRY_KEYS = {"manifest", "fingerprint"}
+_OPERATOR_SKILL_KEYS = {"id", "version", "fingerprint", "extraction_command"}
 _TOOL_MANIFEST_KEYS = {
     "name",
     "version",
@@ -89,6 +90,7 @@ _PARSER_INVOCATIONS = {
     "doctor": ("doctor",),
     "export": ("export", "course-1", "--output", "export"),
     "init": ("init", "repository"),
+    "operator.skill": ("operator", "skill", "--output", "operator-skill.md"),
     "session.list": ("session", "list", "course-1"),
     "session.get": ("session", "get", "course-1", "session-1"),
     "session.resume": ("session", "resume", "course-1", "session-1"),
@@ -140,7 +142,14 @@ def _assert_closed_manifest(manifest: Mapping[str, Any]) -> None:
     assert set(manifest) == _ROOT_KEYS
     assert manifest["contract_version"] == "agent-operations@1"
     assert manifest["offline_default"] is True
-    assert manifest["operator_skill"] is None
+    operator_skill = manifest["operator_skill"]
+    assert set(operator_skill) == _OPERATOR_SKILL_KEYS
+    assert operator_skill["id"] == "study-agent-operator"
+    assert operator_skill["version"] == "1.0.0"
+    assert operator_skill["extraction_command"] == (
+        "study-agent --json operator skill --output PATH"
+    )
+    assert len(operator_skill["fingerprint"]) == 64
     assert manifest["repository_schema_versions"] == [1]
 
     commands = manifest["commands"]
@@ -224,6 +233,7 @@ def test_each_discovered_command_maps_to_exactly_one_parser_leaf(
 
     expected_groups = {
         "course": "{create,list}",
+        "operator": "{skill}",
         "session": "{list,start,get,resume}",
         "source": "{add,list}",
         "tool": "{list,describe}",

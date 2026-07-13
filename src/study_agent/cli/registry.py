@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from study_agent import __version__
 from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.operator_skill import skill_metadata
 from study_agent.tools.builtin import public_study_tool_manifests
 from study_agent.tools.contracts import ToolManifest
 
@@ -400,6 +401,19 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
             commands.handle_doctor,
         ),
         _registration(
+            "operator.skill",
+            "Extract the versioned operator skill from the installed distribution.",
+            OperationEffect.LOCAL_WRITE,
+            RepositoryRequirement.NONE,
+            NetworkRequirement.NEVER,
+            "byte-identical for the same installed distribution",
+            "safe to retry to an absent or byte-identical destination",
+            (_argument("output", ArgumentKind.OPTION, ArgumentValueType.PATH, True),),
+            "verify the receipt fingerprint against the extracted bytes",
+            _add_operator_skill,
+            commands.handle_operator_skill,
+        ),
+        _registration(
             "describe",
             "Describe the agent-operable harness contract.",
             OperationEffect.READ_ONLY,
@@ -466,7 +480,7 @@ def agent_operations_manifest() -> JsonObject:
         "offline_default": True,
         "commands": commands,
         "study_tools": tools,
-        "operator_skill": None,
+        "operator_skill": skill_metadata(),
     }
 
 
@@ -662,6 +676,16 @@ def _add_export(topology: _ParserTopology) -> None:
 
 def _add_doctor(topology: _ParserTopology) -> None:
     _leaf(topology.root.add_parser("doctor", help="run offline integrity diagnostics"), "doctor")
+
+
+def _add_operator_skill(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("operator", "agent operator resources").add_parser(
+            "skill", help="extract the packaged operator skill"
+        ),
+        "operator.skill",
+    )
+    parser.add_argument("--output", required=True)
 
 
 def _add_describe(topology: _ParserTopology) -> None:

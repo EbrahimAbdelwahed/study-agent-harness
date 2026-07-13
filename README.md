@@ -64,6 +64,36 @@ The default repository is offline and has no model configured. Retrieval,
 replay, export, and `doctor` remain credential-free; `ask` requires an explicitly
 configured model adapter.
 
+## Agent-operated quickstart
+
+Start automation by negotiating the closed machine contract, then extract the
+versioned operator workflow from the installed distribution:
+
+```bash
+study-agent --json describe
+study-agent --json operator skill --output ./agent-skills/study-agent-operator/SKILL.md
+```
+
+Verify the extracted file's SHA-256 against `operator_skill.fingerprint` from
+`describe`. The workflow covers the credential-free sequence `init → course →
+source → doctor → session → tools → export` and keeps the optional model call
+separate. The [external-agent example](docs/examples/external_agent.py) runs the
+blank-project journey without an agent SDK, provider branch, API key, or network
+access.
+
+Use the installed `study-agent` command, not source-checkout internals. During
+source population, work from the repository directory with `--repository .`
+and direct relative, non-symlink `.txt`/`.md` paths. Export writes a directory;
+determinism means the checksummed file tree and contents match at the same event
+high-water mark.
+
+An automation host chooses stable course, source, session, and idempotency
+identities. For `ask`, always supply an explicit `--session-id` and
+`--idempotency-key`. If output is lost, repeat the exact same question and IDs;
+do not create a replacement key. The model can propose only schema-bounded
+StudyTool arguments and never selects principal, capabilities, repository,
+course authority, or session authority.
+
 ## Models and credentials
 
 The bundled network adapter speaks an OpenAI-compatible HTTP protocol. Its
@@ -123,5 +153,5 @@ the default suite must not require an API key, provider SDK, or hosted service.
 
 ## Project status
 
-Version 0.1.0 is an alpha release and its public API is not stable. The project
+Version 0.1.1 is an alpha release and its public API is not stable. The project
 is available under the [Apache License 2.0](LICENSE).
