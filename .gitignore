@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.coverage
+.coverage.*
+.env*
+!.env.example
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+htmlcov/
+
+# Raw Flywheel execution state is local orchestration evidence. Public, durable
+# artifacts live in docs/specs, docs/reviews, docs/tasks, and the worker docs.
+docs/flywheel-runs/
+
+# A checkout may also be used as a reference CLI repository. Keep its generated
+# local state, source blobs, exports, and non-secret machine config out of Git.
+/.study-agent.lock
+/.study-agent.json.tmp
+/study-agent.json
+/state/
+/blobs/
+/exports/

@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import ast
+import unittest
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parents[2]
+SOURCE_ROOT = PROJECT_ROOT / "src" / "study_agent"
+CORE_PACKAGES = tuple(
+    SOURCE_ROOT / name
+    for name in (
+        "domain",
+        "ports",
+        "grounding",
+        "prompts",
+        "skills",
+        "playbooks",
+        "sessions",
+    )
+)
+FORBIDDEN_TOP_LEVEL_IMPORTS = {
+    "anthropic",
+    "click",
+    "fastapi",
+    "openai",
+    "sqlalchemy",
+    "sqlite3",
+    "tau",
+    "typer",
+}
+FORBIDDEN_INTERNAL_PREFIXES = {
+    "study_agent.adapters",
+    "study_agent.cli",
+    "study_agent.retrieval",
+}
+
+
+def imported_modules(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+    return modules
+
+
+class ImportBoundaryTests(unittest.TestCase):
+    def test_domain_and_ports_do_not_import_implementations(self) -> None:
+        violations: list[str] = []
+        for package in CORE_PACKAGES:
+            for path in sorted(package.rglob("*.py")):
+                for module in sorted(imported_modules(path)):
+                    top_level = module.partition(".")[0]
+                    if top_level in FORBIDDEN_TOP_LEVEL_IMPORTS or any(
+                        module == prefix or module.startswith(f"{prefix}.")
+                        for prefix in FORBIDDEN_INTERNAL_PREFIXES
+                    ):
+                        violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {module}")
+
+        message = "Core import-boundary violations:\n" + "\n".join(violations)
+        self.assertEqual([], violations, message)
+
+
+if __name__ == "__main__":
+    unittest.main()

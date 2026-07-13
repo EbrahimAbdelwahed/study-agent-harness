@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from hashlib import sha256
+
+from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.ports import MessageRole, ModelMessage
+from study_agent.skills import (
+    ArtifactReference,
+    JsonSchema,
+    PromptLayer,
+    PromptLayerKind,
+)
+
+from .contracts import (
+    ComposedPrompt,
+    PromptCompositionError,
+    PromptLayerRecord,
+)
+
+_EXPECTED_ORDER = tuple(PromptLayerKind)
+_INTERNAL_FIELDS = frozenset({"output_schema"})
+
+
+def canonical_json(value: JsonValue) -> str:
+    """Render frozen JSON data deterministically without changing its meaning."""
+
+    return json.dumps(
+        _plain_json(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _plain_json(value: JsonValue) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain_json(item) for item in value]
+    return value
+
+
+class CanonicalPromptComposer:
+    """Compose portable prompt layers without inspecting any model or provider."""
+
+    def compose(
+        self,
+        *,
+        prompt: ArtifactReference,
+        layers: tuple[PromptLayer, ...],
+        inputs: JsonObject,
+        output_schema: JsonSchema,
+    ) -> ComposedPrompt:
+        kinds = tuple(layer.kind for layer in layers)
+        if kinds != _EXPECTED_ORDER:
+            raise PromptCompositionError(
+                "prompt layers must contain the six canonical kinds exactly once and in order"
+            )
+        declared = {
+            field
+            for layer in layers
+            for field in layer.input_fields
+            if field not in _INTERNAL_FIELDS
+        }
+        supplied = set(inputs)
+        if supplied != declared:
+            missing = sorted(declared - supplied)
+            unused = sorted(supplied - declared)
+            raise PromptCompositionError(
+                f"prompt inputs must exactly match declarations; missing={missing}, unused={unused}"
+            )
+
+        messages: list[ModelMessage] = []
+        records: list[PromptLayerRecord] = []
+        for layer in layers:
+            layer_data: dict[str, JsonValue] = {}
+            for field in layer.input_fields:
+                layer_data[field] = (
+                    output_schema.value if field == "output_schema" else inputs[field]
+                )
+            rendered_data = canonical_json(layer_data)
+            content = (
+                f"[prompt-layer:{layer.kind.value}:{layer.id}@{layer.version}]\n"
+                f"{layer.template}\n"
+                f"<layer-data>{rendered_data}</layer-data>"
+            )
+            role = (
+                MessageRole.SYSTEM
+                if layer.kind
+                in {
+                    PromptLayerKind.STUDY_SECURITY_POLICY,
+                    PromptLayerKind.OUTPUT_SCHEMA,
+                }
+                else MessageRole.USER
+            )
+            messages.append(ModelMessage(role, content))
+            records.append(
+                PromptLayerRecord(
+                    layer.id,
+                    str(layer.version),
+                    layer.kind.value,
+                    sha256(rendered_data.encode()).hexdigest(),
+                )
+            )
+
+        fingerprint_payload = canonical_json(
+            {
+                "prompt": {"id": prompt.id, "version": str(prompt.version)},
+                "messages": tuple(
+                    {"role": message.role.value, "content": message.content}
+                    for message in messages
+                ),
+                "layers": tuple(
+                    {
+                        "id": record.id,
+                        "version": record.version,
+                        "kind": record.kind,
+                        "input_fingerprint": record.input_fingerprint,
+                    }
+                    for record in records
+                ),
+            }
+        )
+        return ComposedPrompt(
+            prompt,
+            tuple(messages),
+            tuple(records),
+            sha256(fingerprint_payload.encode()).hexdigest(),
+        )
