@@ -83,6 +83,7 @@ from study_agent.study_context import (
     StudyContextService,
     register_study_context_events,
 )
+from study_agent.tutor_snapshot import TutorSnapshotReader
 
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry
@@ -388,6 +389,7 @@ class LocalRepository:
         self.study_context_service = StudyContextService(
             self.events, self.clock, self.study_context, self.courses, self.sessions
         )
+        self.tutor_snapshots = TutorSnapshotReader(self.events, registry)
         self._model_adapters = model_adapters or default_model_adapters()
         self._environment = environment
         if observation is not None:

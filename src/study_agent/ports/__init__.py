@@ -53,6 +53,7 @@ from .storage import (
 )
 from .study_context import StudyContextViewPort
 from .tools import StudyTool
+from .tutor_snapshot import TutorSnapshotPort
 
 __all__ = [
     "MAX_SOURCE_BYTES",
@@ -97,5 +98,6 @@ __all__ = [
     "StudyContextViewPort",
     "StudyTool",
     "ToolCall",
+    "TutorSnapshotPort",
     "retrieval_read_set_fingerprint",
 ]

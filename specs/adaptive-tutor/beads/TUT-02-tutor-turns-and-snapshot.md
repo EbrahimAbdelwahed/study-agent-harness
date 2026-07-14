@@ -1,6 +1,6 @@
 # Task Bead: TUT-02 tutor turns and snapshot
 
-Status: In progress
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-01
@@ -25,10 +25,10 @@ Persist general learner/tutor turns and expose one high-water-marked
 - [x] Existing session v1 replay remains valid.
 - [x] Assistant turns require a run and typed outcome references.
 - [x] Cancelled/incomplete output is not a successful assistant turn.
-- [ ] Snapshot reports known, missing, conflicting, and evidence references.
-- [ ] Configured CourseProfile hints and learner-statement conflicts retain
+- [x] Snapshot reports known, missing, conflicting, and evidence references.
+- [x] Configured CourseProfile hints and learner-statement conflicts retain
   separate attribution and no automatic precedence.
-- [ ] Snapshot is byte-identical after mixed replay.
+- [x] Snapshot is byte-identical after mixed replay.
 
 ## Verification
 

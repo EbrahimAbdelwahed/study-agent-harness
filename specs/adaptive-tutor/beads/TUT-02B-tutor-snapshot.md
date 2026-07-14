@@ -1,6 +1,6 @@
 # Task Bead: TUT-02B sequence-consistent tutor snapshot
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02A
@@ -13,15 +13,15 @@ materials.
 
 ## Acceptance Criteria
 
-- [ ] Exactly one event-store read supplies projection, timeline, and high-water.
-- [ ] Existing grounded answers and new general assistant messages normalize into
+- [x] Exactly one event-store read supplies projection, timeline, and high-water.
+- [x] Existing grounded answers and new general assistant messages normalize into
   one ordered timeline with event evidence.
-- [ ] CourseProfile hints remain separately attributed from learner statements.
-- [ ] Exact hint divergences are visible with no inferred equivalence/precedence.
-- [ ] All five statement kinds report missing, known, or conflicting.
-- [ ] Material summaries use current revisions from the captured projection only.
-- [ ] Canonical snapshot bytes rebuild identically after mixed replay.
-- [ ] No capability, next-action, provider, hypothesis, or mastery field exists.
+- [x] CourseProfile hints remain separately attributed from learner statements.
+- [x] Exact hint divergences are visible with no inferred equivalence/precedence.
+- [x] All five statement kinds report missing, known, or conflicting.
+- [x] Material summaries use current revisions from the captured projection only.
+- [x] Canonical snapshot bytes rebuild identically after mixed replay.
+- [x] No capability, next-action, provider, hypothesis, or mastery field exists.
 
 ## Verification
 
