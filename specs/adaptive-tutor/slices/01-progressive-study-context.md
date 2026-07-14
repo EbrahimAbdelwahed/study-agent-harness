@@ -50,6 +50,8 @@ context view from events.
   `study_context.conflict_resolved@1`. The service exposes
   `StudyContextCommandError`, `StudyContextConflictError`, and
   `RetryableStudyContextConflictError`.
+- Events may carry a typed `causation_id` so later capability executions retain
+  provenance; causation never grants authority and may not self-reference.
 - Public commands are `record(statement, origin_interaction_id, context,
   expected_sequence)`, `retract(statement_id, context, expected_sequence)`, and
   `resolve(kind, selected_statement_id, context, expected_sequence)`; each

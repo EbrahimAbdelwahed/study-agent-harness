@@ -6,14 +6,14 @@ Last updated: 2026-07-14
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
-and the next dependency-ready slice. The current pickup is TUT-01 progressive
-study context. Preserve the per-course event stream as canonical, keep next
+and the next dependency-ready slice. The current pickup is TUT-02 tutor turns
+and snapshot. Preserve the per-course event stream as canonical, keep next
 action selection in the external tutor host, and do not add arbitrary model
 memory, provider behavior in the core, or a global learner aggregate.
 
 Global TODO:
 
-- [ ] [TUT-01 — progressive study context](slices/01-progressive-study-context.md)
+- [x] [TUT-01 — progressive study context](slices/01-progressive-study-context.md)
 - [ ] [TUT-02 — tutor turns and snapshot](slices/02-tutor-turns-and-snapshot.md)
 - [ ] [TUT-03 — capability gateway](slices/03-capability-gateway.md)
 - [ ] [TUT-04 — study artifact proposals](slices/04-study-artifact-proposals.md)

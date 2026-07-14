@@ -46,6 +46,7 @@ from .storage import (
     RunStore,
     SourceContentPort,
 )
+from .study_context import StudyContextViewPort
 from .tools import StudyTool
 
 __all__ = [
@@ -87,6 +88,7 @@ __all__ = [
     "SourceInputPort",
     "SourceSnapshot",
     "StructuredOutputConstraint",
+    "StudyContextViewPort",
     "StudyTool",
     "ToolCall",
     "retrieval_read_set_fingerprint",

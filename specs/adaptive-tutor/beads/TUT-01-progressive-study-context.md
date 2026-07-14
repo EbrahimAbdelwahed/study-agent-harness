@@ -1,6 +1,6 @@
 # Task Bead: TUT-01 progressive study context
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: none

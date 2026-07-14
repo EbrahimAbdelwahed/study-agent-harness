@@ -43,6 +43,10 @@ class InteractionId(Identifier):
     pass
 
 
+class StatementId(Identifier):
+    pass
+
+
 class AnswerId(Identifier):
     pass
 
@@ -114,6 +118,27 @@ def session_event_id_for(
         "event-sha256:"
         f"{_retry_digest(course_id, session_id, run_id, idempotency_key, event_type)}"
     )
+
+
+def study_context_event_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    idempotency_key: str,
+    command_kind: str,
+) -> EventId:
+    """Return the stable identity of one study-context command."""
+    require_text(idempotency_key, "idempotency_key")
+    require_text(command_kind, "command_kind")
+    identity = (
+        f"study-context@1\0{course_id}\0{session_id}\0{idempotency_key}\0{command_kind}"
+    ).encode()
+    return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
+
+
+def statement_id_for(command_event_id: EventId) -> StatementId:
+    """Derive a statement identity from its canonical record command."""
+    identity = f"study-context-statement@1\0{command_event_id}".encode()
+    return StatementId(f"statement-sha256:{sha256(identity).hexdigest()}")
 
 
 def _retry_digest(

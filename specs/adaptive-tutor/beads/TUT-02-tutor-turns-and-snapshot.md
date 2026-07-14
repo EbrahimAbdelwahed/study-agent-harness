@@ -1,6 +1,6 @@
 # Task Bead: TUT-02 tutor turns and snapshot
 
-Status: Blocked on TUT-01
+Status: Ready
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-01

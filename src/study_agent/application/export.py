@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from study_agent.courses.events import decode_course_created
+from study_agent.courses import register_course_events
+from study_agent.courses.events import COURSE_CREATED, decode_course_created
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.course import CourseProfile
 from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
@@ -26,7 +27,11 @@ from study_agent.ingestion.events import (
 )
 from study_agent.ingestion.identity import source_event_id_for
 from study_agent.ports import EventStore
-from study_agent.sessions import ProjectionSessionView, register_session_events
+from study_agent.sessions import (
+    SESSION_EVENT_TYPES,
+    ProjectionSessionView,
+    register_session_events,
+)
 from study_agent.sessions.events import (
     SESSION_ANSWER_RECORDED,
     SESSION_CONTINUATION_SUMMARY_UPDATED,
@@ -42,6 +47,17 @@ from study_agent.sessions.events import (
     decode_summary_updated,
 )
 from study_agent.state import EventRegistry, Projection
+from study_agent.study_context import (
+    CONFLICT_RESOLVED,
+    STATEMENT_RECORDED,
+    STATEMENT_RETRACTED,
+    STUDY_CONTEXT_EVENT_TYPES,
+    ProjectionStudyContextView,
+    decode_conflict_resolved,
+    decode_statement_recorded,
+    decode_statement_retracted,
+    register_study_context_events,
+)
 
 EXPORT_SCHEMA_VERSION = 1
 
@@ -101,7 +117,13 @@ class ExportService:
         if len(set(revision_keys)) != len(revision_keys):
             raise ExportStateError("event stream contains duplicate source revisions")
 
-        session_view = _replay_sessions(course_id, stream)
+        contextual_projection = _replay_contextual_state(course_id, stream)
+        ProjectionStudyContextView(
+            lambda requested: _owned_projection(requested, contextual_projection)
+        ).get(course_id)
+        session_view = ProjectionSessionView(
+            lambda requested: _owned_projection(requested, contextual_projection)
+        )
         session_records = session_view.list_sessions(course_id)
 
         answers: list[JsonObject] = []
@@ -151,6 +173,9 @@ def _decode_allowlisted_event(event: DomainEvent) -> object:
         SESSION_SUSPENDED: lambda value: decode_lifecycle(value, SESSION_SUSPENDED),
         SESSION_RESUMED: lambda value: decode_lifecycle(value, SESSION_RESUMED),
         SESSION_ENDED: lambda value: decode_lifecycle(value, SESSION_ENDED),
+        STATEMENT_RECORDED: decode_statement_recorded,
+        STATEMENT_RETRACTED: decode_statement_retracted,
+        CONFLICT_RESOLVED: decode_conflict_resolved,
     }
     try:
         decoder = decoders[event.event_type]
@@ -203,28 +228,24 @@ def _validate_stream(course_id: CourseId, stream: Sequence[DomainEvent]) -> None
         _decode_allowlisted_event(event)
 
 
-def _replay_sessions(
+def _replay_contextual_state(
     course_id: CourseId, stream: Sequence[DomainEvent]
-) -> ProjectionSessionView:
+) -> Projection:
     registry = EventRegistry()
+    register_course_events(registry)
     register_session_events(registry)
+    register_study_context_events(registry)
     state: JsonObject = {}
+    contextual_types = (
+        frozenset({COURSE_CREATED}) | SESSION_EVENT_TYPES | STUDY_CONTEXT_EVENT_TYPES
+    )
     try:
         for event in stream:
-            if event.event_type in {
-                SESSION_STARTED,
-                SESSION_INTERACTION_RECORDED,
-                SESSION_ANSWER_RECORDED,
-                SESSION_CONTINUATION_SUMMARY_UPDATED,
-                SESSION_SUSPENDED,
-                SESSION_RESUMED,
-                SESSION_ENDED,
-            }:
+            if event.event_type in contextual_types:
                 state = registry.reduce(state, event)
     except (TypeError, ValueError) as error:
-        raise ExportStateError("session events cannot be replayed canonically") from error
-    projection = Projection(course_id, stream[-1].course_sequence, state)
-    return ProjectionSessionView(lambda requested: _owned_projection(requested, projection))
+        raise ExportStateError("contextual events cannot be replayed canonically") from error
+    return Projection(course_id, stream[-1].course_sequence, state)
 
 
 def _owned_projection(requested: CourseId, projection: Projection) -> Projection:

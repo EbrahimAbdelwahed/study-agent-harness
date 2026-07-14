@@ -18,10 +18,13 @@ from .identifiers import (
     RunId,
     SessionId,
     SourceId,
+    StatementId,
     answer_id_for,
     assistant_interaction_id_for,
     question_interaction_id_for,
     session_event_id_for,
+    statement_id_for,
+    study_context_event_id_for,
 )
 from .provenance import (
     AnswerProvenance,
@@ -47,6 +50,15 @@ from .session import (
     SummaryExchange,
 )
 from .source import BlobRef, Citation, ResolvedCitation, SourceChunk, SourceDocument, SourceKind
+from .study_context import (
+    StatementStatus,
+    StudyContextConflict,
+    StudyContextResolution,
+    StudyContextSnapshot,
+    StudyContextStatement,
+    StudyStatementInput,
+    StudyStatementKind,
+)
 
 __all__ = [
     "Actor",
@@ -91,10 +103,18 @@ __all__ = [
     "SourceId",
     "SourceKind",
     "SourcePolicy",
+    "StatementId",
+    "StatementStatus",
     "StructureOrigin",
+    "StudyContextConflict",
+    "StudyContextResolution",
+    "StudyContextSnapshot",
+    "StudyContextStatement",
     "StudyError",
     "StudySession",
     "StudySessionRecord",
+    "StudyStatementInput",
+    "StudyStatementKind",
     "SummaryExchange",
     "TerminologyEntry",
     "TerminologyPolicy",
@@ -104,4 +124,6 @@ __all__ = [
     "assistant_interaction_id_for",
     "question_interaction_id_for",
     "session_event_id_for",
+    "statement_id_for",
+    "study_context_event_id_for",
 ]

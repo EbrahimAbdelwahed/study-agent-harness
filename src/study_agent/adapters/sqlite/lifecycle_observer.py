@@ -25,6 +25,7 @@ from study_agent.repository_config import LocalRepositoryConfig
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import register_session_events
 from study_agent.state import EventRegistry, replay
+from study_agent.study_context import register_study_context_events
 
 from .event_store import SQLiteEventStore
 from .fts_retrieval import SQLiteFtsRetrieval
@@ -94,6 +95,7 @@ def observe_local_repository(
                 register_course_events(registry)
                 register_source_revision_events(registry, blobs.get)
                 register_session_events(registry)
+                register_study_context_events(registry)
                 events = SQLiteEventStore(events_path, registry, read_only=True)
                 course_ids = events.list_course_ids()
                 projections = {
