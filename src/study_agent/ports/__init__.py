@@ -31,7 +31,12 @@ from .retrieval import (
     RetrievalQuery,
     retrieval_read_set_fingerprint,
 )
-from .session import AnswerNotFoundError, SessionNotFoundError, SessionViewPort
+from .session import (
+    AnswerNotFoundError,
+    AssistantTurnViewPort,
+    SessionNotFoundError,
+    SessionViewPort,
+)
 from .source_input import (
     MAX_SOURCE_BYTES,
     MAX_TOTAL_SOURCE_BYTES,
@@ -54,6 +59,7 @@ __all__ = [
     "MAX_TOTAL_SOURCES",
     "MAX_TOTAL_SOURCE_BYTES",
     "AnswerNotFoundError",
+    "AssistantTurnViewPort",
     "BlobStore",
     "CancellationToken",
     "ClockPort",

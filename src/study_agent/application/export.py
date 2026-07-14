@@ -34,6 +34,7 @@ from study_agent.sessions import (
 )
 from study_agent.sessions.events import (
     SESSION_ANSWER_RECORDED,
+    SESSION_ASSISTANT_TURN_RECORDED,
     SESSION_CONTINUATION_SUMMARY_UPDATED,
     SESSION_ENDED,
     SESSION_INTERACTION_RECORDED,
@@ -41,6 +42,7 @@ from study_agent.sessions.events import (
     SESSION_STARTED,
     SESSION_SUSPENDED,
     decode_answer_recorded,
+    decode_assistant_turn_recorded,
     decode_interaction_recorded,
     decode_lifecycle,
     decode_session_started,
@@ -169,6 +171,7 @@ def _decode_allowlisted_event(event: DomainEvent) -> object:
         SESSION_STARTED: decode_session_started,
         SESSION_INTERACTION_RECORDED: decode_interaction_recorded,
         SESSION_ANSWER_RECORDED: decode_answer_recorded,
+        SESSION_ASSISTANT_TURN_RECORDED: decode_assistant_turn_recorded,
         SESSION_CONTINUATION_SUMMARY_UPDATED: decode_summary_updated,
         SESSION_SUSPENDED: lambda value: decode_lifecycle(value, SESSION_SUSPENDED),
         SESSION_RESUMED: lambda value: decode_lifecycle(value, SESSION_RESUMED),

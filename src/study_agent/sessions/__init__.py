@@ -2,6 +2,7 @@
 
 from .events import (
     SESSION_ANSWER_RECORDED,
+    SESSION_ASSISTANT_TURN_RECORDED,
     SESSION_CONTINUATION_SUMMARY_UPDATED,
     SESSION_ENDED,
     SESSION_EVENT_TYPES,
@@ -11,7 +12,9 @@ from .events import (
     SESSION_STARTED,
     SESSION_SUSPENDED,
     answer_recorded_payload,
+    assistant_turn_recorded_payload,
     decode_answer_recorded,
+    decode_assistant_turn_recorded,
     decode_interaction_recorded,
     decode_session_started,
     decode_summary_updated,
@@ -36,12 +39,15 @@ from .summary import (
     build_continuation_summary,
     verify_continuation_summary,
 )
+from .turn_service import SessionTurnService
+from .turn_view import ProjectionAssistantTurnView
 from .view import ProjectionSessionView
 
 __all__ = [
     "MAX_RECENT_EXCHANGES",
     "MAX_SUMMARY_CHARACTERS",
     "SESSION_ANSWER_RECORDED",
+    "SESSION_ASSISTANT_TURN_RECORDED",
     "SESSION_CONTINUATION_SUMMARY_UPDATED",
     "SESSION_ENDED",
     "SESSION_EVENT_TYPES",
@@ -52,16 +58,20 @@ __all__ = [
     "SESSION_SUSPENDED",
     "GroundedSessionFinalizer",
     "IdempotencyConflictError",
+    "ProjectionAssistantTurnView",
     "ProjectionSessionView",
     "ProvenanceAssemblyError",
     "RetryableSessionConflictError",
     "SessionCommandError",
     "SessionService",
+    "SessionTurnService",
     "StateWritePolicyError",
     "answer_recorded_payload",
     "assemble_grounded_answer",
+    "assistant_turn_recorded_payload",
     "build_continuation_summary",
     "decode_answer_recorded",
+    "decode_assistant_turn_recorded",
     "decode_interaction_recorded",
     "decode_session_started",
     "decode_summary_updated",

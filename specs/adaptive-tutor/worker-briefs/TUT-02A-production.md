@@ -29,7 +29,9 @@ session event payloads or projection bytes.
 
 ## Fixed Invariants
 
-- `tutor_message@1` content/status/reply linkage comes from VerifiedRunRecord.
+- `tutor_message@1` content/status/reply linkage comes only from a
+  `VerifiedRunRecord` recovered internally through `PlaybookEngine`; a caller
+  cannot provide the record as proof.
 - General assistant messages live in an additive projection key absent from old
   streams.
 - Learner events remain HUMAN-kind existing session events.

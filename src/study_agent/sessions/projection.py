@@ -9,11 +9,16 @@ from typing import cast
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import DomainEvent
 from study_agent.domain.identifiers import AnswerId, InteractionId, RunId
-from study_agent.domain.session import AnswerRecord, InteractionKind, InteractionRecord
+from study_agent.domain.session import (
+    AnswerRecord,
+    InteractionKind,
+    InteractionRecord,
+)
 from study_agent.state import EventRegistry
 
 from .events import (
     SESSION_ANSWER_RECORDED,
+    SESSION_ASSISTANT_TURN_RECORDED,
     SESSION_CONTINUATION_SUMMARY_UPDATED,
     SESSION_ENDED,
     SESSION_INTERACTION_RECORDED,
@@ -22,11 +27,13 @@ from .events import (
     SESSION_STARTED,
     SESSION_SUSPENDED,
     SessionAnswerRecorded,
+    SessionAssistantTurnRecorded,
     SessionInteractionRecorded,
     SessionLifecycleTransition,
     SessionStarted,
     SessionSummaryUpdated,
     decode_answer_recorded,
+    decode_assistant_turn_recorded,
     decode_grounded_answer_manifest,
     decode_interaction_recorded,
     decode_lifecycle,
@@ -207,6 +214,19 @@ def reduce_answer_recorded(
             and raw.get("idempotency_key") == record.idempotency_key
         ):
             raise ValueError("idempotency key already belongs to an answer")
+    assistant_turns = _mapping(
+        state.get("session_assistant_turns", {}), "session_assistant_turns"
+    )
+    for raw in assistant_turns.values():
+        if not isinstance(raw, Mapping):
+            raise ValueError("assistant turn projection is corrupt")
+        if raw.get("run_id") == run_id:
+            raise ValueError("run id already belongs to an assistant turn")
+        if (
+            raw.get("session_id") == session_id
+            and raw.get("idempotency_key") == record.idempotency_key
+        ):
+            raise ValueError("idempotency key already belongs to an assistant turn")
     interaction_ids = _text_array(session.get("interaction_ids"), "interaction_ids")
     run_ids = _text_array(session.get("run_ids"), "run_ids")
     if run_id in run_ids:
@@ -239,6 +259,82 @@ def reduce_answer_recorded(
         "sessions": sessions,
         "session_interactions": interactions,
         "session_answers": answers,
+    }
+
+
+def reduce_assistant_turn_recorded(
+    state: JsonObject,
+    event: DomainEvent,
+    payload: SessionAssistantTurnRecorded,
+) -> Mapping[str, JsonValue]:
+    sessions, interactions, answers = _session_maps(state)
+    session_id, session = _session(sessions, event)
+    _chronological(session, event)
+    _active(session)
+    record = payload.record
+    if record.session_id != event.session_id:
+        raise ValueError("assistant turn belongs to another session")
+    turns = dict(
+        _mapping(state.get("session_assistant_turns", {}), "session_assistant_turns")
+    )
+    turn_id = str(record.id)
+    run_id = str(record.output.run_id)
+    if turn_id in interactions or turn_id in turns:
+        raise ValueError("assistant turn id already exists")
+    if record.in_reply_to_interaction_id is not None:
+        reply = interactions.get(str(record.in_reply_to_interaction_id))
+        if (
+            not isinstance(reply, Mapping)
+            or reply.get("session_id") != session_id
+            or reply.get("kind") != "human"
+        ):
+            raise ValueError("assistant reply target must be human and belong to the session")
+    for raw in answers.values():
+        if not isinstance(raw, Mapping):
+            raise ValueError("answer projection is corrupt")
+        if raw.get("run_id") == run_id:
+            raise ValueError("run id already belongs to an answer")
+        if (
+            raw.get("session_id") == session_id
+            and raw.get("idempotency_key") == record.idempotency_key
+        ):
+            raise ValueError("idempotency key already belongs to an answer")
+    for raw in turns.values():
+        if not isinstance(raw, Mapping):
+            raise ValueError("assistant turn projection is corrupt")
+        if raw.get("run_id") == run_id:
+            raise ValueError("run id already belongs to an assistant turn")
+        if (
+            raw.get("session_id") == session_id
+            and raw.get("idempotency_key") == record.idempotency_key
+        ):
+            raise ValueError("idempotency key already belongs to an assistant turn")
+    turns[turn_id] = {
+        "session_id": session_id,
+        "status": record.status.value,
+        "content": record.content,
+        "in_reply_to_interaction_id": (
+            str(record.in_reply_to_interaction_id)
+            if record.in_reply_to_interaction_id is not None
+            else None
+        ),
+        "run_id": run_id,
+        "output_key": record.output.output_key,
+        "output_fingerprint": record.output.output_fingerprint,
+        "idempotency_key": record.idempotency_key,
+        "command_fingerprint": record.command_fingerprint,
+        "event_id": str(record.event_id),
+        "course_sequence": record.course_sequence,
+        "occurred_at": _timestamp(record.occurred_at),
+    }
+    session["last_event_at"] = _timestamp(event.occurred_at)
+    sessions[session_id] = session
+    return {
+        **state,
+        "sessions": sessions,
+        "session_interactions": interactions,
+        "session_answers": answers,
+        "session_assistant_turns": turns,
     }
 
 
@@ -353,6 +449,12 @@ def register_session_events(registry: EventRegistry) -> None:
         SESSION_SCHEMA_VERSION,
         decode_answer_recorded,
         reduce_answer_recorded,
+    )
+    registry.register_event(
+        SESSION_ASSISTANT_TURN_RECORDED,
+        SESSION_SCHEMA_VERSION,
+        decode_assistant_turn_recorded,
+        reduce_assistant_turn_recorded,
     )
     registry.register_event(
         SESSION_CONTINUATION_SUMMARY_UPDATED,

@@ -69,8 +69,10 @@ from study_agent.repository_config import LocalRepositoryConfig, ModelAdapterCon
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import (
     GroundedSessionFinalizer,
+    ProjectionAssistantTurnView,
     ProjectionSessionView,
     SessionService,
+    SessionTurnService,
     register_session_events,
 )
 from study_agent.skills import ArtifactReference, SemanticVersion
@@ -378,6 +380,10 @@ class LocalRepository:
         self.course_service = CourseService(self.events, self.clock, self.courses)
         self.sessions = ProjectionSessionView(self.events.projection)
         self.session_service = SessionService(self.events, self.clock, self.sessions, self.courses)
+        self.assistant_turns = ProjectionAssistantTurnView(self.events.projection)
+        self.session_turn_service = SessionTurnService(
+            self.events, self.clock, self.sessions, self.assistant_turns
+        )
         self.study_context = ProjectionStudyContextView(self.events.projection)
         self.study_context_service = StudyContextService(
             self.events, self.clock, self.study_context, self.courses, self.sessions

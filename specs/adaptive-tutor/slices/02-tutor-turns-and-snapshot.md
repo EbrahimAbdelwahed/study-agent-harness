@@ -14,8 +14,9 @@ session, and materials without prescribing next action.
   assistant messages. Old-only streams retain byte-identical projections.
 - Learner writes require an active owned session, HUMAN/SERVICE authority, a
   mandatory idempotency key, deterministic identity, and expected-sequence CAS.
-- Assistant writes require SERVICE authority and a revalidated
-  `VerifiedRunRecord`. Its exact `outputs.tutor_message` object is
+- Assistant writes require SERVICE authority. The session owner calls
+  `PlaybookEngine.recover(...)` with the run identity and pinned execution
+  contract; the recovered record's exact `outputs.tutor_message` object is
   `{schema_version: 1, status: completed|terminated, content,
   in_reply_to_interaction_id}` and must agree with the verified run status.
 - Assistant turns retain a typed `VerifiedRunOutputRef(run_id,
@@ -27,12 +28,13 @@ session, and materials without prescribing next action.
 - Exact committed retry resolves before sequence comparison; changed content,
   run, output, or reply linkage under the same identity conflicts. New stale
   commands are retryable without mutation. A run can own at most one assistant
-  turn or grounded answer in a session.
+  turn or grounded answer in the course; idempotency keys remain session-scoped.
 - Public TUT-02A types are `AssistantTurnStatus`, `VerifiedRunOutputRef`, and
   `AssistantTurnRecord`. The owner exposes
   `SessionTurnService.record_learner_turn(content, context,
-  expected_sequence)` and `record_assistant_turn(run, context,
-  expected_sequence)`, plus a projection-backed `AssistantTurnViewPort`.
+  expected_sequence)` and a keyword-only `record_assistant_turn(context,
+  engine, run_id, definition, inputs, pins, expected_sequence,
+  read_dependencies=())`, plus a projection-backed `AssistantTurnViewPort`.
 - Snapshot reports known, missing, and conflicting context with high-water
   sequence and evidence references.
 - Immutable CourseProfile study fields are reported as configured hints with

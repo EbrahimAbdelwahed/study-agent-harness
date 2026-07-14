@@ -106,6 +106,31 @@ def assistant_interaction_id_for(
     )
 
 
+def learner_interaction_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    idempotency_key: str,
+) -> InteractionId:
+    require_text(idempotency_key, "idempotency_key")
+    identity = f"session-learner-turn@1\0{course_id}\0{session_id}\0{idempotency_key}".encode()
+    return InteractionId(f"interaction-sha256:{sha256(identity).hexdigest()}")
+
+
+def session_turn_event_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    idempotency_key: str,
+    event_type: str,
+) -> EventId:
+    require_text(idempotency_key, "idempotency_key")
+    require_text(event_type, "event_type")
+    identity = (
+        f"session-turn-event@1\0{course_id}\0{session_id}\0"
+        f"{idempotency_key}\0{event_type}"
+    ).encode()
+    return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
+
+
 def session_event_id_for(
     course_id: CourseId,
     session_id: SessionId,

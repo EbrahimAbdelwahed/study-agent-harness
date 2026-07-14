@@ -22,10 +22,11 @@ would instead predeclare TUT-03 and weaken validation.
   general assistant messages.
 - Store new assistant records in an additive projection key that is absent from
   streams containing only existing events, preserving old projection bytes.
-- A general assistant message is derived from a revalidated
-  `VerifiedRunRecord`. Its exact `tutor_message@1` output supplies status,
-  content, and optional learner interaction linkage; callers cannot separately
-  assert success.
+- A general assistant message is derived only after the session owner calls
+  `PlaybookEngine.recover(...)`. The recovered `VerifiedRunRecord` and its exact
+  `tutor_message@1` output supply status, content, and optional learner
+  interaction linkage; callers cannot hand the owner a DTO as proof of success
+  or assert content separately.
 - Only completed or validator-terminated runs may become canonical assistant
   turns. Suspended, cancelled, incomplete, and failed work remains operational
   and cannot be recorded as successful output.

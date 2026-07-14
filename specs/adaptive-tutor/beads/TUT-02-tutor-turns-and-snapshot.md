@@ -22,9 +22,9 @@ Persist general learner/tutor turns and expose one high-water-marked
 
 ## Acceptance Criteria
 
-- [ ] Existing session v1 replay remains valid.
-- [ ] Assistant turns require a run and typed outcome references.
-- [ ] Cancelled/incomplete output is not a successful assistant turn.
+- [x] Existing session v1 replay remains valid.
+- [x] Assistant turns require a run and typed outcome references.
+- [x] Cancelled/incomplete output is not a successful assistant turn.
 - [ ] Snapshot reports known, missing, conflicting, and evidence references.
 - [ ] Configured CourseProfile hints and learner-statement conflicts retain
   separate attribution and no automatic precedence.

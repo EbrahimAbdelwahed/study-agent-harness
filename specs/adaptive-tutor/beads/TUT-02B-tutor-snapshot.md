@@ -1,6 +1,6 @@
 # Task Bead: TUT-02B sequence-consistent tutor snapshot
 
-Status: Blocked on TUT-02A
+Status: Ready
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02A

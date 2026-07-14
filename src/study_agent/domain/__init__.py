@@ -21,8 +21,10 @@ from .identifiers import (
     StatementId,
     answer_id_for,
     assistant_interaction_id_for,
+    learner_interaction_id_for,
     question_interaction_id_for,
     session_event_id_for,
+    session_turn_event_id_for,
     statement_id_for,
     study_context_event_id_for,
 )
@@ -41,6 +43,8 @@ from .provenance import (
 )
 from .session import (
     AnswerRecord,
+    AssistantTurnRecord,
+    AssistantTurnStatus,
     ContinuationSummaryV1,
     InteractionKind,
     InteractionRecord,
@@ -48,6 +52,7 @@ from .session import (
     StudySession,
     StudySessionRecord,
     SummaryExchange,
+    VerifiedRunOutputRef,
 )
 from .source import BlobRef, Citation, ResolvedCitation, SourceChunk, SourceDocument, SourceKind
 from .study_context import (
@@ -67,6 +72,8 @@ __all__ = [
     "AnswerRecord",
     "AnswerSegment",
     "AnswerStatus",
+    "AssistantTurnRecord",
+    "AssistantTurnStatus",
     "BlobId",
     "BlobRef",
     "ChunkId",
@@ -119,11 +126,14 @@ __all__ = [
     "TerminologyEntry",
     "TerminologyPolicy",
     "ValidatorProvenance",
+    "VerifiedRunOutputRef",
     "VersionPins",
     "answer_id_for",
     "assistant_interaction_id_for",
+    "learner_interaction_id_for",
     "question_interaction_id_for",
     "session_event_id_for",
+    "session_turn_event_id_for",
     "statement_id_for",
     "study_context_event_id_for",
 ]
