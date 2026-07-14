@@ -10,6 +10,11 @@ Depends On: TUT-03A
 One application gateway starts or resumes a host-selected trusted capability
 through the existing `PlaybookEngine` and returns the closed public outcome.
 
+## Child Beads
+
+- [TUT-03B1 — inspected and truthfully cancelled playbook runs](TUT-03B1-playbook-inspection-and-cancellation.md)
+- [TUT-03B2 — authority-bound capability gateway](TUT-03B2-authority-bound-capability-gateway.md)
+
 ## Acceptance Criteria
 
 - [ ] Start binds run, capability, exact input, pins, read dependencies,
