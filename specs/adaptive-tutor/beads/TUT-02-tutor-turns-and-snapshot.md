@@ -1,6 +1,6 @@
 # Task Bead: TUT-02 tutor turns and snapshot
 
-Status: Ready
+Status: In progress
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-01
@@ -14,6 +14,11 @@ worker brief after TUT-01 contracts land
 
 Persist general learner/tutor turns and expose one high-water-marked
 `TutorSnapshot` over course, context, sessions, and sources.
+
+## Child Beads
+
+- [TUT-02A — session conversation turns](TUT-02A-session-conversation-turns.md)
+- [TUT-02B — sequence-consistent tutor snapshot](TUT-02B-tutor-snapshot.md)
 
 ## Acceptance Criteria
 
