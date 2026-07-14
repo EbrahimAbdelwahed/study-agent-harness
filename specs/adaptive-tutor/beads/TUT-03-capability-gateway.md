@@ -1,6 +1,6 @@
 # Task Bead: TUT-03 capability gateway
 
-Status: Ready
+Status: In progress
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02

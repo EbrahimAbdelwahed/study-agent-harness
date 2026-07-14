@@ -1,6 +1,6 @@
 # Task Bead: TUT-03B capability lifecycle gateway
 
-Status: Blocked on TUT-03A
+Status: Ready
 Priority: P0
 Type: expand
 Depends On: TUT-03A

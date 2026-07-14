@@ -1,6 +1,6 @@
 # Task Bead: TUT-03A capability contracts and discovery
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02
@@ -13,14 +13,14 @@ changing the seven-tool `agent-operations@1` contract.
 
 ## Acceptance Criteria
 
-- [ ] Public v1 values cover identity/version, schemas, lifecycle support,
+- [x] Public v1 values cover identity/version, schemas, lifecycle support,
   required authority, and the closed outcome-status vocabulary.
-- [ ] Discovery is sorted, immutable, duplicate-rejecting, and limited to
+- [x] Discovery is sorted, immutable, duplicate-rejecting, and limited to
   composition-root-registered trusted capabilities.
-- [ ] Manifests reject model/provider selectors and invalid JSON schemas.
-- [ ] `explain_concept@1` and `assess_understanding@1` identities are reserved,
+- [x] Manifests reject model/provider selectors and invalid JSON schemas.
+- [x] `explain_concept@1` and `assess_understanding@1` identities are reserved,
   but no model behavior or next-action policy is introduced.
-- [ ] Existing StudyTool manifests and fingerprints remain exact.
+- [x] Existing StudyTool manifests and fingerprints remain exact.
 
 ## Verification
 

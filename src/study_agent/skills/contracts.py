@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import total_ordering
 
-from study_agent.domain._validation import JsonObject, JsonValue, freeze_object, require_text
+from study_agent.domain._validation import JsonObject, freeze_object, require_text
 from study_agent.ports import ModelCapabilities
 
 _SEMVER = re.compile(
@@ -15,42 +15,12 @@ _SEMVER = re.compile(
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 _PORTABLE_NAME = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
-_FORBIDDEN_SELECTOR_KEYS = frozenset(
-    {
-        "model",
-        "model_id",
-        "model_name",
-        "provider",
-        "provider_id",
-        "provider_name",
-        "vendor",
-        "vendor_id",
-        "vendor_name",
-    }
-)
 
 
 def _require_portable_name(value: str, field_name: str) -> None:
     require_text(value, field_name)
     if _PORTABLE_NAME.fullmatch(value) is None:
         raise ValueError(f"{field_name} must be a portable lowercase identifier")
-
-
-def _reject_provider_selectors(value: JsonValue, path: str) -> None:
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            normalized = key.lower().replace("-", "_")
-            if normalized in _FORBIDDEN_SELECTOR_KEYS or normalized.startswith("provider_"):
-                raise ValueError(f"{path}.{key} is provider/model-specific")
-            if normalized.startswith("model_") and normalized not in {
-                "model_input",
-                "model_output",
-            }:
-                raise ValueError(f"{path}.{key} is provider/model-specific")
-            _reject_provider_selectors(item, f"{path}.{key}")
-    elif isinstance(value, tuple):
-        for index, item in enumerate(value):
-            _reject_provider_selectors(item, f"{path}[{index}]")
 
 
 @total_ordering

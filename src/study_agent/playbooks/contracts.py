@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from study_agent.domain._validation import JsonObject, freeze_object, require_aware, require_text
 from study_agent.domain.identifiers import RunId
+from study_agent.portability import reject_provider_selectors
 from study_agent.ports import ModelRequest
 from study_agent.skills.contracts import (
     ArtifactReference,
@@ -13,7 +14,6 @@ from study_agent.skills.contracts import (
     JsonSchema,
     SemanticVersion,
     VersionRange,
-    _reject_provider_selectors,
     _require_portable_name,
 )
 
@@ -43,7 +43,7 @@ class DataBinding:
 
     def __post_init__(self) -> None:
         _require_portable_name(self.target, "binding target")
-        _reject_provider_selectors({self.target: None}, "binding")
+        reject_provider_selectors({self.target: None}, "binding")
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +59,7 @@ class ToolStep:
         object.__setattr__(self, "bindings", tuple(self.bindings))
         _require_step_fields(self.id, self.output_key)
         frozen = freeze_object(self.arguments)
-        _reject_provider_selectors(frozen, "tool arguments")
+        reject_provider_selectors(frozen, "tool arguments")
         object.__setattr__(self, "arguments", frozen)
         _require_unique_binding_targets(self.bindings)
 
@@ -81,7 +81,7 @@ class ModelStep:
         )
         object.__setattr__(self, "prompt_bindings", tuple(self.prompt_bindings))
         _require_step_fields(self.id, self.output_key)
-        _reject_provider_selectors(self.request.metadata, "model request metadata")
+        reject_provider_selectors(self.request.metadata, "model request metadata")
         names = tuple(item.name for item in self.required_capabilities)
         if len(set(names)) != len(names):
             raise ValueError("model step capabilities must be unique")
