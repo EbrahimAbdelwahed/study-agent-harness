@@ -58,7 +58,7 @@ def test_blank_project_offline_operator_journey(
 ) -> None:
     root = tmp_path / "study"
     described = _run(capsys, "describe")
-    assert described["data"]["harness_version"] == __version__ == "0.1.1"
+    assert described["data"]["harness_version"] == __version__ == "0.2.0"
     assert described["data"]["operator_skill"]["fingerprint"] == skill_fingerprint()
 
     _run(capsys, "init", str(root))

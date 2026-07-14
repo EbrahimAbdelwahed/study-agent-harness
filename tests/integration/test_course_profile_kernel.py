@@ -175,6 +175,33 @@ def test_sequence_race_without_course_is_retryable(tmp_path: Path) -> None:
         courses.get(course_id)
 
 
+def test_create_expected_sequence_is_checked_before_idempotent_return(
+    tmp_path: Path,
+) -> None:
+    _, events, courses, _ = stack(tmp_path)
+    course_id = CourseId("course-cas")
+    profile = CourseProfile(course_id, "Medicine", "it", learning_goals=("Learn",))
+    service = CourseService(events, Clock(), courses)
+
+    assert service.create(profile, context(course_id), expected_sequence=0) == profile
+    with pytest.raises(RetryableCourseConflictError, match="expected sequence"):
+        service.create(profile, context(course_id), expected_sequence=0)
+    assert len(events.read(course_id)) == 1
+
+
+def test_create_expected_sequence_reports_identical_append_race_as_retryable(
+    tmp_path: Path,
+) -> None:
+    _, events, courses, _ = stack(tmp_path)
+    course_id = CourseId("course-cas-race")
+    profile = CourseProfile(course_id, "Medicine", "it", learning_goals=("Learn",))
+    service = CourseService(RacingCourseEventStore(events, profile), Clock(), courses)
+
+    with pytest.raises(RetryableCourseConflictError, match="advanced before creation"):
+        service.create(profile, context(course_id), expected_sequence=0)
+    assert courses.get(course_id) == profile
+
+
 def test_orphan_ingestion_and_session_fail_before_writes(tmp_path: Path) -> None:
     blobs, events, courses, sessions = stack(tmp_path)
     course_id = CourseId("missing")

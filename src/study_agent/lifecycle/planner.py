@@ -108,7 +108,7 @@ def plan_lifecycle(
         )
         return LifecyclePlanV1(manifest.fingerprint, checksums, high_waters, tuple(actions))
 
-    expected_config = LocalRepositoryConfig(manifest.repository.model)
+    expected_config = desired_repository_config(manifest)
     if observed.state is RepositoryObservationState.CONFLICT or observed.config != expected_config:
         action(
             LifecycleActionKind.CONFLICT,
@@ -147,8 +147,8 @@ def plan_lifecycle(
                 ),
             )
             continue
-        desired_profile = _desired_profile(desired_course)
-        fingerprint = _course_fingerprint(desired_course)
+        desired_profile = desired_course_profile(desired_course)
+        fingerprint = desired_course_fingerprint(desired_course)
         if current_course is None:
             action(
                 LifecycleActionKind.CREATE_COURSE,
@@ -209,7 +209,7 @@ def plan_lifecycle(
                 )
                 continue
             snapshot = snapshot_by_identity[(course.course_id, source_id)]
-            fingerprint = _source_fingerprint(desired_source, snapshot)
+            fingerprint = desired_source_fingerprint(desired_source, snapshot)
             if current_source is None:
                 code = "source_absent"
             elif not _source_matches(desired_source, snapshot, current_source):
@@ -301,7 +301,9 @@ def status_for_plan(plan: LifecyclePlanV1) -> LifecycleStatusV1:
     )
 
 
-def _desired_profile(course: DesiredCourse) -> CourseProfile:
+def desired_course_profile(course: DesiredCourse) -> CourseProfile:
+    """Translate manifest course intent into the canonical course contract."""
+
     return CourseProfile(
         CourseId(course.course_id),
         course.title,
@@ -316,8 +318,8 @@ def _source_matches(
     desired: DesiredSource, snapshot: SourceSnapshot, observed: ObservedSource
 ) -> bool:
     return (
-        observed.kind is _source_kind(desired)
-        and observed.title == _source_title(desired)
+        observed.kind is desired_source_kind(desired)
+        and observed.title == desired_source_title(desired)
         and observed.trust_level == desired.trust_level
         and observed.source_role == desired.source_role
         and observed.checksum_sha256 == snapshot.checksum_sha256
@@ -325,18 +327,24 @@ def _source_matches(
     )
 
 
-def _source_kind(source: DesiredSource) -> SourceKind:
+def desired_source_kind(source: DesiredSource) -> SourceKind:
+    """Return the canonical source kind implied by a validated manifest path."""
+
     return SourceKind.MARKDOWN if source.path.endswith(".md") else SourceKind.TEXT
 
 
-def _source_title(source: DesiredSource) -> str:
+def desired_source_title(source: DesiredSource) -> str:
+    """Return the explicit or deterministic fallback canonical source title."""
+
     if source.title is not None:
         return source.title
     filename = source.path.rsplit("/", 1)[-1]
     return filename.rsplit(".", 1)[0]
 
 
-def _course_fingerprint(course: DesiredCourse) -> str:
+def desired_course_fingerprint(course: DesiredCourse) -> str:
+    """Fingerprint the immutable canonical portion of desired course state."""
+
     value: JsonObject = {
         "assessment_styles": course.assessment_styles,
         "course_id": course.course_id,
@@ -348,25 +356,44 @@ def _course_fingerprint(course: DesiredCourse) -> str:
     return _fingerprint(_COURSE_FINGERPRINT_DOMAIN, value)
 
 
-def _source_fingerprint(source: DesiredSource, snapshot: SourceSnapshot) -> str:
+def desired_source_fingerprint(
+    source: DesiredSource, snapshot: SourceSnapshot
+) -> str:
+    """Fingerprint desired source metadata together with immutable input bytes."""
+
     value: JsonObject = {
         "byte_size": snapshot.byte_size,
         "checksum_sha256": snapshot.checksum_sha256,
-        "kind": _source_kind(source).value,
+        "kind": desired_source_kind(source).value,
         "source_id": source.source_id,
         "source_role": source.source_role,
-        "title": _source_title(source),
+        "title": desired_source_title(source),
         "trust_level": source.trust_level,
     }
     return _fingerprint(_SOURCE_FINGERPRINT_DOMAIN, value)
 
 
+def desired_repository_config(manifest: LifecycleManifestV1) -> LocalRepositoryConfig:
+    """Translate validated repository intent into its canonical config value."""
+
+    return LocalRepositoryConfig(manifest.repository.model)
+
+
 def _config_fingerprint(manifest: LifecycleManifestV1) -> str:
-    return sha256(LocalRepositoryConfig(manifest.repository.model).to_bytes()).hexdigest()
+    return sha256(desired_repository_config(manifest).to_bytes()).hexdigest()
 
 
 def _fingerprint(domain: bytes, value: JsonObject) -> str:
     return sha256(domain + canonical_json_bytes(value)).hexdigest()
 
 
-__all__ = ["plan_lifecycle", "status_for_plan"]
+__all__ = [
+    "desired_course_fingerprint",
+    "desired_course_profile",
+    "desired_repository_config",
+    "desired_source_fingerprint",
+    "desired_source_kind",
+    "desired_source_title",
+    "plan_lifecycle",
+    "status_for_plan",
+]

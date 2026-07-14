@@ -90,6 +90,7 @@ _PARSER_INVOCATIONS = {
     "doctor": ("doctor",),
     "export": ("export", "course-1", "--output", "export"),
     "init": ("init", "repository"),
+    "manifest.apply": ("manifest", "apply", "--expect-plan", "0" * 64),
     "manifest.plan": ("manifest", "plan"),
     "manifest.schema": ("manifest", "schema"),
     "manifest.status": ("manifest", "status"),
@@ -237,7 +238,7 @@ def test_each_discovered_command_maps_to_exactly_one_parser_leaf(
 
     expected_groups = {
         "course": "{create,list}",
-        "manifest": "{schema,validate,plan,status}",
+        "manifest": "{schema,validate,plan,status,apply}",
         "operator": "{skill}",
         "session": "{list,start,get,resume}",
         "source": "{add,list}",

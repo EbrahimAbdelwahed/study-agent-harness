@@ -489,6 +489,33 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
             commands.handle_manifest_status,
         ),
         _registration(
+            "manifest.apply",
+            "Apply one explicitly authorized lifecycle plan with per-action revalidation.",
+            OperationEffect.CANONICAL_WRITE,
+            RepositoryRequirement.NONE,
+            NetworkRequirement.NEVER,
+            "plan-derived per-action identities and canonical event idempotency",
+            "replan and retry with the newly reported plan fingerprint",
+            (
+                _argument(
+                    "path",
+                    ArgumentKind.POSITIONAL,
+                    ArgumentValueType.PATH,
+                    False,
+                    default_json="./study-agent.manifest.json",
+                ),
+                _argument(
+                    "expect_plan",
+                    ArgumentKind.OPTION,
+                    ArgumentValueType.STRING,
+                    True,
+                ),
+            ),
+            "run manifest status and verify convergence or operational degradation",
+            _add_manifest_apply,
+            commands.handle_manifest_apply,
+        ),
+        _registration(
             "describe",
             "Describe the agent-operable harness contract.",
             OperationEffect.READ_ONLY,
@@ -815,6 +842,22 @@ def _add_manifest_status(topology: _ParserTopology) -> None:
         type=Path,
         default=Path("./study-agent.manifest.json"),
     )
+
+
+def _add_manifest_apply(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("manifest", "lifecycle manifest operations").add_parser(
+            "apply", help="apply one explicitly authorized lifecycle plan"
+        ),
+        "manifest.apply",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        default=Path("./study-agent.manifest.json"),
+    )
+    parser.add_argument("--expect-plan", required=True)
 
 
 def _add_describe(topology: _ParserTopology) -> None:

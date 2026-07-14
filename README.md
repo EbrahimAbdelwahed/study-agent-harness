@@ -94,6 +94,24 @@ do not create a replacement key. The model can propose only schema-bounded
 StudyTool arguments and never selects principal, capabilities, repository,
 course authority, or session authority.
 
+For desired-state setup, use a lifecycle manifest instead of scripting direct
+persistence calls. The manifest declares local repository, course, and source
+intent; it never declares authority or study behaviour. The lifecycle commands
+validate and snapshot local inputs, derive a deterministic plan, and apply only
+the exact plan fingerprint supplied by the host:
+
+```bash
+study-agent --json manifest validate study-agent.manifest.json
+study-agent --json manifest plan study-agent.manifest.json
+study-agent --json manifest apply study-agent.manifest.json --expect-plan PLAN_SHA256
+```
+
+Initialization is deliberately a separate first convergence step. If the
+repository is absent, apply creates only its safe operational layout; obtain a
+fresh plan before populating courses and sources. This keeps every canonical
+mutation behind its existing service owner and avoids pretending that a local
+multi-course setup is one global transaction.
+
 ## Models and credentials
 
 The bundled network adapter speaks an OpenAI-compatible HTTP protocol. Its
@@ -111,6 +129,12 @@ Use `study-agent init --help` for the adapter-setting syntax. Never put an API
 key in a model setting, committed file, command transcript, or export.
 
 ## Recovery and interruption semantics
+
+Lifecycle recovery always starts from current evidence: run `manifest status`,
+obtain a fresh `manifest plan`, then apply that new fingerprint. Receipts expose
+completed, skipped, degraded, conflicting, and remaining work, so an agent can
+resume after lost output without guessing whether a canonical event committed.
+An old fingerprint is not an authorization to replay stale intent.
 
 Source ingestion commits the canonical source revision before rebuilding the
 discardable retrieval index. If indexing fails, the CLI reports that the source
@@ -153,5 +177,5 @@ the default suite must not require an API key, provider SDK, or hosted service.
 
 ## Project status
 
-Version 0.1.1 is an alpha release and its public API is not stable. The project
+Version 0.2.0 is an alpha release and its public API is not stable. The project
 is available under the [Apache License 2.0](LICENSE).

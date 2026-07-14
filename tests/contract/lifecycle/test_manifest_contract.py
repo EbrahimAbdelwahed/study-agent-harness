@@ -15,6 +15,7 @@ from study_agent.lifecycle import (
 FIXTURE = (
     Path(__file__).parents[3]
     / "specs"
+    / "done"
     / "agent-managed-lifecycle"
     / "fixtures"
     / "manifest-v1.json"

@@ -15,6 +15,7 @@ from typing import Never, cast
 
 from study_agent.application import GroundingAskError
 from study_agent.domain._validation import JsonObject
+from study_agent.lifecycle import RetryableLifecycleConflictError, StaleLifecyclePlanError
 from study_agent.ports import CourseNotFoundError, SessionNotFoundError
 from study_agent.repository_config import (
     LocalConfigError,
@@ -24,6 +25,7 @@ from study_agent.repository_config import (
 from study_agent.sessions import RetryableSessionConflictError
 
 from .commands import SourceIndexError, _DeferredSigint, execute, execute_without_repository
+from .lifecycle import LifecyclePlanExpectationError
 from .output import CommandOutcome, emit_error, emit_success
 from .registry import CommandRequest, RepositoryRequirement, configure_parser, registration_for
 from .repository import (
@@ -142,6 +144,36 @@ def main(
             "retryable_conflict",
             "session state changed concurrently; retry with the same host-supplied identity",
             json_mode=json_mode,
+        )
+        return 4
+    except LifecyclePlanExpectationError as error:
+        emit_error(
+            "lifecycle_plan_mismatch",
+            "authorized lifecycle plan is stale; replan and retry",
+            json_mode=json_mode,
+            details={
+                "expected_plan": error.expected,
+                "observed_plan": error.observed.fingerprint,
+            },
+        )
+        return 4
+    except StaleLifecyclePlanError as error:
+        emit_error(
+            "lifecycle_plan_stale",
+            "lifecycle inputs changed during apply; replan and retry",
+            json_mode=json_mode,
+            details={
+                "expected_plan": error.expected_plan.fingerprint,
+                "observed_plan": error.observed_plan.fingerprint,
+            },
+        )
+        return 4
+    except RetryableLifecycleConflictError as error:
+        emit_error(
+            "lifecycle_retryable_conflict",
+            "canonical state changed during apply; replan and retry",
+            json_mode=json_mode,
+            details={"receipt": error.receipt.to_json()},
         )
         return 4
     except (OSError, RuntimeError):

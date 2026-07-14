@@ -16,6 +16,7 @@ from study_agent.adapters.filesystem import (
     initialize_local_repository,
     validate_local_repository_layout,
 )
+from study_agent.adapters.filesystem.repository_target import RepositoryObservationHandle
 from study_agent.adapters.model import (
     ADAPTER_ID as OPENAI_COMPATIBLE_ADAPTER_ID,
 )
@@ -26,7 +27,12 @@ from study_agent.adapters.model import (
     OpenAICompatibleConfig,
     OpenAICompatibleModel,
 )
-from study_agent.adapters.sqlite import SQLiteEventStore, SQLiteFtsRetrieval, SQLiteRunStore
+from study_agent.adapters.sqlite import (
+    SQLiteConnectionIdentityGuard,
+    SQLiteEventStore,
+    SQLiteFtsRetrieval,
+    SQLiteRunStore,
+)
 from study_agent.adapters.system import SystemClock
 from study_agent.application import (
     GroundingAskConfiguration,
@@ -96,8 +102,7 @@ class ModelAdapterRegistry:
     ) -> None:
         copied = dict(builders)
         if not copied or any(
-            not isinstance(key, str) or not key or key != key.strip()
-            for key in copied
+            not isinstance(key, str) or not key or key != key.strip() for key in copied
         ):
             raise ValueError("model adapter ids must be unique non-empty trimmed text")
         if any(not callable(builder) for builder in copied.values()):
@@ -144,9 +149,7 @@ class ModelAdapterRegistry:
         if config.credential_env is not None and (
             not isinstance(credential, str) or not credential
         ):
-            raise ModelAdapterConfigurationError(
-                "configured model credential is unavailable"
-            )
+            raise ModelAdapterConfigurationError("configured model credential is unavailable")
         try:
             return builder(config, credential)
         except Exception:
@@ -172,9 +175,7 @@ def default_model_adapters() -> ModelAdapterRegistry:
     )
 
 
-def _openai_compatible_model(
-    config: ModelAdapterConfig, credential: str | None
-) -> ModelPort:
+def _openai_compatible_model(config: ModelAdapterConfig, credential: str | None) -> ModelPort:
     expected = {"endpoint_url", "model_id", "timeout_seconds"}
     if set(config.settings) != expected:
         raise ModelAdapterConfigurationError(
@@ -231,11 +232,7 @@ class _EngineFactory(GroundingEngineFactory):
                     EvidenceSufficiencyValidator(),
                     GroundedAnswerIntegrityValidator(self._content),
                 ),
-                (
-                    PromptComposerRegistration(
-                        GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer()
-                    ),
-                ),
+                (PromptComposerRegistration(GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer()),),
             ),
             run_store=self._run_store,
             clock=self._clock,
@@ -268,9 +265,7 @@ class _RepositorySourceCatalog:
             for course_id in self._course_ids()
         )
 
-    def documents(
-        self, *, include_superseded: bool = False
-    ) -> tuple[RetrievalDocument, ...]:
+    def documents(self, *, include_superseded: bool = False) -> tuple[RetrievalDocument, ...]:
         return tuple(
             document
             for content in self._contents()
@@ -289,9 +284,7 @@ class _RepositorySourceCatalog:
 
     def resolve(self, citation: Citation) -> ResolvedCitation:
         document = self.canonical_document(citation.chunk_id)
-        return CourseSourceContent(
-            document.course_id, self._events, self._blobs
-        ).resolve(citation)
+        return CourseSourceContent(document.course_id, self._events, self._blobs).resolve(citation)
 
 
 class LocalRepository:
@@ -304,21 +297,73 @@ class LocalRepository:
         *,
         model_adapters: ModelAdapterRegistry | None = None,
         environment: Mapping[str, str] | None = None,
+        observation: RepositoryObservationHandle | None = None,
     ) -> None:
-        validate_local_repository_layout(paths)
-        persisted = LocalRepositoryConfig.load(paths.config)
-        if persisted != config:
-            raise LocalRepositoryError("loaded repository configuration is incompatible")
+        if observation is None:
+            validate_local_repository_layout(paths)
+            persisted = LocalRepositoryConfig.load(paths.config)
+            if persisted != config:
+                raise LocalRepositoryError("loaded repository configuration is incompatible")
+            blobs = FilesystemBlobStore(paths.blobs)
+        else:
+            if paths != observation.mutation_paths():
+                raise LocalRepositoryError("repository observation paths are incompatible")
+            blob_descriptor = observation.directory_descriptor("blobs")
+            try:
+                blobs = FilesystemBlobStore.from_descriptor(blob_descriptor, read_only=False)
+            finally:
+                os.close(blob_descriptor)
+        events_database = (
+            paths.events if observation is None else observation.mutation_database_path("events")
+        )
+        runs_database = (
+            paths.runs if observation is None else observation.mutation_database_path("runs")
+        )
+        retrieval_database = (
+            paths.retrieval
+            if observation is None
+            else observation.mutation_database_path("retrieval")
+        )
+        events_guard = (
+            None
+            if observation is None
+            else SQLiteConnectionIdentityGuard(
+                observation.database_connection_identity("events"),
+                observation.verify_binding,
+            )
+        )
+        runs_guard = (
+            None
+            if observation is None
+            else SQLiteConnectionIdentityGuard(
+                observation.database_connection_identity("runs"),
+                observation.verify_binding,
+            )
+        )
+        retrieval_guard = (
+            None
+            if observation is None
+            else SQLiteConnectionIdentityGuard(
+                observation.database_connection_identity("retrieval"),
+                observation.verify_binding,
+            )
+        )
         self.paths = paths
+        self._retrieval_database = retrieval_database
+        self._retrieval_connection_identity_guard = retrieval_guard
         self.config = config
         self.clock = SystemClock()
-        self.blobs = FilesystemBlobStore(paths.blobs)
+        self.blobs = blobs
         registry = EventRegistry()
         register_course_events(registry)
         register_source_revision_events(registry, self.blobs.get)
         register_session_events(registry)
-        self.events = SQLiteEventStore(paths.events, registry)
-        self.runs = SQLiteRunStore(paths.runs)
+        self.events = SQLiteEventStore(
+            events_database, registry, connection_identity_guard=events_guard
+        )
+        self.runs = SQLiteRunStore(
+            runs_database, connection_identity_guard=runs_guard
+        )
         self._source_catalog = _RepositorySourceCatalog(
             self.events.list_course_ids, self.events, self.blobs
         )
@@ -326,11 +371,11 @@ class LocalRepository:
         self.course_catalog = ProjectionCourseCatalog(self.events.list_course_ids, self.courses)
         self.course_service = CourseService(self.events, self.clock, self.courses)
         self.sessions = ProjectionSessionView(self.events.projection)
-        self.session_service = SessionService(
-            self.events, self.clock, self.sessions, self.courses
-        )
+        self.session_service = SessionService(self.events, self.clock, self.sessions, self.courses)
         self._model_adapters = model_adapters or default_model_adapters()
         self._environment = environment
+        if observation is not None:
+            observation.adopt_created_database_bindings()
 
     @classmethod
     def open(
@@ -349,11 +394,37 @@ class LocalRepository:
             environment=environment,
         )
 
+    @classmethod
+    def from_observation(
+        cls,
+        observation: RepositoryObservationHandle,
+        config: LocalRepositoryConfig,
+        *,
+        model_adapters: ModelAdapterRegistry | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> LocalRepository:
+        """Compose mutable adapters while retaining an inspected repository owner."""
+        if not isinstance(observation, RepositoryObservationHandle):
+            raise TypeError("observation must be a RepositoryObservationHandle")
+        if not isinstance(config, LocalRepositoryConfig):
+            raise TypeError("config must be a LocalRepositoryConfig")
+        return cls(
+            observation.mutation_paths(),
+            config,
+            model_adapters=model_adapters,
+            environment=environment,
+            observation=observation,
+        )
+
     def for_course(self, course_id: CourseId) -> CourseRepository:
         content = CourseSourceContent(course_id, self.events, self.blobs)
         return CourseRepository(
             content,
-            SQLiteFtsRetrieval(self.paths.retrieval, self._source_catalog),
+            SQLiteFtsRetrieval(
+                self._retrieval_database,
+                self._source_catalog,
+                connection_identity_guard=self._retrieval_connection_identity_guard,
+            ),
             TextIngestionService(
                 blobs=self.blobs,
                 events=self.events,
@@ -364,7 +435,11 @@ class LocalRepository:
 
     def rebuild_retrieval(self) -> IndexReceipt:
         """Rebuild the one discardable index from the complete canonical catalog."""
-        retrieval = SQLiteFtsRetrieval(self.paths.retrieval, self._source_catalog)
+        retrieval = SQLiteFtsRetrieval(
+            self._retrieval_database,
+            self._source_catalog,
+            connection_identity_guard=self._retrieval_connection_identity_guard,
+        )
         documents = tuple(self._source_catalog.documents(include_superseded=True))
         return retrieval.rebuild(documents)
 
@@ -381,7 +456,11 @@ class LocalRepository:
             raise LocalRepositoryError("repository retrieval receipt is incompatible")
         content = CourseSourceContent(course_id, self.events, self.blobs)
         documents = tuple(content.documents(include_superseded=True))
-        retrieval = SQLiteFtsRetrieval(self.paths.retrieval, self._source_catalog)
+        retrieval = SQLiteFtsRetrieval(
+            self._retrieval_database,
+            self._source_catalog,
+            connection_identity_guard=self._retrieval_connection_identity_guard,
+        )
         try:
             audited = retrieval.index(())
         except (OSError, RuntimeError, ValueError) as error:
@@ -389,9 +468,7 @@ class LocalRepository:
                 "retrieval index does not match the canonical repository catalog"
             ) from error
         if audited != repository_receipt:
-            raise LocalRepositoryError(
-                "repository retrieval receipt is stale or incompatible"
-            )
+            raise LocalRepositoryError("repository retrieval receipt is stale or incompatible")
         return IndexReceipt(
             len(documents),
             repository_receipt.index_version,

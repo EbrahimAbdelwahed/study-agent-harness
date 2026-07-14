@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
-from collections.abc import Iterator, Sequence
+import stat
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
+from typing import Protocol
+from urllib.parse import quote
 
 from study_agent.domain.events import DomainEvent
 from study_agent.domain.identifiers import CourseId
@@ -38,6 +42,57 @@ class ProjectionConsistencyError(RuntimeError):
 
 class UnsupportedSQLiteDatabaseError(ValueError):
     """The adapter requires a path-backed database for connection-safe persistence."""
+
+
+class SQLiteConnectionGuard(Protocol):
+    """Technical seam that proves which regular file SQLite actually opened."""
+
+    def connect(
+        self, opener: Callable[[], sqlite3.Connection]
+    ) -> sqlite3.Connection: ...
+
+
+class SQLiteConnectionIdentityError(RuntimeError):
+    """SQLite did not retain the database identity authorized by its host."""
+
+
+class SQLiteConnectionIdentityGuard:
+    """Fail closed unless SQLite retains exactly the host-authorized inode."""
+
+    def __init__(
+        self,
+        expected_identity: tuple[int, int],
+        verify_owner: Callable[[], None],
+    ) -> None:
+        self._expected_identity = expected_identity
+        self._verify_owner = verify_owner
+
+    def connect(
+        self, opener: Callable[[], sqlite3.Connection]
+    ) -> sqlite3.Connection:
+        self._verify_owner()
+        before = _live_file_descriptors()
+        try:
+            connection = opener()
+        except sqlite3.Error:
+            self._verify_owner()
+            raise
+        try:
+            after = _live_file_descriptors()
+            opened_regular = _new_regular_identities(before, after)
+            if not opened_regular:
+                connection.execute("PRAGMA schema_version").fetchone()
+                after = _live_file_descriptors()
+                opened_regular = _new_regular_identities(before, after)
+            if opened_regular != (self._expected_identity,):
+                raise SQLiteConnectionIdentityError(
+                    "SQLite connection did not retain the authorized database binding"
+                )
+            self._verify_owner()
+            return connection
+        except BaseException:
+            connection.close()
+            raise
 
 
 _SCHEMA = """
@@ -73,7 +128,12 @@ class SQLiteEventStore:
     """Reference event store; SQLite serializes writers with ``BEGIN IMMEDIATE``."""
 
     def __init__(
-        self, database: str | Path, registry: EventRegistry, *, read_only: bool = False
+        self,
+        database: str | Path,
+        registry: EventRegistry,
+        *,
+        read_only: bool = False,
+        connection_identity_guard: SQLiteConnectionGuard | None = None,
     ) -> None:
         self._database = str(database)
         if self._database == ":memory:":
@@ -83,6 +143,7 @@ class SQLiteEventStore:
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
         self._read_only = read_only
+        self._connection_identity_guard = connection_identity_guard
         self._registry = registry
         if not read_only:
             with closing(self._connect()) as connection:
@@ -96,8 +157,17 @@ class SQLiteEventStore:
                 Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
             )
             uri = True
-        connection = sqlite3.connect(
-            database, isolation_level=None, timeout=30, uri=uri
+        elif self._connection_identity_guard is not None:
+            database = _writable_nofollow_uri(database)
+            uri = True
+        def opener() -> sqlite3.Connection:
+            return sqlite3.connect(
+                database, isolation_level=None, timeout=30, uri=uri
+            )
+        connection = (
+            opener()
+            if self._connection_identity_guard is None
+            else self._connection_identity_guard.connect(opener)
         )
         if not self._read_only:
             connection.execute("PRAGMA busy_timeout = 30000")
@@ -117,7 +187,6 @@ class SQLiteEventStore:
             raise
         finally:
             connection.close()
-
     @staticmethod
     def _current_sequence(connection: sqlite3.Connection, course_id: CourseId) -> int:
         row = connection.execute(
@@ -266,3 +335,50 @@ class SQLiteEventStore:
         events = tuple(self.read(course_id))
         replayed = replay(course_id, events, self._registry).canonical_bytes()
         return persisted == replayed
+
+
+def _writable_nofollow_uri(database: str) -> str:
+    """Open an existing database without following its final path component."""
+
+    path = Path(database)
+    base = (
+        path.as_uri()
+        if path.is_absolute()
+        else f"file:{quote(path.as_posix(), safe='/')}"
+    )
+    return f"{base}?mode=rw&nofollow=1"
+
+
+def _live_file_descriptors() -> dict[int, tuple[int, int] | None]:
+    for root in (Path("/dev/fd"), Path("/proc/self/fd")):
+        try:
+            entries = os.listdir(root)
+        except OSError:
+            continue
+        live: dict[int, tuple[int, int] | None] = {}
+        for entry in entries:
+            try:
+                descriptor = int(entry)
+                metadata = os.fstat(descriptor)
+            except (OSError, ValueError):
+                continue
+            live[descriptor] = (
+                (metadata.st_dev, metadata.st_ino)
+                if stat.S_ISREG(metadata.st_mode)
+                else None
+            )
+        return live
+    raise SQLiteConnectionIdentityError(
+        "platform cannot inspect SQLite connection file descriptors"
+    )
+
+
+def _new_regular_identities(
+    before: dict[int, tuple[int, int] | None],
+    after: dict[int, tuple[int, int] | None],
+) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        identity
+        for descriptor, identity in after.items()
+        if descriptor not in before and identity is not None
+    )

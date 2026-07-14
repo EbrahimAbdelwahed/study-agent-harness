@@ -6,9 +6,11 @@ import errno
 import fcntl
 import os
 import stat
+import threading
 import unicodedata
 import weakref
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -28,6 +30,8 @@ _RUN_DATABASE = "runs.sqlite3"
 _RETRIEVAL_DATABASE = "retrieval.sqlite3"
 _REPOSITORY_LOCK = ".study-agent.lock"
 _CONFIG_TEMPORARY = ".study-agent.json.tmp"
+_MUTATION_CWD_LOCK = threading.RLock()
+_MUTATION_CWD_ACTIVE = False
 
 _DIRECTORY_OPEN_FLAGS = (
     os.O_RDONLY
@@ -104,12 +108,16 @@ class RepositoryObservationHandle:
         target: ResolvedRepositoryTarget,
         descriptors: dict[str, int | None],
         identities: dict[str, tuple[int, int] | None],
+        expected_config: LocalRepositoryConfig,
     ) -> None:
         self._target = target
         self._descriptors = descriptors
         self._identities = identities
+        self._expected_config = expected_config
+        self._mutation_scope_active = False
         owned = tuple(value for value in descriptors.values() if value is not None)
         self._finalizer = weakref.finalize(self, _close_descriptors, owned)
+        self._adopted_finalizers: list[weakref.finalize[..., object]] = []
 
     @property
     def paths(self) -> LocalRepositoryPaths:
@@ -121,6 +129,163 @@ class RepositoryObservationHandle:
         if name not in {"blobs"}:
             raise ValueError("unsupported repository directory descriptor")
         return os.dup(self._required_descriptor(name))
+
+    def mutation_paths(self) -> LocalRepositoryPaths:
+        """Return verified display paths for this retained repository owner."""
+        self.verify_binding()
+        return self._target.paths
+
+    @contextmanager
+    def mutation_scope(self) -> Iterator[None]:
+        """Pin lifecycle SQLite opens to the retained state directory.
+
+        This is a CLI composition seam: changing the process working directory is
+        process-global, so every lifecycle caller is serialized by one process-wide
+        lock. The prior working directory is restored on both success and failure.
+        SQLite adapters must be constructed and used entirely inside this scope.
+        """
+        global _MUTATION_CWD_ACTIVE
+
+        if not self._finalizer.alive:
+            raise RepositoryTargetError("repository observation handle is closed")
+        with _MUTATION_CWD_LOCK:
+            if _MUTATION_CWD_ACTIVE:
+                raise RepositoryTargetError("repository mutation scope is already active")
+            _MUTATION_CWD_ACTIVE = True
+            try:
+                previous_directory = os.open(".", _DIRECTORY_OPEN_FLAGS)
+                changed_directory = False
+                try:
+                    self.verify_binding()
+                    self._ensure_database_bindings()
+                    os.fchdir(self._required_descriptor("state"))
+                    changed_directory = True
+                    self.verify_binding()
+                    self._mutation_scope_active = True
+                    try:
+                        yield
+                    finally:
+                        self.adopt_created_database_bindings()
+                        self.verify_binding()
+                finally:
+                    self._mutation_scope_active = False
+                    try:
+                        if changed_directory:
+                            os.fchdir(previous_directory)
+                    finally:
+                        os.close(previous_directory)
+            finally:
+                _MUTATION_CWD_ACTIVE = False
+
+    def mutation_database_path(self, name: str) -> Path:
+        """Return a canonical relative SQLite name inside an active mutation scope."""
+        entries = {
+            "events": _EVENT_DATABASE,
+            "runs": _RUN_DATABASE,
+            "retrieval": _RETRIEVAL_DATABASE,
+        }
+        try:
+            entry = entries[name]
+        except KeyError:
+            raise ValueError("unsupported repository database") from None
+        if not self._mutation_scope_active:
+            raise RepositoryTargetError("repository mutation scope is not active")
+        return Path(entry)
+
+    def database_connection_identity(self, name: str) -> tuple[int, int]:
+        """Return the retained identity for one mutable database entry."""
+        if name not in {"events", "runs", "retrieval"}:
+            raise ValueError("unsupported repository database")
+        if not self._mutation_scope_active:
+            raise RepositoryTargetError("repository mutation scope is not active")
+        descriptor = self._required_descriptor(name)
+        identity = self._identities[name]
+        if identity is None:
+            raise RepositoryTargetError("repository database binding is unavailable")
+        _verify_descriptor_identity(descriptor, identity, directory=False)
+        return identity
+
+    def _ensure_database_bindings(self) -> None:
+        """Create absent database entries with no-follow openat before SQLite runs."""
+        state_descriptor = self._required_descriptor("state")
+        created_any = False
+        for name, entry in (
+            ("events", _EVENT_DATABASE),
+            ("runs", _RUN_DATABASE),
+            ("retrieval", _RETRIEVAL_DATABASE),
+        ):
+            if self._descriptors[name] is not None:
+                continue
+            flags = (
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
+            try:
+                descriptor = os.open(entry, flags, 0o600, dir_fd=state_descriptor)
+            except FileExistsError:
+                raise RepositoryTargetError("repository database binding changed") from None
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise RepositoryTargetError("repository database path is incompatible")
+                identity = (metadata.st_dev, metadata.st_ino)
+                _verify_regular_binding(
+                    state_descriptor, entry, identity, "repository database"
+                )
+                os.fsync(descriptor)
+            except BaseException:
+                os.close(descriptor)
+                raise
+            self._descriptors[name] = descriptor
+            self._identities[name] = identity
+            self._adopted_finalizers.append(weakref.finalize(self, os.close, descriptor))
+            created_any = True
+        if created_any:
+            os.fsync(state_descriptor)
+        self.verify_binding()
+
+    def adopt_created_database_bindings(self) -> None:
+        """Pin databases created by a mutation and reject replaced existing ones."""
+        if not self._finalizer.alive:
+            raise RepositoryTargetError("repository observation handle is closed")
+        self._verify_retained_owner()
+        state_descriptor = self._required_descriptor("state")
+        for name, entry in (
+            ("events", _EVENT_DATABASE),
+            ("runs", _RUN_DATABASE),
+            ("retrieval", _RETRIEVAL_DATABASE),
+        ):
+            descriptor = self._descriptors[name]
+            identity = self._identities[name]
+            if descriptor is not None:
+                if identity is None:
+                    raise RepositoryTargetError("repository observation binding is invalid")
+                _verify_descriptor_identity(descriptor, identity, directory=False)
+                _verify_regular_binding(state_descriptor, entry, identity, "repository database")
+                continue
+            created = _open_optional_regular(state_descriptor, entry)
+            if created is None:
+                continue
+            metadata = os.fstat(created)
+            created_identity = (metadata.st_dev, metadata.st_ino)
+            try:
+                _verify_regular_binding(
+                    state_descriptor,
+                    entry,
+                    created_identity,
+                    "repository database",
+                )
+            except BaseException:
+                os.close(created)
+                raise
+            self._descriptors[name] = created
+            self._identities[name] = created_identity
+            self._adopted_finalizers.append(weakref.finalize(self, os.close, created))
+        self.verify_binding()
 
     def database_descriptor_path(self, name: str) -> Path | None:
         """Return an identity-checked process-local path to a retained database fd."""
@@ -135,20 +300,7 @@ class RepositoryObservationHandle:
         """Revalidate every retained descriptor and its repository entry binding."""
         if not self._finalizer.alive:
             raise RepositoryTargetError("repository observation handle is closed")
-        _verify_complete_binding(
-            self._target, self._target.existing_prefix_identities
-        )
-        target_descriptor = self._required_descriptor("target")
-        for name, entry in (
-            ("state", _STATE_DIRECTORY),
-            ("blobs", _BLOB_DIRECTORY),
-            ("exports", _EXPORT_DIRECTORY),
-        ):
-            identity = self._identities[name]
-            if identity is None:
-                raise RepositoryTargetError("repository observation binding is invalid")
-            _verify_descriptor_identity(self._required_descriptor(name), identity, directory=True)
-            _verify_child_binding(target_descriptor, entry, identity)
+        self._verify_retained_owner()
         state_descriptor = self._required_descriptor("state")
         for name, entry in (
             ("events", _EVENT_DATABASE),
@@ -166,8 +318,35 @@ class RepositoryObservationHandle:
             _verify_descriptor_identity(descriptor, identity, directory=False)
             _verify_regular_binding(state_descriptor, entry, identity, "repository database")
 
+    def _verify_retained_owner(self) -> None:
+        _verify_complete_binding(self._target, self._target.existing_prefix_identities)
+        target_descriptor = self._required_descriptor("target")
+        if _read_config(target_descriptor, missing_ok=False) != self._expected_config:
+            raise RepositoryTargetError("repository configuration changed")
+        for name, entry, label in (
+            ("config", CONFIG_FILENAME, "repository configuration"),
+            ("lock", _REPOSITORY_LOCK, "repository lock"),
+        ):
+            identity = self._identities[name]
+            if identity is None:
+                raise RepositoryTargetError("repository observation binding is invalid")
+            _verify_descriptor_identity(self._required_descriptor(name), identity, directory=False)
+            _verify_regular_binding(target_descriptor, entry, identity, label)
+        for name, entry in (
+            ("state", _STATE_DIRECTORY),
+            ("blobs", _BLOB_DIRECTORY),
+            ("exports", _EXPORT_DIRECTORY),
+        ):
+            identity = self._identities[name]
+            if identity is None:
+                raise RepositoryTargetError("repository observation binding is invalid")
+            _verify_descriptor_identity(self._required_descriptor(name), identity, directory=True)
+            _verify_child_binding(target_descriptor, entry, identity)
+
     def close(self) -> None:
         """Release all descriptors retained by this observation capability."""
+        for finalizer in reversed(self._adopted_finalizers):
+            finalizer()
         self._finalizer()
 
     def __enter__(self) -> RepositoryObservationHandle:
@@ -300,9 +479,7 @@ def inspect_repository_target(
         root_descriptor = _open_directory(target.trusted_root)
         descriptors.append(root_descriptor)
         if _directory_identity(root_descriptor) != target.verified_root_identity:
-            return _repository_inspection(
-                target, RepositoryTargetInspectionCode.CONFLICT
-            )
+            return _repository_inspection(target, RepositoryTargetInspectionCode.CONFLICT)
 
         parent_descriptor = root_descriptor
         observed_identities: list[tuple[int, int]] = []
@@ -315,34 +492,27 @@ def inspect_repository_target(
             descriptors.append(descriptor)
             identity = _directory_identity(descriptor)
             if identity != expected_identity:
-                return _repository_inspection(
-                    target, RepositoryTargetInspectionCode.CONFLICT
-                )
+                return _repository_inspection(target, RepositoryTargetInspectionCode.CONFLICT)
             observed_identities.append(identity)
             parent_descriptor = descriptor
 
         if target.missing_parts:
             if _entry_is_absent(parent_descriptor, target.missing_parts[0]):
-                return _repository_inspection(
-                    target, RepositoryTargetInspectionCode.ABSENT
-                )
-            return _repository_inspection(
-                target, RepositoryTargetInspectionCode.CONFLICT
-            )
+                return _repository_inspection(target, RepositoryTargetInspectionCode.ABSENT)
+            return _repository_inspection(target, RepositoryTargetInspectionCode.CONFLICT)
 
         observed_config = _read_config(parent_descriptor, missing_ok=False)
         if observed_config != expected_config:
-            return _repository_inspection(
-                target, RepositoryTargetInspectionCode.CONFLICT
-            )
+            return _repository_inspection(target, RepositoryTargetInspectionCode.CONFLICT)
         _validate_layout_fd(parent_descriptor)
         if _read_config(parent_descriptor, missing_ok=False) != expected_config:
-            return _repository_inspection(
-                target, RepositoryTargetInspectionCode.CONFLICT
-            )
+            return _repository_inspection(target, RepositoryTargetInspectionCode.CONFLICT)
         _verify_complete_binding(target, tuple(observed_identities))
         observation = _open_observation_handle(
-            target, parent_descriptor, tuple(observed_identities)
+            target,
+            parent_descriptor,
+            tuple(observed_identities),
+            expected_config,
         )
         try:
             observation.verify_binding()
@@ -367,9 +537,7 @@ def _repository_inspection(
     code: RepositoryTargetInspectionCode,
     observation: RepositoryObservationHandle | None = None,
 ) -> RepositoryTargetInspection:
-    return RepositoryTargetInspection(
-        code=code, paths=target.paths, observation=observation
-    )
+    return RepositoryTargetInspection(code=code, paths=target.paths, observation=observation)
 
 
 def initialize_repository_target(
@@ -452,9 +620,7 @@ def initialize_repository_target(
             )
             lock_created = True
         except FileExistsError:
-            lock_descriptor = os.open(
-                _REPOSITORY_LOCK, lock_flags, dir_fd=target_descriptor
-            )
+            lock_descriptor = os.open(_REPOSITORY_LOCK, lock_flags, dir_fd=target_descriptor)
         if not stat.S_ISREG(os.fstat(lock_descriptor).st_mode):
             raise RepositoryTargetError("repository lock is incompatible")
         lock_metadata = os.fstat(lock_descriptor)
@@ -563,9 +729,7 @@ def initialize_repository_target(
         except FileExistsError:
             existing_config = _read_config(target_descriptor, missing_ok=False)
             if existing_config != config:
-                raise RepositoryTargetError(
-                    "repository configuration is incompatible"
-                ) from None
+                raise RepositoryTargetError("repository configuration is incompatible") from None
         _remove_verified_regular(target_descriptor, _CONFIG_TEMPORARY)
         temporary_created = False
         os.fsync(target_descriptor)
@@ -619,9 +783,7 @@ def validate_local_repository_layout(paths: LocalRepositoryPaths) -> None:
 
     for directory in (paths.root, paths.state, paths.blobs, paths.exports):
         if directory.is_symlink() or not directory.is_dir():
-            raise RepositoryTargetError(
-                "repository layout contains an incompatible directory"
-            )
+            raise RepositoryTargetError("repository layout contains an incompatible directory")
     if paths.config.is_symlink() or not paths.config.is_file():
         raise RepositoryTargetError("repository configuration is incompatible")
     lock = paths.root / _REPOSITORY_LOCK
@@ -641,9 +803,7 @@ def _openat_directory(parent_descriptor: int, name: str) -> int:
         ) from None
 
 
-def _verify_child_binding(
-    parent_descriptor: int, name: str, expected: tuple[int, int]
-) -> None:
+def _verify_child_binding(parent_descriptor: int, name: str, expected: tuple[int, int]) -> None:
     try:
         descriptor = _openat_directory(parent_descriptor, name)
     except RepositoryTargetError:
@@ -706,9 +866,7 @@ def _entry_is_absent(directory_descriptor: int, name: str) -> bool:
     return False
 
 
-def _read_config(
-    directory_descriptor: int, *, missing_ok: bool
-) -> LocalRepositoryConfig | None:
+def _read_config(directory_descriptor: int, *, missing_ok: bool) -> LocalRepositoryConfig | None:
     flags = (
         os.O_RDONLY
         | getattr(os, "O_NOFOLLOW", 0)
@@ -742,13 +900,10 @@ def _read_config(
                 follow_symlinks=False,
             )
         except OSError:
-            raise RepositoryTargetError(
-                "repository configuration is incompatible"
-            ) from None
+            raise RepositoryTargetError("repository configuration is incompatible") from None
         if (
             _stable_file_identity(before) != _stable_file_identity(after)
-            or (before.st_dev, before.st_ino)
-            != (final_name.st_dev, final_name.st_ino)
+            or (before.st_dev, before.st_ino) != (final_name.st_dev, final_name.st_ino)
             or not stat.S_ISREG(final_name.st_mode)
             or len(payload) > MAX_CONFIG_BYTES
         ):
@@ -756,9 +911,7 @@ def _read_config(
         try:
             return LocalRepositoryConfig.from_bytes(payload)
         except LocalConfigError:
-            raise RepositoryTargetError(
-                "repository configuration is incompatible"
-            ) from None
+            raise RepositoryTargetError("repository configuration is incompatible") from None
     finally:
         os.close(descriptor)
 
@@ -775,20 +928,14 @@ def _remove_verified_regular(directory_descriptor: int, name: str) -> None:
     except OSError as error:
         if error.errno == errno.ENOENT:
             return
-        raise RepositoryTargetError(
-            "temporary configuration path is incompatible"
-        ) from None
+        raise RepositoryTargetError("temporary configuration path is incompatible") from None
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
-            raise RepositoryTargetError(
-                "temporary configuration path is incompatible"
-            )
+            raise RepositoryTargetError("temporary configuration path is incompatible")
         current = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
         if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
-            raise RepositoryTargetError(
-                "temporary configuration path is incompatible"
-            )
+            raise RepositoryTargetError("temporary configuration path is incompatible")
         os.unlink(name, dir_fd=directory_descriptor)
         os.fsync(directory_descriptor)
     finally:
@@ -807,16 +954,11 @@ def _verify_regular_binding(
         metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
     except OSError:
         raise RepositoryTargetError(f"{label} is incompatible") from None
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or (metadata.st_dev, metadata.st_ino) != expected
-    ):
+    if not stat.S_ISREG(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != expected:
         raise RepositoryTargetError(f"{label} is incompatible")
 
 
-def _ensure_empty_directory(
-    parent_descriptor: int, name: str
-) -> tuple[int, bool]:
+def _ensure_empty_directory(parent_descriptor: int, name: str) -> tuple[int, bool]:
     created = False
     try:
         os.mkdir(name, 0o700, dir_fd=parent_descriptor)
@@ -826,9 +968,7 @@ def _ensure_empty_directory(
     descriptor = _openat_directory(parent_descriptor, name)
     if _directory_entries(descriptor):
         os.close(descriptor)
-        raise RepositoryTargetError(
-            "interrupted repository initialization is incompatible"
-        )
+        raise RepositoryTargetError("interrupted repository initialization is incompatible")
     _verify_child_binding(parent_descriptor, name, _directory_identity(descriptor))
     if created:
         os.fsync(parent_descriptor)
@@ -856,26 +996,18 @@ def _rollback_created(
 ) -> None:
     if target_descriptor is not None:
         if config_created and temporary_identity is not None:
-            _remove_owned_regular(
-                target_descriptor, CONFIG_FILENAME, temporary_identity
-            )
+            _remove_owned_regular(target_descriptor, CONFIG_FILENAME, temporary_identity)
         if temporary_created and temporary_identity is not None:
-            _remove_owned_regular(
-                target_descriptor, _CONFIG_TEMPORARY, temporary_identity
-            )
+            _remove_owned_regular(target_descriptor, _CONFIG_TEMPORARY, temporary_identity)
         for parent, name, identity in reversed(created_layout):
             _remove_owned_directory(parent, name, identity)
         if remove_lock and lock_identity is not None:
-            _remove_owned_regular(
-                target_descriptor, _REPOSITORY_LOCK, lock_identity
-            )
+            _remove_owned_regular(target_descriptor, _REPOSITORY_LOCK, lock_identity)
     for parent, name, identity in reversed(owned_tail):
         _remove_owned_directory(parent, name, identity)
 
 
-def _remove_owned_regular(
-    parent_descriptor: int, name: str, identity: tuple[int, int]
-) -> None:
+def _remove_owned_regular(parent_descriptor: int, name: str, identity: tuple[int, int]) -> None:
     try:
         current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
     except OSError:
@@ -887,9 +1019,7 @@ def _remove_owned_regular(
         os.fsync(parent_descriptor)
 
 
-def _remove_owned_directory(
-    parent_descriptor: int, name: str, identity: tuple[int, int]
-) -> None:
+def _remove_owned_directory(parent_descriptor: int, name: str, identity: tuple[int, int]) -> None:
     try:
         current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
     except OSError:
@@ -922,9 +1052,7 @@ def _validate_layout_fd(target_descriptor: int) -> None:
     try:
         for database in (_EVENT_DATABASE, _RUN_DATABASE, _RETRIEVAL_DATABASE):
             try:
-                metadata = os.stat(
-                    database, dir_fd=state_descriptor, follow_symlinks=False
-                )
+                metadata = os.stat(database, dir_fd=state_descriptor, follow_symlinks=False)
             except FileNotFoundError:
                 continue
             if not stat.S_ISREG(metadata.st_mode):
@@ -937,6 +1065,7 @@ def _open_observation_handle(
     target: ResolvedRepositoryTarget,
     target_descriptor: int,
     observed_identities: tuple[tuple[int, int], ...],
+    expected_config: LocalRepositoryConfig,
 ) -> RepositoryObservationHandle:
     """Retain the verified repository entries without reopening lexical paths."""
     if observed_identities != target.existing_prefix_identities:
@@ -947,6 +1076,18 @@ def _open_observation_handle(
         target_duplicate = os.dup(target_descriptor)
         opened["target"] = target_duplicate
         identities["target"] = _directory_identity(target_duplicate)
+        for name, entry, label in (
+            ("config", CONFIG_FILENAME, "repository configuration"),
+            ("lock", _REPOSITORY_LOCK, "repository lock"),
+        ):
+            descriptor = _open_optional_regular(target_descriptor, entry)
+            if descriptor is None:
+                raise RepositoryTargetError(f"{label} is incompatible")
+            opened[name] = descriptor
+            metadata = os.fstat(descriptor)
+            identity = (metadata.st_dev, metadata.st_ino)
+            identities[name] = identity
+            _verify_regular_binding(target_descriptor, entry, identity, label)
         for name, entry in (
             ("state", _STATE_DIRECTORY),
             ("blobs", _BLOB_DIRECTORY),
@@ -973,16 +1114,12 @@ def _open_observation_handle(
                 metadata = os.fstat(database_descriptor)
                 identity = (metadata.st_dev, metadata.st_ino)
                 identities[name] = identity
-                _verify_regular_binding(
-                    state_descriptor, entry, identity, "repository database"
-                )
-        handle = RepositoryObservationHandle(target, opened, identities)
+                _verify_regular_binding(state_descriptor, entry, identity, "repository database")
+        handle = RepositoryObservationHandle(target, opened, identities, expected_config)
         opened = {}
         return handle
     finally:
-        _close_descriptors(
-            tuple(value for value in opened.values() if value is not None)
-        )
+        _close_descriptors(tuple(value for value in opened.values() if value is not None))
 
 
 def _open_optional_regular(parent_descriptor: int, name: str) -> int | None:
@@ -1032,9 +1169,7 @@ def _stable_descriptor_path(descriptor: int) -> Path:
                 return candidate
         finally:
             os.close(probe)
-    raise RepositoryTargetError(
-        "platform cannot bind SQLite reads to retained file descriptors"
-    )
+    raise RepositoryTargetError("platform cannot bind SQLite reads to retained file descriptors")
 
 
 def _close_descriptors(descriptors: tuple[int, ...]) -> None:
@@ -1090,10 +1225,7 @@ def _validate_resolved_target(target: ResolvedRepositoryTarget) -> None:
 
 
 def _valid_identity(value: tuple[int, int]) -> bool:
-    return (
-        len(value) == 2
-        and all(isinstance(item, int) and item >= 0 for item in value)
-    )
+    return len(value) == 2 and all(isinstance(item, int) and item >= 0 for item in value)
 
 
 def _stable_file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:

@@ -597,7 +597,7 @@ This specification.
 - contributor-ready documentation and examples.
 
 The agent-managed lifecycle plan is maintained in
-[`specs/agent-managed-lifecycle/README.md`](../../specs/agent-managed-lifecycle/README.md),
+[`specs/done/agent-managed-lifecycle/README.md`](../../specs/done/agent-managed-lifecycle/README.md),
 with its authority boundary recorded in
 [`ADR-0003`](../decisions/ADR-0003--agent-operated-management-plane.md).
 

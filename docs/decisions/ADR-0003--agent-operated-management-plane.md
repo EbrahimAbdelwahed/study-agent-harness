@@ -55,6 +55,11 @@ sources, or request authority.
   semantics rather than a lock that only one entry point observes.
 - Filesystem manifest/source loading becomes a security-critical adapter with
   explicit traversal, symlink, size, race, and secret-handling tests.
+- The reference CLI mutation adapter is serial: it pins the inspected SQLite
+  owner through a process-global working-directory scope and verifies the live
+  database descriptor before writing. Concurrent embedding hosts must provide
+  their own isolated `LifecycleRuntime`, rather than reusing this CLI seam
+  alongside unrelated relative-path I/O.
 - Remote sources, destructive reconciliation, dynamic skills, and config
   migration require separate future decisions.
 

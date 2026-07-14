@@ -4,11 +4,17 @@ from .chunking import CHUNKER_VERSION, ChunkingConfig, chunk_text
 from .events import (
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     BlobLoader,
     PersistedChunkingConfig,
     SourceRevisionIngested,
+    SourceRevisionSelected,
     decode_source_revision_event,
     decode_source_revision_ingested,
+    decode_source_revision_selected,
+    decode_source_revision_selected_event,
+    source_revision_selected_payload,
 )
 from .identity import (
     CHUNK_MAX_CHARACTERS,
@@ -18,6 +24,7 @@ from .identity import (
     revision_id_for,
     source_event_id_for,
     source_kind_contract,
+    source_revision_selected_event_id_for,
 )
 from .normalization import (
     NORMALIZATION_VERSION,
@@ -28,6 +35,7 @@ from .normalization import (
 from .projection import (
     chunk_manifest,
     reduce_source_revision,
+    reduce_source_revision_selected,
     register_source_revision_events,
     source_manifest,
     source_revision_payload,
@@ -48,6 +56,8 @@ __all__ = [
     "NORMALIZATION_VERSION",
     "SOURCE_REVISION_INGESTED",
     "SOURCE_REVISION_SCHEMA_VERSION",
+    "SOURCE_REVISION_SELECTED",
+    "SOURCE_REVISION_SELECTED_SCHEMA_VERSION",
     "BlobLoader",
     "ChunkingConfig",
     "IngestionErrorCode",
@@ -56,6 +66,7 @@ __all__ = [
     "NormalizedText",
     "PersistedChunkingConfig",
     "SourceRevisionIngested",
+    "SourceRevisionSelected",
     "TextIngestionError",
     "TextIngestionResult",
     "TextIngestionService",
@@ -64,12 +75,17 @@ __all__ = [
     "chunk_text",
     "decode_source_revision_event",
     "decode_source_revision_ingested",
+    "decode_source_revision_selected",
+    "decode_source_revision_selected_event",
     "normalize_utf8",
     "reduce_source_revision",
+    "reduce_source_revision_selected",
     "register_source_revision_events",
     "revision_id_for",
     "source_event_id_for",
     "source_kind_contract",
     "source_manifest",
     "source_revision_payload",
+    "source_revision_selected_event_id_for",
+    "source_revision_selected_payload",
 ]

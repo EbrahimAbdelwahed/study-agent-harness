@@ -23,6 +23,8 @@ from study_agent.ports.retrieval import (
     retrieval_read_set_fingerprint,
 )
 
+from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
+
 INDEX_VERSION = "sqlite-fts5-unicode61-v1"
 RETRIEVAL_STRATEGY_ID = "sqlite_fts5_bm25"
 RETRIEVAL_STRATEGY_VERSION = "1.0.0"
@@ -108,6 +110,7 @@ class SQLiteFtsRetrieval:
         content: RetrievalCatalogPort,
         *,
         read_only: bool = False,
+        connection_identity_guard: SQLiteConnectionGuard | None = None,
     ) -> None:
         self._database = str(database)
         if self._database == ":memory:":
@@ -115,6 +118,7 @@ class SQLiteFtsRetrieval:
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
         self._read_only = read_only
+        self._connection_identity_guard = connection_identity_guard
         self._content = content
         if not read_only:
             with closing(self._connect()) as connection:
@@ -128,7 +132,16 @@ class SQLiteFtsRetrieval:
                 Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
             )
             uri = True
-        connection = sqlite3.connect(database, timeout=30, uri=uri)
+        elif self._connection_identity_guard is not None:
+            database = _writable_nofollow_uri(database)
+            uri = True
+        def opener() -> sqlite3.Connection:
+            return sqlite3.connect(database, timeout=30, uri=uri)
+        connection = (
+            opener()
+            if self._connection_identity_guard is None
+            else self._connection_identity_guard.connect(opener)
+        )
         if not self._read_only:
             connection.execute("PRAGMA busy_timeout = 30000")
         return connection

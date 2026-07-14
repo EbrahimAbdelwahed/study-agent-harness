@@ -4,6 +4,8 @@ from .event_store import (
     EventBatchError,
     ProjectionConsistencyError,
     SequenceConflictError,
+    SQLiteConnectionIdentityError,
+    SQLiteConnectionIdentityGuard,
     SQLiteEventStore,
     UnsupportedSQLiteDatabaseError,
 )
@@ -27,6 +29,8 @@ __all__ = [
     "ProjectionConsistencyError",
     "RetrievalIndexIntegrityError",
     "RunStoreCorruptionError",
+    "SQLiteConnectionIdentityError",
+    "SQLiteConnectionIdentityGuard",
     "SQLiteEventStore",
     "SQLiteFtsRetrieval",
     "SQLiteRunStore",

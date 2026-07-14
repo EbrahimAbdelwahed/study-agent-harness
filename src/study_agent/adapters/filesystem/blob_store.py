@@ -59,9 +59,13 @@ class FilesystemBlobStore:
         self._initialize_from_owned_descriptor(root_fd, read_only=read_only)
 
     @classmethod
-    def from_descriptor(cls, root_descriptor: int) -> FilesystemBlobStore:
-        """Open a read-only store from an already verified directory descriptor."""
+    def from_descriptor(
+        cls, root_descriptor: int, *, read_only: bool = True
+    ) -> FilesystemBlobStore:
+        """Open a store rooted at an already verified directory descriptor."""
         _require_descriptor_platform()
+        if type(read_only) is not bool:
+            raise TypeError("read_only must be a boolean")
         try:
             root_fd = os.dup(root_descriptor)
             if not stat.S_ISDIR(os.fstat(root_fd).st_mode):
@@ -70,12 +74,10 @@ class FilesystemBlobStore:
         except OSError as error:
             raise UnsafeBlobPathError("blob-store descriptor is unavailable") from error
         instance = cls.__new__(cls)
-        instance._initialize_from_owned_descriptor(root_fd, read_only=True)
+        instance._initialize_from_owned_descriptor(root_fd, read_only=read_only)
         return instance
 
-    def _initialize_from_owned_descriptor(
-        self, root_fd: int, *, read_only: bool
-    ) -> None:
+    def _initialize_from_owned_descriptor(self, root_fd: int, *, read_only: bool) -> None:
 
         objects_fd: int | None = None
         try:
@@ -83,9 +85,7 @@ class FilesystemBlobStore:
                 with suppress(FileExistsError):
                     os.mkdir("objects", 0o755, dir_fd=root_fd)
             try:
-                objects_fd = self._open_directory(
-                    root_fd, "objects", missing_is_blob=read_only
-                )
+                objects_fd = self._open_directory(root_fd, "objects", missing_is_blob=read_only)
             except BlobNotFoundError:
                 # A newly initialized repository has no objects directory until
                 # its first blob is published. Opening that state for reads is valid.
@@ -99,9 +99,7 @@ class FilesystemBlobStore:
         self._objects_fd = objects_fd
         self._root_finalizer = weakref.finalize(self, os.close, root_fd)
         self._objects_finalizer = (
-            weakref.finalize(self, os.close, objects_fd)
-            if objects_fd is not None
-            else None
+            weakref.finalize(self, os.close, objects_fd) if objects_fd is not None else None
         )
 
     @staticmethod
@@ -147,9 +145,7 @@ class FilesystemBlobStore:
         if create:
             with suppress(FileExistsError):
                 os.mkdir(first_name, 0o755, dir_fd=self._objects_fd)
-        first_fd = self._open_directory(
-            self._objects_fd, first_name, missing_is_blob=not create
-        )
+        first_fd = self._open_directory(self._objects_fd, first_name, missing_is_blob=not create)
         try:
             if create:
                 with suppress(FileExistsError):

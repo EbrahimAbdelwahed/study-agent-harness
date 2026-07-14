@@ -18,14 +18,18 @@ from .chunking import CHUNKER_VERSION, ChunkingConfig, chunk_text
 from .identity import (
     NORMALIZATION_POLICY_VERSION,
     chunk_id_for,
+    legacy_revision_id_for,
     revision_id_for,
     source_event_id_for,
     source_kind_contract,
+    source_revision_selected_event_id_for,
 )
 from .normalization import normalize_utf8
 
 SOURCE_REVISION_INGESTED = "source.revision_ingested"
 SOURCE_REVISION_SCHEMA_VERSION = 1
+SOURCE_REVISION_SELECTED = "source.revision_selected"
+SOURCE_REVISION_SELECTED_SCHEMA_VERSION = 1
 
 _BLOB_KEYS = frozenset({"id", "checksum_sha256", "byte_length"})
 _SOURCE_KEYS = frozenset(
@@ -99,6 +103,48 @@ class SourceRevisionIngested:
             self.normalized_character_length,
             self.chunking,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRevisionSelected:
+    source_id: SourceId
+    revision_id: RevisionId
+
+
+def source_revision_selected_payload(
+    source_id: SourceId, revision_id: RevisionId
+) -> JsonObject:
+    return {"source_id": str(source_id), "revision_id": str(revision_id)}
+
+
+def decode_source_revision_selected(payload: JsonObject) -> SourceRevisionSelected:
+    decoded = _object(
+        payload,
+        "payload",
+        frozenset({"source_id", "revision_id"}),
+    )
+    return SourceRevisionSelected(
+        SourceId(_text(decoded.get("source_id"), "source_id")),
+        RevisionId(_text(decoded.get("revision_id"), "revision_id")),
+    )
+
+
+def decode_source_revision_selected_event(event: DomainEvent) -> SourceRevisionSelected:
+    if (
+        event.event_type != SOURCE_REVISION_SELECTED
+        or event.schema_version != SOURCE_REVISION_SELECTED_SCHEMA_VERSION
+    ):
+        raise ValueError("event envelope does not match source.revision_selected@1")
+    decoded = decode_source_revision_selected(event.payload)
+    expected_id = source_revision_selected_event_id_for(
+        event.course_id,
+        decoded.source_id,
+        decoded.revision_id,
+        event.course_sequence,
+    )
+    if event.event_id != expected_id:
+        raise ValueError("event_id does not match revision selection identity")
+    return decoded
 
 
 def _object(value: JsonValue | None, name: str, keys: frozenset[str]) -> JsonObject:
@@ -332,7 +378,15 @@ def decode_source_revision_event(
         chunker_version=decoded.chunking.version,
         max_characters=decoded.chunking.max_characters,
     )
-    if source.revision_id != expected_revision:
+    legacy_revision = legacy_revision_id_for(
+        original_sha256=sha256(original).hexdigest(),
+        source_id=source.source_id,
+        kind=source.kind,
+        normalization_version=source.normalization_version,
+        chunker_version=decoded.chunking.version,
+        max_characters=decoded.chunking.max_characters,
+    )
+    if source.revision_id not in (expected_revision, legacy_revision):
         raise ValueError("revision_id does not match canonical immutable inputs")
     if event.event_id != source_event_id_for(event.course_id, source.revision_id):
         raise ValueError("event_id does not match course and revision identity")

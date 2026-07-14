@@ -15,6 +15,8 @@ from typing import Any, cast
 
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.course import CourseProfile
+from study_agent.domain.events import PrincipalKind
+from study_agent.domain.identifiers import CorrelationId
 from study_agent.domain.source import SourceKind
 from study_agent.ports.source_input import MAX_TOTAL_SOURCES
 from study_agent.repository_config import (
@@ -36,6 +38,7 @@ MAX_SETTINGS_STRING_LENGTH = 4096
 
 _FINGERPRINT_DOMAIN = b"study-agent-lifecycle-manifest-v1\0"
 _PLAN_FINGERPRINT_DOMAIN = b"study-agent-lifecycle-plan-v1\0"
+_RECEIPT_FINGERPRINT_DOMAIN = b"study-agent-lifecycle-apply-receipt-v1\0"
 _LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ROOT_FIELDS = frozenset({"schema_version", "repository", "courses"})
 _REPOSITORY_FIELDS = frozenset({"path", "model"})
@@ -148,6 +151,34 @@ class LifecycleStatusKind(StrEnum):
     SOURCE_DRIFT = "source_drift"
     OPERATIONAL_DEGRADATION = "operational_degradation"
     CONVERGED = "converged"
+
+
+class LifecycleApplyStatus(StrEnum):
+    """Terminal status for one bounded apply attempt."""
+
+    CONVERGED = "converged"
+    APPLIED = "applied"
+    APPLIED_DEGRADED = "applied_degraded"
+    CONFLICT = "conflict"
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleAuthority:
+    """Trusted caller identity supplied out of band from the manifest."""
+
+    principal_kind: PrincipalKind
+    principal_id: str
+    correlation_id: CorrelationId
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.principal_kind, PrincipalKind) or self.principal_kind not in (
+            PrincipalKind.HUMAN,
+            PrincipalKind.SERVICE,
+        ):
+            raise ValueError("lifecycle authority must be a human or service principal")
+        _text(self.principal_id, "lifecycle_authority.principal_id", 256)
+        if not isinstance(self.correlation_id, CorrelationId):
+            raise ValueError("lifecycle authority correlation_id is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,6 +430,113 @@ class LifecyclePlanV1:
     def fingerprint(self) -> str:
         return sha256(
             _PLAN_FINGERPRINT_DOMAIN + canonical_json_bytes(self._payload_json())
+        ).hexdigest()
+
+    def to_json(self) -> JsonObject:
+        return {**self._payload_json(), "fingerprint": self.fingerprint}
+
+    def canonical_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_json())
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleApplyReceiptV1:
+    """Deterministic account of completed, skipped, and outstanding work."""
+
+    status: LifecycleApplyStatus
+    plan_fingerprint: str
+    completed: tuple[LifecycleActionV1, ...] = ()
+    noops: tuple[LifecycleActionV1, ...] = ()
+    degraded: tuple[LifecycleActionV1, ...] = ()
+    remaining: tuple[LifecycleActionV1, ...] = ()
+    conflicts: tuple[LifecycleActionV1, ...] = ()
+    observed_high_waters: tuple[LifecycleCourseHighWater, ...] = ()
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, LifecycleApplyStatus):
+            raise ValueError("lifecycle apply receipt status is invalid")
+        _sha256(self.plan_fingerprint, "lifecycle_apply_receipt.plan_fingerprint")
+        if self.schema_version != 1:
+            raise ValueError("lifecycle apply receipt schema_version must be exactly 1")
+        for field_name in ("completed", "noops", "degraded", "remaining", "conflicts"):
+            value = getattr(self, field_name)
+            if not isinstance(value, tuple) or any(
+                not isinstance(action, LifecycleActionV1) for action in value
+            ):
+                raise ValueError(f"lifecycle apply receipt {field_name} is invalid")
+        if not isinstance(self.observed_high_waters, tuple) or any(
+            not isinstance(item, LifecycleCourseHighWater)
+            for item in self.observed_high_waters
+        ):
+            raise ValueError("lifecycle apply receipt observed_high_waters are invalid")
+        categories = tuple(
+            getattr(self, field_name)
+            for field_name in ("completed", "noops", "degraded", "remaining", "conflicts")
+        )
+        if any(len(category) != len(set(category)) for category in categories):
+            raise ValueError("lifecycle apply receipt categories cannot contain duplicates")
+        if any(
+            tuple(action.ordinal for action in category)
+            != tuple(sorted(action.ordinal for action in category))
+            for category in categories
+        ):
+            raise ValueError(
+                "lifecycle apply receipt categories must preserve authorized plan order"
+            )
+        seen: set[LifecycleActionV1] = set()
+        for category in categories:
+            if seen.intersection(category):
+                raise ValueError("lifecycle apply receipt categories must be disjoint")
+            seen.update(category)
+        ordinals = tuple(action.ordinal for category in categories for action in category)
+        if len(ordinals) != len(set(ordinals)):
+            raise ValueError(
+                "lifecycle apply receipt action ordinals must be unique across categories"
+            )
+        high_water_ids = tuple(item.course_id for item in self.observed_high_waters)
+        if len(high_water_ids) != len(set(high_water_ids)):
+            raise ValueError("lifecycle apply receipt high waters must be unique by course")
+        if high_water_ids != tuple(sorted(high_water_ids)):
+            raise ValueError("lifecycle apply receipt high waters must be sorted by course")
+        if self.status is LifecycleApplyStatus.CONVERGED and (
+            self.completed or self.degraded or self.remaining or self.conflicts
+        ):
+            raise ValueError("a converged lifecycle receipt cannot contain outstanding work")
+        if self.status is LifecycleApplyStatus.APPLIED and (
+            not self.completed or self.degraded or self.remaining or self.conflicts
+        ):
+            raise ValueError("an applied lifecycle receipt requires only completed work")
+        if self.status is LifecycleApplyStatus.APPLIED_DEGRADED and (
+            not self.degraded or self.conflicts
+        ):
+            raise ValueError(
+                "a degraded lifecycle receipt requires degraded work without conflicts"
+            )
+        if self.status is LifecycleApplyStatus.CONFLICT and (
+            (not self.conflicts and not self.remaining) or self.degraded
+        ):
+            raise ValueError("a conflict lifecycle receipt requires outstanding canonical work")
+
+    def _payload_json(self) -> JsonObject:
+        return {
+            "completed": tuple(action.to_json() for action in self.completed),
+            "conflicts": tuple(action.to_json() for action in self.conflicts),
+            "degraded": tuple(action.to_json() for action in self.degraded),
+            "noops": tuple(action.to_json() for action in self.noops),
+            "observed_high_waters": tuple(
+                item.to_json() for item in self.observed_high_waters
+            ),
+            "plan_fingerprint": self.plan_fingerprint,
+            "remaining": tuple(action.to_json() for action in self.remaining),
+            "schema_version": self.schema_version,
+            "status": self.status.value,
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256(
+            _RECEIPT_FINGERPRINT_DOMAIN + canonical_json_bytes(self._payload_json())
         ).hexdigest()
 
     def to_json(self) -> JsonObject:

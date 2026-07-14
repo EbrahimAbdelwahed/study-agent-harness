@@ -13,12 +13,6 @@ from uuid import uuid4
 
 from study_agent.adapters.filesystem import FilesystemExportWriter, FilesystemSourceInput
 from study_agent.adapters.filesystem.lifecycle import load_lifecycle_manifest
-from study_agent.adapters.filesystem.repository_target import (
-    RepositoryTargetInspectionCode,
-    inspect_repository_target,
-    resolve_repository_target,
-)
-from study_agent.adapters.sqlite import observe_local_repository
 from study_agent.application import ExportService
 from study_agent.courses import course_profile_manifest
 from study_agent.domain import (
@@ -34,17 +28,17 @@ from study_agent.domain.course import CourseProfile, SourcePolicy, TerminologyPo
 from study_agent.domain.session import SessionStatus, StudySessionRecord
 from study_agent.ingestion.projection import source_manifest
 from study_agent.lifecycle import (
+    LifecycleAuthority,
     LifecyclePlanV1,
-    RepositoryObservation,
-    RepositoryObservationState,
+    LifecycleService,
     manifest_schema,
-    plan_lifecycle,
     status_for_plan,
 )
 from study_agent.operator_skill import extract_skill
 from study_agent.repository_config import EMPTY_CONFIG, LocalRepositoryConfig
 from study_agent.sessions.events import grounded_answer_manifest
 
+from .lifecycle import LifecyclePlanExpectationError, LocalLifecycleInputs
 from .output import CommandOutcome
 from .registry import (
     CommandRequest,
@@ -231,35 +225,37 @@ def handle_manifest_status(
     )
 
 
+def handle_manifest_apply(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("manifest apply cannot use a pre-opened repository")
+    inputs = _lifecycle_inputs(request)
+    plan = inputs.plan()
+    expected = _sha256_text(request.values, "expect_plan")
+    if expected != plan.fingerprint:
+        raise LifecyclePlanExpectationError(expected, plan)
+    receipt = LifecycleService(inputs.manifest, inputs.runtime()).apply(
+        plan,
+        inputs.snapshots,
+        LifecycleAuthority(
+            PrincipalKind.SERVICE,
+            _HOST_PRINCIPAL,
+            CorrelationId(f"lifecycle-plan-sha256:{plan.fingerprint}"),
+        ),
+    )
+    return CommandOutcome("manifest.apply", {"receipt": receipt.to_json()})
+
+
 def _lifecycle_plan(request: CommandRequest) -> LifecyclePlanV1:
+    return _lifecycle_inputs(request).plan()
+
+
+def _lifecycle_inputs(request: CommandRequest) -> LocalLifecycleInputs:
     raw_path = request.values.get("path")
     if not isinstance(raw_path, Path):
         raise ValueError("manifest path is invalid")
-
-    manifest = load_lifecycle_manifest(raw_path)
-    manifest_root = raw_path.expanduser().absolute().parent
-    source_paths = tuple(
-        source.path for course in manifest.courses for source in course.sources
-    )
-    snapshots = FilesystemSourceInput(manifest_root).snapshots(source_paths)
-    expected_config = LocalRepositoryConfig(manifest.repository.model)
-    target = resolve_repository_target(manifest_root, manifest.repository.path)
-    inspection = inspect_repository_target(target, expected_config)
-
-    if inspection.code is RepositoryTargetInspectionCode.ABSENT:
-        observed = RepositoryObservation(RepositoryObservationState.ABSENT)
-    elif inspection.code is RepositoryTargetInspectionCode.CONFLICT:
-        observed = RepositoryObservation(
-            RepositoryObservationState.CONFLICT,
-            expected_config,
-        )
-    else:
-        observation = inspection.observation
-        if observation is None:
-            raise RuntimeError("compatible repository inspection has no read capability")
-        with observation:
-            observed = observe_local_repository(observation, expected_config)
-    return plan_lifecycle(manifest, snapshots, observed)
+    return LocalLifecycleInputs.load(raw_path)
 
 
 def handle_describe(
@@ -601,6 +597,13 @@ def _integer(values: dict[str, object], name: str) -> int:
     value = values.get(name)
     if type(value) is not int:
         raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _sha256_text(values: dict[str, object], name: str) -> str:
+    value = _text(values, name)
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
     return value
 
 

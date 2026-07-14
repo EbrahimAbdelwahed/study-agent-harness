@@ -14,10 +14,14 @@ from study_agent.state import EventRegistry
 from .events import (
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     BlobLoader,
     PersistedChunkingConfig,
     SourceRevisionIngested,
+    SourceRevisionSelected,
     decode_source_revision_event,
+    decode_source_revision_selected_event,
 )
 from .identity import CHUNK_MAX_CHARACTERS, CHUNKER_POLICY_VERSION
 
@@ -148,8 +152,38 @@ def reduce_source_revision(
             raise ValueError("chunk id already exists with different immutable metadata")
         chunks[chunk_id] = encoded
 
-    sources[source_id] = {"revision_ids": revision_ids, "revisions": revisions}
+    sources[source_id] = {
+        "revision_ids": revision_ids,
+        "revisions": revisions,
+        "current_revision_id": revision_id,
+    }
     return {**state, "sources": sources, "chunks": chunks}
+
+
+def reduce_source_revision_selected(
+    state: JsonObject, _: DomainEvent, payload: SourceRevisionSelected
+) -> Mapping[str, JsonValue]:
+    sources = dict(_mapping(state.get("sources", {}), "sources"))
+    source_id = str(payload.source_id)
+    revision_id = str(payload.revision_id)
+    existing_source = dict(
+        _mapping(sources.get(source_id, {}), f"sources.{source_id}")
+    )
+    revisions = _mapping(
+        existing_source.get("revisions", {}), f"sources.{source_id}.revisions"
+    )
+    if revision_id not in revisions:
+        raise ValueError("selected revision must already exist for its source")
+    revision_ids = existing_source.get("revision_ids", ())
+    if not isinstance(revision_ids, tuple) or any(
+        not isinstance(item, str) for item in revision_ids
+    ):
+        raise ValueError("source revision_ids projection field is invalid")
+    if revision_id not in revision_ids:
+        raise ValueError("selected revision must belong to immutable revision history")
+    existing_source["current_revision_id"] = revision_id
+    sources[source_id] = existing_source
+    return {**state, "sources": sources}
 
 
 def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoader) -> None:
@@ -158,4 +192,10 @@ def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoad
         SOURCE_REVISION_SCHEMA_VERSION,
         lambda event: decode_source_revision_event(event, load_blob),
         reduce_source_revision,
+    )
+    registry.register_event(
+        SOURCE_REVISION_SELECTED,
+        SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+        decode_source_revision_selected_event,
+        reduce_source_revision_selected,
     )

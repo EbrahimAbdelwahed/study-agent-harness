@@ -8,6 +8,8 @@ from pathlib import Path
 
 from study_agent.domain.identifiers import RunId
 
+from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
+
 
 class UnsupportedSQLiteRunDatabaseError(ValueError):
     """The run store requires a durable path-backed SQLite database."""
@@ -28,13 +30,19 @@ CREATE TABLE IF NOT EXISTS playbook_runs (
 class SQLiteRunStore:
     """Path-backed operational run storage with atomic CAS transitions."""
 
-    def __init__(self, database: str | Path) -> None:
+    def __init__(
+        self,
+        database: str | Path,
+        *,
+        connection_identity_guard: SQLiteConnectionGuard | None = None,
+    ) -> None:
         self._database = str(database)
         normalized = self._database.strip().lower()
         if not normalized or normalized == ":memory:" or normalized.startswith("file:"):
             raise UnsupportedSQLiteRunDatabaseError(
                 "SQLiteRunStore requires a path-backed database"
             )
+        self._connection_identity_guard = connection_identity_guard
         with closing(self._connect()) as connection:
             try:
                 connection.executescript(_SCHEMA)
@@ -45,7 +53,15 @@ class SQLiteRunStore:
             self._validate_schema(connection)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._database, isolation_level=None, timeout=30)
+        if self._connection_identity_guard is None:
+            connection = sqlite3.connect(self._database, isolation_level=None, timeout=30)
+        else:
+            uri = _writable_nofollow_uri(self._database)
+            connection = self._connection_identity_guard.connect(
+                lambda: sqlite3.connect(
+                    uri, isolation_level=None, timeout=30, uri=True
+                )
+            )
         connection.execute("PRAGMA busy_timeout = 30000")
         return connection
 
