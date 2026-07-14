@@ -46,6 +46,30 @@ def test_lifecycle_contracts_do_not_import_cli_adapters_providers_or_stateful_se
     }
 
 
+def test_lifecycle_planner_does_not_import_io_or_stateful_owners() -> None:
+    forbidden = (
+        "study_agent.adapters",
+        "study_agent.application",
+        "study_agent.cli",
+        "study_agent.courses",
+        "study_agent.ingestion",
+        "study_agent.retrieval",
+        "study_agent.sessions",
+        "study_agent.tools",
+        "pathlib",
+        "socket",
+        "sqlite3",
+    )
+
+    imports = _imports(ROOT / "lifecycle" / "planner.py")
+
+    assert not {
+        item
+        for item in imports
+        if any(item == prefix or item.startswith(prefix + ".") for prefix in forbidden)
+    }
+
+
 def test_domain_events_and_projections_do_not_import_lifecycle_intent() -> None:
     violations: list[str] = []
     for package in ("courses", "ingestion", "sessions"):

@@ -39,3 +39,8 @@ conflict, stale/missing index, and config mismatch states.
 
 Reject executable callbacks, raw domain events, or an action without one owner
 and deterministic verification.
+
+Resolved 2026-07-14: approved after independent review. Plans contain only
+validated declarative values; canonical observation replays retained,
+descriptor-bound event/blob inputs, SQLite reads use immutable read-only handles,
+and every planned canonical mutation forces a final retrieval rebuild.

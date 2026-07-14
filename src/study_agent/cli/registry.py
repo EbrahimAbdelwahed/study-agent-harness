@@ -447,6 +447,48 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
             commands.handle_manifest_validate,
         ),
         _registration(
+            "manifest.plan",
+            "Plan lifecycle reconciliation from verified desired and observed state.",
+            OperationEffect.READ_ONLY,
+            RepositoryRequirement.NONE,
+            NetworkRequirement.NEVER,
+            "content-addressed by the lifecycle plan fingerprint",
+            "safe to retry while manifest, sources, and repository state are unchanged",
+            (
+                _argument(
+                    "path",
+                    ArgumentKind.POSITIONAL,
+                    ArgumentValueType.PATH,
+                    False,
+                    default_json="./study-agent.manifest.json",
+                ),
+            ),
+            "compare the reported plan fingerprint before apply",
+            _add_manifest_plan,
+            commands.handle_manifest_plan,
+        ),
+        _registration(
+            "manifest.status",
+            "Report lifecycle convergence and drift without mutation.",
+            OperationEffect.READ_ONLY,
+            RepositoryRequirement.NONE,
+            NetworkRequirement.NEVER,
+            "content-addressed by the lifecycle plan fingerprint",
+            "safe to retry while manifest, sources, and repository state are unchanged",
+            (
+                _argument(
+                    "path",
+                    ArgumentKind.POSITIONAL,
+                    ArgumentValueType.PATH,
+                    False,
+                    default_json="./study-agent.manifest.json",
+                ),
+            ),
+            "inspect status kind, plan fingerprint, conflicts, and warnings",
+            _add_manifest_status,
+            commands.handle_manifest_status,
+        ),
+        _registration(
             "describe",
             "Describe the agent-operable harness contract.",
             OperationEffect.READ_ONLY,
@@ -736,6 +778,36 @@ def _add_manifest_validate(topology: _ParserTopology) -> None:
             "validate", help="validate and fingerprint a lifecycle manifest"
         ),
         "manifest.validate",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        default=Path("./study-agent.manifest.json"),
+    )
+
+
+def _add_manifest_plan(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("manifest", "lifecycle manifest operations").add_parser(
+            "plan", help="plan lifecycle reconciliation without mutation"
+        ),
+        "manifest.plan",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        default=Path("./study-agent.manifest.json"),
+    )
+
+
+def _add_manifest_status(topology: _ParserTopology) -> None:
+    parser = _leaf(
+        topology.group("manifest", "lifecycle manifest operations").add_parser(
+            "status", help="report lifecycle convergence and drift"
+        ),
+        "manifest.status",
     )
     parser.add_argument(
         "path",

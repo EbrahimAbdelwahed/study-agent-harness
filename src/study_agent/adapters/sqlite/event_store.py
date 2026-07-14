@@ -72,23 +72,41 @@ END;
 class SQLiteEventStore:
     """Reference event store; SQLite serializes writers with ``BEGIN IMMEDIATE``."""
 
-    def __init__(self, database: str | Path, registry: EventRegistry) -> None:
+    def __init__(
+        self, database: str | Path, registry: EventRegistry, *, read_only: bool = False
+    ) -> None:
         self._database = str(database)
         if self._database == ":memory:":
             raise UnsupportedSQLiteDatabaseError(
                 "SQLiteEventStore requires a path-backed database; ':memory:' is unsupported"
             )
+        if type(read_only) is not bool:
+            raise TypeError("read_only must be a boolean")
+        self._read_only = read_only
         self._registry = registry
-        with closing(self._connect()) as connection:
-            connection.executescript(_SCHEMA)
+        if not read_only:
+            with closing(self._connect()) as connection:
+                connection.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._database, isolation_level=None, timeout=30)
-        connection.execute("PRAGMA busy_timeout = 30000")
+        database = self._database
+        uri = False
+        if self._read_only:
+            database = (
+                Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
+            )
+            uri = True
+        connection = sqlite3.connect(
+            database, isolation_level=None, timeout=30, uri=uri
+        )
+        if not self._read_only:
+            connection.execute("PRAGMA busy_timeout = 30000")
         return connection
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        if self._read_only:
+            raise PermissionError("read-only event store cannot start a write transaction")
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")

@@ -7,8 +7,10 @@ import fcntl
 import os
 import stat
 import unicodedata
+import weakref
 from contextlib import suppress
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from study_agent.repository_config import (
@@ -48,6 +50,14 @@ class RepositoryTargetError(RuntimeError):
 LocalRepositoryError = RepositoryTargetError
 
 
+class RepositoryTargetInspectionCode(StrEnum):
+    """Stable outcomes from read-only repository compatibility inspection."""
+
+    ABSENT = "repository_absent"
+    COMPATIBLE = "repository_compatible"
+    CONFLICT = "repository_incompatible"
+
+
 @dataclass(frozen=True, slots=True)
 class LocalRepositoryPaths:
     """The complete versioned filesystem layout beneath one repository root."""
@@ -75,6 +85,102 @@ class LocalRepositoryPaths:
             base / _BLOB_DIRECTORY,
             base / _EXPORT_DIRECTORY,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryTargetInspection:
+    """Immutable compatibility result for one previously resolved target."""
+
+    code: RepositoryTargetInspectionCode
+    paths: LocalRepositoryPaths
+    observation: RepositoryObservationHandle | None = None
+
+
+class RepositoryObservationHandle:
+    """Retained, identity-bound descriptors for one repository observation."""
+
+    def __init__(
+        self,
+        target: ResolvedRepositoryTarget,
+        descriptors: dict[str, int | None],
+        identities: dict[str, tuple[int, int] | None],
+    ) -> None:
+        self._target = target
+        self._descriptors = descriptors
+        self._identities = identities
+        owned = tuple(value for value in descriptors.values() if value is not None)
+        self._finalizer = weakref.finalize(self, _close_descriptors, owned)
+
+    @property
+    def paths(self) -> LocalRepositoryPaths:
+        """Return display-only lexical paths; observation never reopens them."""
+        return self._target.paths
+
+    def directory_descriptor(self, name: str) -> int:
+        """Duplicate a retained directory descriptor for an adapter owner."""
+        if name not in {"blobs"}:
+            raise ValueError("unsupported repository directory descriptor")
+        return os.dup(self._required_descriptor(name))
+
+    def database_descriptor_path(self, name: str) -> Path | None:
+        """Return an identity-checked process-local path to a retained database fd."""
+        if name not in {"events", "retrieval"}:
+            raise ValueError("unsupported repository database descriptor")
+        descriptor = self._descriptors[name]
+        if descriptor is None:
+            return None
+        return _stable_descriptor_path(descriptor)
+
+    def verify_binding(self) -> None:
+        """Revalidate every retained descriptor and its repository entry binding."""
+        if not self._finalizer.alive:
+            raise RepositoryTargetError("repository observation handle is closed")
+        _verify_complete_binding(
+            self._target, self._target.existing_prefix_identities
+        )
+        target_descriptor = self._required_descriptor("target")
+        for name, entry in (
+            ("state", _STATE_DIRECTORY),
+            ("blobs", _BLOB_DIRECTORY),
+            ("exports", _EXPORT_DIRECTORY),
+        ):
+            identity = self._identities[name]
+            if identity is None:
+                raise RepositoryTargetError("repository observation binding is invalid")
+            _verify_descriptor_identity(self._required_descriptor(name), identity, directory=True)
+            _verify_child_binding(target_descriptor, entry, identity)
+        state_descriptor = self._required_descriptor("state")
+        for name, entry in (
+            ("events", _EVENT_DATABASE),
+            ("runs", _RUN_DATABASE),
+            ("retrieval", _RETRIEVAL_DATABASE),
+        ):
+            identity = self._identities[name]
+            descriptor = self._descriptors[name]
+            if descriptor is None:
+                if not _entry_is_absent(state_descriptor, entry):
+                    raise RepositoryTargetError("repository database binding changed")
+                continue
+            if identity is None:
+                raise RepositoryTargetError("repository observation binding is invalid")
+            _verify_descriptor_identity(descriptor, identity, directory=False)
+            _verify_regular_binding(state_descriptor, entry, identity, "repository database")
+
+    def close(self) -> None:
+        """Release all descriptors retained by this observation capability."""
+        self._finalizer()
+
+    def __enter__(self) -> RepositoryObservationHandle:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def _required_descriptor(self, name: str) -> int:
+        descriptor = self._descriptors.get(name)
+        if descriptor is None:
+            raise RepositoryTargetError("repository observation descriptor is unavailable")
+        return descriptor
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +281,95 @@ def resolve_explicit_repository_target(path: str | Path) -> ResolvedRepositoryTa
     anchor = Path(normalized).anchor
     tail = normalized[len(anchor) :]
     return resolve_repository_target(anchor, tail)
+
+
+def inspect_repository_target(
+    target: ResolvedRepositoryTarget, expected_config: LocalRepositoryConfig
+) -> RepositoryTargetInspection:
+    """Inspect repository compatibility without re-resolving or mutating it.
+
+    The target identities captured during resolution are revalidated through
+    no-follow directory descriptors. A target that appeared, disappeared, or
+    changed identity after resolution is a stable conflict rather than a new
+    observation of an untrusted path.
+    """
+
+    _validate_resolved_target(target)
+    descriptors: list[int] = []
+    try:
+        root_descriptor = _open_directory(target.trusted_root)
+        descriptors.append(root_descriptor)
+        if _directory_identity(root_descriptor) != target.verified_root_identity:
+            return _repository_inspection(
+                target, RepositoryTargetInspectionCode.CONFLICT
+            )
+
+        parent_descriptor = root_descriptor
+        observed_identities: list[tuple[int, int]] = []
+        for component, expected_identity in zip(
+            target.existing_parts,
+            target.existing_prefix_identities,
+            strict=True,
+        ):
+            descriptor = _openat_directory(parent_descriptor, component)
+            descriptors.append(descriptor)
+            identity = _directory_identity(descriptor)
+            if identity != expected_identity:
+                return _repository_inspection(
+                    target, RepositoryTargetInspectionCode.CONFLICT
+                )
+            observed_identities.append(identity)
+            parent_descriptor = descriptor
+
+        if target.missing_parts:
+            if _entry_is_absent(parent_descriptor, target.missing_parts[0]):
+                return _repository_inspection(
+                    target, RepositoryTargetInspectionCode.ABSENT
+                )
+            return _repository_inspection(
+                target, RepositoryTargetInspectionCode.CONFLICT
+            )
+
+        observed_config = _read_config(parent_descriptor, missing_ok=False)
+        if observed_config != expected_config:
+            return _repository_inspection(
+                target, RepositoryTargetInspectionCode.CONFLICT
+            )
+        _validate_layout_fd(parent_descriptor)
+        if _read_config(parent_descriptor, missing_ok=False) != expected_config:
+            return _repository_inspection(
+                target, RepositoryTargetInspectionCode.CONFLICT
+            )
+        _verify_complete_binding(target, tuple(observed_identities))
+        observation = _open_observation_handle(
+            target, parent_descriptor, tuple(observed_identities)
+        )
+        try:
+            observation.verify_binding()
+            if _read_config(parent_descriptor, missing_ok=False) != expected_config:
+                raise RepositoryTargetError("repository configuration changed")
+        except BaseException:
+            observation.close()
+            raise
+        return _repository_inspection(
+            target, RepositoryTargetInspectionCode.COMPATIBLE, observation
+        )
+    except (LocalConfigError, OSError, RepositoryTargetError):
+        return _repository_inspection(target, RepositoryTargetInspectionCode.CONFLICT)
+    finally:
+        for descriptor in reversed(descriptors):
+            with suppress(OSError):
+                os.close(descriptor)
+
+
+def _repository_inspection(
+    target: ResolvedRepositoryTarget,
+    code: RepositoryTargetInspectionCode,
+    observation: RepositoryObservationHandle | None = None,
+) -> RepositoryTargetInspection:
+    return RepositoryTargetInspection(
+        code=code, paths=target.paths, observation=observation
+    )
 
 
 def initialize_repository_target(
@@ -501,6 +696,16 @@ def _directory_entries(descriptor: int) -> set[str]:
         raise RepositoryTargetError("repository directory could not be inspected") from None
 
 
+def _entry_is_absent(directory_descriptor: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            return True
+        raise RepositoryTargetError("repository target could not be inspected") from None
+    return False
+
+
 def _read_config(
     directory_descriptor: int, *, missing_ok: bool
 ) -> LocalRepositoryConfig | None:
@@ -728,6 +933,116 @@ def _validate_layout_fd(target_descriptor: int) -> None:
         os.close(state_descriptor)
 
 
+def _open_observation_handle(
+    target: ResolvedRepositoryTarget,
+    target_descriptor: int,
+    observed_identities: tuple[tuple[int, int], ...],
+) -> RepositoryObservationHandle:
+    """Retain the verified repository entries without reopening lexical paths."""
+    if observed_identities != target.existing_prefix_identities:
+        raise RepositoryTargetError("repository target identity changed")
+    opened: dict[str, int | None] = {}
+    identities: dict[str, tuple[int, int] | None] = {}
+    try:
+        target_duplicate = os.dup(target_descriptor)
+        opened["target"] = target_duplicate
+        identities["target"] = _directory_identity(target_duplicate)
+        for name, entry in (
+            ("state", _STATE_DIRECTORY),
+            ("blobs", _BLOB_DIRECTORY),
+            ("exports", _EXPORT_DIRECTORY),
+        ):
+            descriptor = _openat_directory(target_descriptor, entry)
+            opened[name] = descriptor
+            directory_identity = _directory_identity(descriptor)
+            identities[name] = directory_identity
+            _verify_child_binding(target_descriptor, entry, directory_identity)
+        state_descriptor = opened["state"]
+        if state_descriptor is None:
+            raise RepositoryTargetError("repository state descriptor is unavailable")
+        for name, entry in (
+            ("events", _EVENT_DATABASE),
+            ("runs", _RUN_DATABASE),
+            ("retrieval", _RETRIEVAL_DATABASE),
+        ):
+            database_descriptor = _open_optional_regular(state_descriptor, entry)
+            opened[name] = database_descriptor
+            if database_descriptor is None:
+                identities[name] = None
+            else:
+                metadata = os.fstat(database_descriptor)
+                identity = (metadata.st_dev, metadata.st_ino)
+                identities[name] = identity
+                _verify_regular_binding(
+                    state_descriptor, entry, identity, "repository database"
+                )
+        handle = RepositoryObservationHandle(target, opened, identities)
+        opened = {}
+        return handle
+    finally:
+        _close_descriptors(
+            tuple(value for value in opened.values() if value is not None)
+        )
+
+
+def _open_optional_regular(parent_descriptor: int, name: str) -> int | None:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+    except FileNotFoundError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RepositoryTargetError("repository database path is incompatible")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _verify_descriptor_identity(
+    descriptor: int, identity: tuple[int, int], *, directory: bool
+) -> None:
+    metadata = os.fstat(descriptor)
+    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected_type(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != identity:
+        raise RepositoryTargetError("repository observation descriptor changed")
+
+
+def _stable_descriptor_path(descriptor: int) -> Path:
+    """Return a supported path whose identity is exactly the retained descriptor."""
+    expected = os.fstat(descriptor)
+    for root in (Path("/dev/fd"), Path("/proc/self/fd")):
+        candidate = root / str(descriptor)
+        try:
+            probe = os.open(candidate, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        except OSError:
+            continue
+        try:
+            observed = os.fstat(probe)
+            if (observed.st_dev, observed.st_ino) == (
+                expected.st_dev,
+                expected.st_ino,
+            ):
+                return candidate
+        finally:
+            os.close(probe)
+    raise RepositoryTargetError(
+        "platform cannot bind SQLite reads to retained file descriptors"
+    )
+
+
+def _close_descriptors(descriptors: tuple[int, ...]) -> None:
+    for descriptor in reversed(descriptors):
+        with suppress(OSError):
+            os.close(descriptor)
+
+
 def _absolute_lexical_path(path: str | Path) -> Path:
     expanded = Path(path).expanduser()
     if not expanded.is_absolute():
@@ -819,9 +1134,12 @@ __all__ = [
     "LocalRepositoryError",
     "LocalRepositoryPaths",
     "RepositoryTargetError",
+    "RepositoryTargetInspection",
+    "RepositoryTargetInspectionCode",
     "ResolvedRepositoryTarget",
     "initialize_local_repository",
     "initialize_repository_target",
+    "inspect_repository_target",
     "resolve_explicit_repository_target",
     "resolve_repository_target",
     "validate_local_repository_layout",

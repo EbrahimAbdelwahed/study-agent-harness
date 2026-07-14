@@ -9,10 +9,13 @@ import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
+from enum import StrEnum
 from hashlib import sha256
 from typing import Any, cast
 
 from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.domain.course import CourseProfile
+from study_agent.domain.source import SourceKind
 from study_agent.ports.source_input import MAX_TOTAL_SOURCES
 from study_agent.repository_config import (
     LocalConfigError,
@@ -32,6 +35,8 @@ MAX_SETTINGS_KEY_LENGTH = 128
 MAX_SETTINGS_STRING_LENGTH = 4096
 
 _FINGERPRINT_DOMAIN = b"study-agent-lifecycle-manifest-v1\0"
+_PLAN_FINGERPRINT_DOMAIN = b"study-agent-lifecycle-plan-v1\0"
+_LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ROOT_FIELDS = frozenset({"schema_version", "repository", "courses"})
 _REPOSITORY_FIELDS = frozenset({"path", "model"})
 _MODEL_FIELDS = frozenset({"adapter_id", "credential_env", "settings"})
@@ -46,9 +51,7 @@ _COURSE_FIELDS = frozenset(
         "sources",
     }
 )
-_SOURCE_FIELDS = frozenset(
-    {"source_id", "path", "title", "trust_level", "source_role"}
-)
+_SOURCE_FIELDS = frozenset({"source_id", "path", "title", "trust_level", "source_role"})
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
 _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
@@ -104,6 +107,336 @@ _BEHAVIOR_FIELD_PARTS = frozenset(
 
 class ManifestValidationError(ValueError):
     """Manifest input is malformed, unsafe, or outside the public v1 bounds."""
+
+
+class RepositoryObservationState(StrEnum):
+    """Read-only repository compatibility observed by the technical adapter."""
+
+    ABSENT = "absent"
+    COMPATIBLE = "compatible"
+    CONFLICT = "conflict"
+
+
+class IndexObservationState(StrEnum):
+    """Discardable retrieval state relative to canonical course state."""
+
+    HEALTHY = "healthy"
+    MISSING = "missing"
+    STALE = "stale"
+
+
+class LifecycleActionKind(StrEnum):
+    INITIALIZE = "initialize"
+    CREATE_COURSE = "create_course"
+    INGEST_REVISION = "ingest_revision"
+    REBUILD_INDEX = "rebuild_index"
+    NOOP = "noop"
+    WARNING = "warning"
+    CONFLICT = "conflict"
+
+
+class LifecycleActionOwner(StrEnum):
+    REPOSITORY = "repository"
+    COURSE = "course"
+    SOURCE = "source"
+    INDEX = "index"
+
+
+class LifecycleStatusKind(StrEnum):
+    CANONICAL_CONFLICT = "canonical_conflict"
+    CANONICAL_DRIFT = "canonical_drift"
+    SOURCE_DRIFT = "source_drift"
+    OPERATIONAL_DEGRADATION = "operational_degradation"
+    CONVERGED = "converged"
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedSource:
+    """The current canonical immutable revision for one source identity."""
+
+    source_id: str
+    revision_id: str
+    kind: SourceKind
+    title: str
+    trust_level: int
+    source_role: str
+    checksum_sha256: str
+    byte_size: int
+
+    def __post_init__(self) -> None:
+        _text(self.source_id, "observed_source.source_id", 256)
+        _text(self.revision_id, "observed_source.revision_id", 256)
+        if not isinstance(self.kind, SourceKind):
+            raise ValueError("observed_source.kind must be a SourceKind")
+        _text(self.title, "observed_source.title", 1024)
+        if type(self.trust_level) is not int or not 0 <= self.trust_level <= 100:
+            raise ValueError("observed_source.trust_level must be an integer from 0 to 100")
+        _text(self.source_role, "observed_source.source_role", 256)
+        _sha256(self.checksum_sha256, "observed_source.checksum_sha256")
+        if type(self.byte_size) is not int or self.byte_size < 0:
+            raise ValueError("observed_source.byte_size must be a non-negative integer")
+
+    def to_json(self) -> JsonObject:
+        return {
+            "byte_size": self.byte_size,
+            "checksum_sha256": self.checksum_sha256,
+            "kind": self.kind.value,
+            "revision_id": self.revision_id,
+            "source_id": self.source_id,
+            "source_role": self.source_role,
+            "title": self.title,
+            "trust_level": self.trust_level,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedCourse:
+    """Canonical course profile, stream position and current sources."""
+
+    profile: CourseProfile
+    high_water_sequence: int
+    sources: tuple[ObservedSource, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.profile, CourseProfile):
+            raise ValueError("observed_course.profile must be a CourseProfile")
+        if type(self.high_water_sequence) is not int or self.high_water_sequence < 1:
+            raise ValueError("observed_course.high_water_sequence must be positive")
+        if not isinstance(self.sources, tuple) or any(
+            not isinstance(source, ObservedSource) for source in self.sources
+        ):
+            raise ValueError("observed_course.sources must contain ObservedSource values")
+        _unique((source.source_id for source in self.sources), "observed source IDs")
+        object.__setattr__(
+            self, "sources", tuple(sorted(self.sources, key=lambda item: item.source_id))
+        )
+
+    @property
+    def course_id(self) -> str:
+        return str(self.profile.id)
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedIndex:
+    state: IndexObservationState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, IndexObservationState):
+            raise ValueError("observed_index.state must be an IndexObservationState")
+
+    def to_json(self) -> JsonObject:
+        return {"state": self.state.value}
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryObservation:
+    """A complete, immutable read-only observation consumed by the pure planner."""
+
+    state: RepositoryObservationState
+    config: LocalRepositoryConfig | None = None
+    courses: tuple[ObservedCourse, ...] = ()
+    index: ObservedIndex | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, RepositoryObservationState):
+            raise ValueError("repository observation state is invalid")
+        if self.config is not None and not isinstance(self.config, LocalRepositoryConfig):
+            raise ValueError("repository observation config is invalid")
+        if self.state is RepositoryObservationState.ABSENT and (
+            self.config is not None or self.courses or self.index is not None
+        ):
+            raise ValueError("an absent repository cannot contain observed state")
+        if self.state is RepositoryObservationState.COMPATIBLE and self.config is None:
+            raise ValueError("a compatible repository must include its observed config")
+        if not isinstance(self.courses, tuple) or any(
+            not isinstance(course, ObservedCourse) for course in self.courses
+        ):
+            raise ValueError("repository observation courses are invalid")
+        if self.index is not None and not isinstance(self.index, ObservedIndex):
+            raise ValueError("repository observation index is invalid")
+        _unique((course.course_id for course in self.courses), "observed course IDs")
+        object.__setattr__(
+            self, "courses", tuple(sorted(self.courses, key=lambda item: item.course_id))
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleSourceChecksum:
+    course_id: str
+    source_id: str
+    path: str
+    checksum_sha256: str
+    byte_size: int
+
+    def __post_init__(self) -> None:
+        _text(self.course_id, "source_checksum.course_id", 256)
+        _text(self.source_id, "source_checksum.source_id", 256)
+        _relative_path(self.path, "source_checksum.path")
+        _sha256(self.checksum_sha256, "source_checksum.checksum_sha256")
+        if type(self.byte_size) is not int or self.byte_size < 0:
+            raise ValueError("source_checksum.byte_size must be a non-negative integer")
+
+    def to_json(self) -> JsonObject:
+        return {
+            "byte_size": self.byte_size,
+            "checksum_sha256": self.checksum_sha256,
+            "course_id": self.course_id,
+            "path": self.path,
+            "source_id": self.source_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleCourseHighWater:
+    course_id: str
+    sequence: int
+
+    def __post_init__(self) -> None:
+        _text(self.course_id, "course_high_water.course_id", 256)
+        if type(self.sequence) is not int or self.sequence < 1:
+            raise ValueError("course_high_water.sequence must be positive")
+
+    def to_json(self) -> JsonObject:
+        return {"course_id": self.course_id, "sequence": self.sequence}
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleActionV1:
+    ordinal: int
+    kind: LifecycleActionKind
+    owner: LifecycleActionOwner
+    code: str
+    course_id: str | None = None
+    source_id: str | None = None
+    expected_high_water: int | None = None
+    desired_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.ordinal) is not int or self.ordinal < 0:
+            raise ValueError("lifecycle action ordinal must be non-negative")
+        if not isinstance(self.kind, LifecycleActionKind):
+            raise ValueError("lifecycle action kind is invalid")
+        if not isinstance(self.owner, LifecycleActionOwner):
+            raise ValueError("lifecycle action owner is invalid")
+        _text(self.code, "lifecycle_action.code", 128)
+        if self.course_id is not None:
+            _text(self.course_id, "lifecycle_action.course_id", 256)
+        if self.source_id is not None:
+            _text(self.source_id, "lifecycle_action.source_id", 256)
+        if self.source_id is not None and self.course_id is None:
+            raise ValueError("a source action must identify its course")
+        if self.expected_high_water is not None and (
+            type(self.expected_high_water) is not int or self.expected_high_water < 0
+        ):
+            raise ValueError("expected_high_water must be non-negative")
+        if self.desired_fingerprint is not None:
+            _sha256(self.desired_fingerprint, "lifecycle_action.desired_fingerprint")
+
+    def to_json(self) -> JsonObject:
+        return {
+            "code": self.code,
+            "course_id": self.course_id,
+            "desired_fingerprint": self.desired_fingerprint,
+            "expected_high_water": self.expected_high_water,
+            "kind": self.kind.value,
+            "ordinal": self.ordinal,
+            "owner": self.owner.value,
+            "source_id": self.source_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LifecyclePlanV1:
+    manifest_fingerprint: str
+    source_checksums: tuple[LifecycleSourceChecksum, ...]
+    observed_high_waters: tuple[LifecycleCourseHighWater, ...]
+    actions: tuple[LifecycleActionV1, ...]
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or self.schema_version != 1:
+            raise ValueError("lifecycle plan schema_version must be exactly 1")
+        _sha256(self.manifest_fingerprint, "lifecycle_plan.manifest_fingerprint")
+        if not isinstance(self.source_checksums, tuple) or any(
+            not isinstance(item, LifecycleSourceChecksum) for item in self.source_checksums
+        ):
+            raise ValueError("lifecycle plan source_checksums are invalid")
+        if not isinstance(self.observed_high_waters, tuple) or any(
+            not isinstance(item, LifecycleCourseHighWater) for item in self.observed_high_waters
+        ):
+            raise ValueError("lifecycle plan observed_high_waters are invalid")
+        if not isinstance(self.actions, tuple) or any(
+            not isinstance(item, LifecycleActionV1) for item in self.actions
+        ):
+            raise ValueError("lifecycle plan actions are invalid")
+        if tuple(action.ordinal for action in self.actions) != tuple(range(len(self.actions))):
+            raise ValueError("lifecycle plan action ordinals must be contiguous from zero")
+
+    @property
+    def conflicts(self) -> tuple[LifecycleActionV1, ...]:
+        return tuple(
+            action for action in self.actions if action.kind is LifecycleActionKind.CONFLICT
+        )
+
+    @property
+    def warnings(self) -> tuple[LifecycleActionV1, ...]:
+        return tuple(
+            action for action in self.actions if action.kind is LifecycleActionKind.WARNING
+        )
+
+    def _payload_json(self) -> JsonObject:
+        return {
+            "actions": tuple(action.to_json() for action in self.actions),
+            "conflicts": tuple(action.to_json() for action in self.conflicts),
+            "manifest_fingerprint": self.manifest_fingerprint,
+            "observed_high_waters": tuple(item.to_json() for item in self.observed_high_waters),
+            "schema_version": self.schema_version,
+            "source_checksums": tuple(item.to_json() for item in self.source_checksums),
+            "warnings": tuple(action.to_json() for action in self.warnings),
+        }
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256(
+            _PLAN_FINGERPRINT_DOMAIN + canonical_json_bytes(self._payload_json())
+        ).hexdigest()
+
+    def to_json(self) -> JsonObject:
+        return {**self._payload_json(), "fingerprint": self.fingerprint}
+
+    def canonical_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_json())
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleStatusV1:
+    kind: LifecycleStatusKind
+    plan_fingerprint: str
+    action_count: int
+    conflict_count: int
+    warning_count: int
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, LifecycleStatusKind):
+            raise ValueError("lifecycle status kind is invalid")
+        _sha256(self.plan_fingerprint, "lifecycle_status.plan_fingerprint")
+        if type(self.schema_version) is not int or self.schema_version != 1:
+            raise ValueError("lifecycle status schema_version must be exactly 1")
+        for name in ("action_count", "conflict_count", "warning_count"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"lifecycle status {name} must be non-negative")
+
+    def to_json(self) -> JsonObject:
+        return {
+            "action_count": self.action_count,
+            "conflict_count": self.conflict_count,
+            "kind": self.kind.value,
+            "plan_fingerprint": self.plan_fingerprint,
+            "schema_version": self.schema_version,
+            "warning_count": self.warning_count,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,9 +808,7 @@ def _array(raw: object, name: str, maximum: int) -> list[Any]:
     return raw
 
 
-def _string_array(
-    raw: object, name: str, minimum: int, maximum: int
-) -> tuple[str, ...]:
+def _string_array(raw: object, name: str, minimum: int, maximum: int) -> tuple[str, ...]:
     values = _array(raw, name, maximum)
     if len(values) < minimum or any(not isinstance(item, str) for item in values):
         raise ManifestValidationError(f"{name} must contain the required text items")
@@ -526,8 +857,7 @@ def _relative_path(value: object, name: str) -> None:
     if any(not part or part in {".", ".."} for part in parts):
         raise ManifestValidationError(f"{name} cannot be dot, empty, or traversing")
     if any(
-        part.endswith((" ", "."))
-        or part.split(".", 1)[0].upper() in _WINDOWS_DEVICE_NAMES
+        part.endswith((" ", ".")) or part.split(".", 1)[0].upper() in _WINDOWS_DEVICE_NAMES
         for part in parts
     ):
         raise ManifestValidationError(f"{name} must use portable path components")
@@ -548,6 +878,11 @@ def _unique(values: Iterable[str], name: str) -> None:
     materialized = tuple(values)
     if len(set(materialized)) != len(materialized):
         raise ManifestValidationError(f"{name} must be unique")
+
+
+def _sha256(value: object, name: str) -> None:
+    if not isinstance(value, str) or _LOWERCASE_SHA256.fullmatch(value) is None:
+        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
 
 
 def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -577,7 +912,21 @@ __all__ = [
     "DesiredCourse",
     "DesiredRepository",
     "DesiredSource",
+    "IndexObservationState",
+    "LifecycleActionKind",
+    "LifecycleActionOwner",
+    "LifecycleActionV1",
+    "LifecycleCourseHighWater",
     "LifecycleManifestV1",
+    "LifecyclePlanV1",
+    "LifecycleSourceChecksum",
+    "LifecycleStatusKind",
+    "LifecycleStatusV1",
     "ManifestValidationError",
+    "ObservedCourse",
+    "ObservedIndex",
+    "ObservedSource",
+    "RepositoryObservation",
+    "RepositoryObservationState",
     "manifest_schema",
 ]

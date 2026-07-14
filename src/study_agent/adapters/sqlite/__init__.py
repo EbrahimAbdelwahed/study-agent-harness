@@ -14,6 +14,7 @@ from .fts_retrieval import (
     compile_literal_query,
     normalize_bm25_score,
 )
+from .lifecycle_observer import observe_local_repository
 from .run_store import (
     RunStoreCorruptionError,
     SQLiteRunStore,
@@ -34,4 +35,5 @@ __all__ = [
     "UnsupportedSQLiteRunDatabaseError",
     "compile_literal_query",
     "normalize_bm25_score",
+    "observe_local_repository",
 ]

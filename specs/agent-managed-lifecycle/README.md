@@ -1,17 +1,17 @@
 # Agent-managed harness lifecycle
 
 Status: Approved — implementation in progress
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0003--agent-operated-management-plane.md`,
-and slice 08. Slices 01–07 are complete. The current pickup is pure,
-deterministic lifecycle observation and planning over validated manifests,
-repository state and immutable source snapshots. Do not mutate repository state,
-re-read sources inside the planner, or implement apply/recovery before slice 09.
-Keep the exact seven v0.1 StudyTool contracts and fingerprints unchanged. Update
-this section before ending a pass.
+and slice 09. Slices 01–08 are complete. The current pickup is convergent apply
+through existing course, ingestion and retrieval owners, with trusted host
+authority and per-action revalidation. Do not add direct persistence writes,
+global transaction claims, deletion, or model/provider calls. Keep the exact
+seven v0.1 StudyTool contracts and fingerprints unchanged. Update this section
+before ending a pass.
 
 Global TODO:
 
@@ -22,12 +22,12 @@ Global TODO:
 - [x] [05 — manifest contract](slices/05-manifest-contract.md)
 - [x] [06 — safe repository target](slices/06-safe-repository-target.md)
 - [x] [07 — safe source snapshots](slices/07-safe-source-snapshots.md)
-- [ ] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
+- [x] [08 — deterministic plan and status](slices/08-deterministic-plan-and-status.md)
 - [ ] [09 — convergent apply and recovery](slices/09-convergent-apply-and-recovery.md)
 
-Active warning: slice 08 is observation-only. Plans and status may consume the
-shared source snapshots but cannot perform writes, model/network calls, direct
-SQLite access or acquire domain authority.
+Active warning: slice 09 is atomic only per canonical mutation. Revalidate each
+action against current observation and report honest partial/degraded receipts;
+never conceal a committed event behind an index failure.
 
 Evidence ledger:
 
@@ -59,6 +59,12 @@ Evidence ledger:
   filesystem reader and procedural CLI migration passed 682 tests with two
   declared skips, Ruff and strict mypy. Semantic and security reviews approved
   after closing explicit dot/traversal normalization and forged snapshot gaps.
+- Slice 08: immutable observation/action/plan/status contracts, pure deterministic
+  planning, descriptor-bound canonical replay, immutable SQLite index audit and
+  closed `manifest plan/status` CLI operations passed 186 focused tests, Ruff and
+  strict mypy. Independent semantic/security review closed forced post-mutation
+  index rebuild, WAL sidecar writes and pathname-rebinding findings before
+  approval.
 
 ## Goal
 

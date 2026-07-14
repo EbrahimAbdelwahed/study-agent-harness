@@ -42,30 +42,67 @@ def _require_descriptor_platform() -> None:
 class FilesystemBlobStore:
     """Immutable SHA-256 storage anchored to retained root and object-directory fds."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, *, read_only: bool = False) -> None:
         _require_descriptor_platform()
+        if type(read_only) is not bool:
+            raise TypeError("read_only must be a boolean")
         configured_root = Path(root).expanduser()
         if configured_root.is_symlink():
             raise UnsafeBlobPathError("blob-store root cannot be a symlink")
-        configured_root.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            configured_root.mkdir(parents=True, exist_ok=True)
         try:
             root_fd = os.open(configured_root, _DIRECTORY_FLAGS)
         except OSError as error:
             raise UnsafeBlobPathError("blob-store root must be a real directory") from error
 
+        self._initialize_from_owned_descriptor(root_fd, read_only=read_only)
+
+    @classmethod
+    def from_descriptor(cls, root_descriptor: int) -> FilesystemBlobStore:
+        """Open a read-only store from an already verified directory descriptor."""
+        _require_descriptor_platform()
+        try:
+            root_fd = os.dup(root_descriptor)
+            if not stat.S_ISDIR(os.fstat(root_fd).st_mode):
+                os.close(root_fd)
+                raise UnsafeBlobPathError("blob-store descriptor must reference a directory")
+        except OSError as error:
+            raise UnsafeBlobPathError("blob-store descriptor is unavailable") from error
+        instance = cls.__new__(cls)
+        instance._initialize_from_owned_descriptor(root_fd, read_only=True)
+        return instance
+
+    def _initialize_from_owned_descriptor(
+        self, root_fd: int, *, read_only: bool
+    ) -> None:
+
         objects_fd: int | None = None
         try:
-            with suppress(FileExistsError):
-                os.mkdir("objects", 0o755, dir_fd=root_fd)
-            objects_fd = self._open_directory(root_fd, "objects", missing_is_blob=False)
+            if not read_only:
+                with suppress(FileExistsError):
+                    os.mkdir("objects", 0o755, dir_fd=root_fd)
+            try:
+                objects_fd = self._open_directory(
+                    root_fd, "objects", missing_is_blob=read_only
+                )
+            except BlobNotFoundError:
+                # A newly initialized repository has no objects directory until
+                # its first blob is published. Opening that state for reads is valid.
+                objects_fd = None
         except BaseException:
             os.close(root_fd)
             raise
 
+        self._read_only = read_only
         self._root_fd = root_fd
         self._objects_fd = objects_fd
         self._root_finalizer = weakref.finalize(self, os.close, root_fd)
-        self._objects_finalizer = weakref.finalize(self, os.close, objects_fd)
+        self._objects_finalizer = (
+            weakref.finalize(self, os.close, objects_fd)
+            if objects_fd is not None
+            else None
+        )
 
     @staticmethod
     def _open_directory(parent_fd: int, name: str, *, missing_is_blob: bool) -> int:
@@ -82,7 +119,8 @@ class FilesystemBlobStore:
 
     def close(self) -> None:
         """Release retained directory descriptors; subsequent operations are invalid."""
-        self._objects_finalizer()
+        if self._objects_finalizer is not None:
+            self._objects_finalizer()
         self._root_finalizer()
 
     def __enter__(self) -> FilesystemBlobStore:
@@ -103,6 +141,8 @@ class FilesystemBlobStore:
         return digest
 
     def _open_shard(self, digest: str, *, create: bool) -> int:
+        if self._objects_fd is None:
+            raise BlobNotFoundError("blob does not exist")
         first_name, second_name = digest[:2], digest[2:4]
         if create:
             with suppress(FileExistsError):
@@ -172,6 +212,8 @@ class FilesystemBlobStore:
             written += os.write(descriptor, view[written:])
 
     def put(self, content: bytes) -> BlobRef:
+        if self._read_only:
+            raise PermissionError("read-only blob store cannot publish content")
         if not isinstance(content, bytes):
             raise TypeError("content must be bytes")
         digest = self._digest(content)

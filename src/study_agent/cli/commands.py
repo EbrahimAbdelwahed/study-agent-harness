@@ -13,6 +13,12 @@ from uuid import uuid4
 
 from study_agent.adapters.filesystem import FilesystemExportWriter, FilesystemSourceInput
 from study_agent.adapters.filesystem.lifecycle import load_lifecycle_manifest
+from study_agent.adapters.filesystem.repository_target import (
+    RepositoryTargetInspectionCode,
+    inspect_repository_target,
+    resolve_repository_target,
+)
+from study_agent.adapters.sqlite import observe_local_repository
 from study_agent.application import ExportService
 from study_agent.courses import course_profile_manifest
 from study_agent.domain import (
@@ -27,7 +33,14 @@ from study_agent.domain._validation import JsonObject
 from study_agent.domain.course import CourseProfile, SourcePolicy, TerminologyPolicy
 from study_agent.domain.session import SessionStatus, StudySessionRecord
 from study_agent.ingestion.projection import source_manifest
-from study_agent.lifecycle import manifest_schema
+from study_agent.lifecycle import (
+    LifecyclePlanV1,
+    RepositoryObservation,
+    RepositoryObservationState,
+    manifest_schema,
+    plan_lifecycle,
+    status_for_plan,
+)
 from study_agent.operator_skill import extract_skill
 from study_agent.repository_config import EMPTY_CONFIG, LocalRepositoryConfig
 from study_agent.sessions.events import grounded_answer_manifest
@@ -196,6 +209,57 @@ def handle_manifest_validate(
             "source_count": manifest.source_count,
         },
     )
+
+
+def handle_manifest_plan(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("manifest planning cannot use an open repository")
+    return CommandOutcome("manifest.plan", {"plan": _lifecycle_plan(request).to_json()})
+
+
+def handle_manifest_status(
+    request: CommandRequest, repository: LocalRepository | None
+) -> CommandOutcome:
+    if repository is not None:
+        raise RuntimeError("manifest status cannot use an open repository")
+    plan = _lifecycle_plan(request)
+    return CommandOutcome(
+        "manifest.status",
+        {"status": status_for_plan(plan).to_json(), "plan": plan.to_json()},
+    )
+
+
+def _lifecycle_plan(request: CommandRequest) -> LifecyclePlanV1:
+    raw_path = request.values.get("path")
+    if not isinstance(raw_path, Path):
+        raise ValueError("manifest path is invalid")
+
+    manifest = load_lifecycle_manifest(raw_path)
+    manifest_root = raw_path.expanduser().absolute().parent
+    source_paths = tuple(
+        source.path for course in manifest.courses for source in course.sources
+    )
+    snapshots = FilesystemSourceInput(manifest_root).snapshots(source_paths)
+    expected_config = LocalRepositoryConfig(manifest.repository.model)
+    target = resolve_repository_target(manifest_root, manifest.repository.path)
+    inspection = inspect_repository_target(target, expected_config)
+
+    if inspection.code is RepositoryTargetInspectionCode.ABSENT:
+        observed = RepositoryObservation(RepositoryObservationState.ABSENT)
+    elif inspection.code is RepositoryTargetInspectionCode.CONFLICT:
+        observed = RepositoryObservation(
+            RepositoryObservationState.CONFLICT,
+            expected_config,
+        )
+    else:
+        observation = inspection.observation
+        if observation is None:
+            raise RuntimeError("compatible repository inspection has no read capability")
+        with observation:
+            observed = observe_local_repository(observation, expected_config)
+    return plan_lifecycle(manifest, snapshots, observed)
 
 
 def handle_describe(
