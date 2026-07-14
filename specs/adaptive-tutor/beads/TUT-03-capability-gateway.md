@@ -1,6 +1,6 @@
 # Task Bead: TUT-03 capability gateway
 
-Status: Blocked on TUT-02
+Status: Ready
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02
@@ -13,6 +13,12 @@ reuse `sequential-playbook-engine-worker` with a new gateway-specific brief
 
 Discover, start, and resume trusted built-in tutor capabilities through one
 closed contract, shipping `explain_concept@1` and `assess_understanding@1`.
+
+## Child Beads
+
+- [TUT-03A — capability contracts and discovery](TUT-03A-capability-contracts-and-discovery.md)
+- [TUT-03B — start, suspend, resume, and terminal outcomes](TUT-03B-capability-lifecycle-gateway.md)
+- [TUT-03C — built-in tutor capabilities and offline evals](TUT-03C-builtin-capabilities-and-evals.md)
 
 ## Acceptance Criteria
 
