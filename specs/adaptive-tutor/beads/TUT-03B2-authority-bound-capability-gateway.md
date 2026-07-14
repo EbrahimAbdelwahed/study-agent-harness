@@ -1,6 +1,6 @@
 # Task Bead: TUT-03B2 authority-bound capability gateway
 
-Status: Blocked on TUT-03B1
+Status: Ready
 Priority: P0
 Type: expand
 Depends On: TUT-03B1

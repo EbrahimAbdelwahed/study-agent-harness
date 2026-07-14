@@ -254,6 +254,7 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     SUSPENDED = "suspended"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
     FAILED = "failed"
 
 
@@ -286,6 +287,7 @@ class StepTraceStatus(StrEnum):
     STARTED = "started"
     COMPLETED = "completed"
     SUSPENDED = "suspended"
+    CANCELLED = "cancelled"
     FAILED = "failed"
 
 

@@ -1,6 +1,6 @@
 # Task Bead: TUT-03B1 playbook inspection and cancellation
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-03A
@@ -12,17 +12,18 @@ effects, and distinguishes transport-confirmed cancellation from failure.
 
 ## Acceptance Criteria
 
-- [ ] `inspect` validates canonical bytes, definition, inputs, pins, and read
-  dependencies for running, suspended, completed, failed, and cancelled runs.
-- [ ] Inspection exposes checkpoint and definition fingerprints, next-step and
+- [x] `inspect` validates canonical bytes, definition, and checkpoint shape for
+  running, suspended, completed, failed, and cancelled runs, then exposes the
+  exact persisted inputs, pins, and read dependencies for trusted comparison.
+- [x] Inspection exposes checkpoint and definition fingerprints, next-step and
   suspended-dialogue identity, but never returns `VerifiedRunRecord`.
-- [ ] `recover` remains restricted to completed or deterministically terminated
+- [x] `recover` remains restricted to completed or deterministically terminated
   successful runs.
-- [ ] `ModelErrorCode.CANCELLED` and `ModelFinishReason.CANCELLED` atomically
+- [x] `ModelErrorCode.CANCELLED` and `ModelFinishReason.CANCELLED` atomically
   persist cancelled checkpoint/trace/result state.
-- [ ] Generic exceptions remain failed; `asyncio.CancelledError` and process
+- [x] Generic exceptions remain failed; `asyncio.CancelledError` and process
   interruption propagate and are never relabelled cancelled.
-- [ ] Corrupt/tampered observed runs fail closed and inspection performs no tool
+- [x] Corrupt/tampered observed runs fail closed and inspection performs no tool
   or model effect.
 
 ## Verification

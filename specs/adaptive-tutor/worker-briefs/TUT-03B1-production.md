@@ -22,11 +22,11 @@ transport-confirmed cancellation, without weakening successful recovery.
 - Add `RunStatus.CANCELLED`, `PlaybookRunStatus.CANCELLED`,
   `CancelledRunResult`, and a typed `InspectedRunRecord` that is not a verified
   success record.
-- `inspect(run_id, definition, inputs, pins, read_dependencies=())` reuses the
-  canonical `_load` validation and requires exact expected bindings like
-  `recover`; it returns status, definition/checkpoint fingerprints, inputs,
-  pins, dependencies, outputs, traces, next step, and suspended dialogue
-  identity/request when applicable.
+- `inspect(run_id, definition)` reuses canonical `_load` validation and returns
+  status, definition/checkpoint fingerprints, the exact persisted inputs, pins,
+  dependencies, outputs, traces, next step, and suspended dialogue
+  identity/request when applicable. Trusted callers compare those bindings;
+  `recover` retains its stricter expected-binding proof.
 - The checkpoint fingerprint is domain-separated SHA-256 over the exact
   canonical stored payload. Inspection performs no executor effect.
 - A model `CANCELLED` error or finish reason becomes `EngineErrorCode.CANCELLED`;

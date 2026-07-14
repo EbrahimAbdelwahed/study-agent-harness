@@ -26,6 +26,7 @@ from study_agent.domain.session import (
     StudySessionRecord,
 )
 from study_agent.playbooks import (
+    CancelledRunResult,
     EngineErrorCode,
     FailedRunResult,
     PlaybookEngine,
@@ -346,6 +347,11 @@ class GroundingAskService:
             raise GroundingAskError(
                 GroundingAskErrorCode.SUSPENDED,
                 "grounded-answer execution is suspended",
+            )
+        if isinstance(result, CancelledRunResult):
+            raise GroundingAskError(
+                GroundingAskErrorCode.FAILED,
+                "grounded-answer execution was cancelled safely",
             )
         if isinstance(result, FailedRunResult):
             raise GroundingAskError(

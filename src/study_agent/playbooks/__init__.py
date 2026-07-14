@@ -24,10 +24,12 @@ from .engine import PlaybookEngine
 from .runtime import (
     STRUCTURED_OUTPUT_JSON_FALLBACK,
     SUPPORTED_FALLBACK_STRATEGIES,
+    CancelledRunResult,
     CompletedRunResult,
     EngineErrorCode,
     EngineFailure,
     FailedRunResult,
+    InspectedRunRecord,
     PlaybookEngineError,
     PlaybookRunResult,
     PlaybookRunStatus,
@@ -43,6 +45,7 @@ from .runtime import (
 __all__ = [
     "STRUCTURED_OUTPUT_JSON_FALLBACK",
     "SUPPORTED_FALLBACK_STRATEGIES",
+    "CancelledRunResult",
     "CompletedRunResult",
     "DataBinding",
     "DataReference",
@@ -51,6 +54,7 @@ __all__ = [
     "EngineErrorCode",
     "EngineFailure",
     "FailedRunResult",
+    "InspectedRunRecord",
     "ModelStep",
     "PlaybookCheckpoint",
     "PlaybookDefinition",

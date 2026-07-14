@@ -14,7 +14,15 @@ from study_agent.domain._validation import (
     freeze_object,
 )
 from study_agent.domain.identifiers import RunId
-from study_agent.ports import ClockPort, ModelPort, RunStore, StructuredOutputConstraint
+from study_agent.ports import (
+    ClockPort,
+    ModelError,
+    ModelErrorCode,
+    ModelFinishReason,
+    ModelPort,
+    RunStore,
+    StructuredOutputConstraint,
+)
 from study_agent.skills import (
     ArtifactReference,
     CapabilityFallback,
@@ -49,10 +57,12 @@ from .contracts import (
 from .runtime import (
     STRUCTURED_OUTPUT_JSON_FALLBACK,
     SUPPORTED_FALLBACK_STRATEGIES,
+    CancelledRunResult,
     CompletedRunResult,
     EngineErrorCode,
     EngineFailure,
     FailedRunResult,
+    InspectedRunRecord,
     PlaybookEngineError,
     PlaybookRunResult,
     PlaybookRunStatus,
@@ -242,48 +252,15 @@ class PlaybookEngine:
     ) -> VerifiedRunRecord:
         """Verify persisted success without re-executing any playbook step."""
 
-        frozen_inputs = freeze_object(inputs)
-        dependencies = tuple(read_dependencies)
-        if set(frozen_inputs) != set(definition.input_keys):
-            self._raise(
-                EngineErrorCode.INVALID_INPUT,
-                "run inputs must exactly match declared playbook inputs",
-            )
-        dependency_keys = tuple((item.kind, item.id) for item in dependencies)
-        if len(set(dependency_keys)) != len(dependency_keys):
-            self._raise(
-                EngineErrorCode.INVALID_INPUT,
-                "read dependencies must be unique by kind and id",
-            )
-        definition_ref = ArtifactReference(definition.id, definition.version)
-        if _artifact_payload(pins.playbook) != _artifact_payload(definition_ref):
-            self._raise(
-                EngineErrorCode.INCOMPATIBLE_PINS,
-                "playbook pin does not match definition",
-            )
-        if _artifact_payload(pins.model_adapter) != _artifact_payload(self._model_adapter):
-            self._raise(EngineErrorCode.INCOMPATIBLE_PINS, "model adapter pin changed")
-        if _artifact_payload(pins.state_contract) != _artifact_payload(self._state_contract):
-            self._raise(EngineErrorCode.INCOMPATIBLE_PINS, "state contract pin changed")
-
-        stored, _ = self._load(run_id, definition)
+        stored, _, _, _ = self._inspect_expected(
+            run_id=run_id,
+            definition=definition,
+            inputs=inputs,
+            pins=pins,
+            read_dependencies=read_dependencies,
+        )
         self._validate_recovered_validator_registrations(definition, stored.traces)
         checkpoint = stored.checkpoint
-        if _pins_payload(checkpoint.pins) != _pins_payload(pins):
-            self._raise(
-                EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
-                "checkpoint pins differ from the expected pins",
-            )
-        if stored.run_inputs != frozen_inputs:
-            self._raise(
-                EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
-                "checkpoint inputs differ from the expected inputs",
-            )
-        if checkpoint.read_dependencies != dependencies:
-            self._raise(
-                EngineErrorCode.STALE_READ_DEPENDENCY,
-                "checkpoint read dependencies differ from expected versions",
-            )
         if checkpoint.status is not RunStatus.COMPLETED:
             self._raise(
                 EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
@@ -312,6 +289,88 @@ class PlaybookEngine:
             status,
             termination,
         )
+
+    def inspect(
+        self,
+        *,
+        run_id: RunId,
+        definition: PlaybookDefinition,
+    ) -> InspectedRunRecord:
+        """Validate and expose persisted bindings without executing effects."""
+
+        stored, payload = self._load(run_id, definition)
+        checkpoint = stored.checkpoint
+        dialogue_step_id: str | None = None
+        dialogue_request: str | None = None
+        if checkpoint.status is RunStatus.SUSPENDED:
+            dialogue = cast(DialogueStep, definition.steps[checkpoint.next_step_index - 1])
+            dialogue_step_id = dialogue.id
+            dialogue_request = dialogue.request_text
+        return InspectedRunRecord(
+            run_id=run_id,
+            status=checkpoint.status,
+            definition_fingerprint=stored.definition_fingerprint,
+            checkpoint_fingerprint=_checkpoint_fingerprint(payload),
+            inputs=stored.run_inputs,
+            pins=checkpoint.pins,
+            read_dependencies=checkpoint.read_dependencies,
+            outputs=checkpoint.outputs,
+            traces=stored.traces,
+            next_step_index=checkpoint.next_step_index,
+            dialogue_step_id=dialogue_step_id,
+            dialogue_request=dialogue_request,
+        )
+
+    def _inspect_expected(
+        self,
+        *,
+        run_id: RunId,
+        definition: PlaybookDefinition,
+        inputs: JsonObject,
+        pins: VersionPins,
+        read_dependencies: tuple[ReadDependency, ...],
+    ) -> tuple[_StoredRun, bytes, JsonObject, tuple[ReadDependency, ...]]:
+        frozen_inputs = freeze_object(inputs)
+        dependencies = tuple(read_dependencies)
+        if set(frozen_inputs) != set(definition.input_keys):
+            self._raise(
+                EngineErrorCode.INVALID_INPUT,
+                "run inputs must exactly match declared playbook inputs",
+            )
+        dependency_keys = tuple((item.kind, item.id) for item in dependencies)
+        if len(set(dependency_keys)) != len(dependency_keys):
+            self._raise(
+                EngineErrorCode.INVALID_INPUT,
+                "read dependencies must be unique by kind and id",
+            )
+        definition_ref = ArtifactReference(definition.id, definition.version)
+        if _artifact_payload(pins.playbook) != _artifact_payload(definition_ref):
+            self._raise(
+                EngineErrorCode.INCOMPATIBLE_PINS,
+                "playbook pin does not match definition",
+            )
+        if _artifact_payload(pins.model_adapter) != _artifact_payload(self._model_adapter):
+            self._raise(EngineErrorCode.INCOMPATIBLE_PINS, "model adapter pin changed")
+        if _artifact_payload(pins.state_contract) != _artifact_payload(self._state_contract):
+            self._raise(EngineErrorCode.INCOMPATIBLE_PINS, "state contract pin changed")
+        stored, payload = self._load(run_id, definition)
+        checkpoint = stored.checkpoint
+        if _pins_payload(checkpoint.pins) != _pins_payload(pins):
+            self._raise(
+                EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
+                "checkpoint pins differ from the expected pins",
+            )
+        if stored.run_inputs != frozen_inputs:
+            self._raise(
+                EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
+                "checkpoint inputs differ from the expected inputs",
+            )
+        if checkpoint.read_dependencies != dependencies:
+            self._raise(
+                EngineErrorCode.STALE_READ_DEPENDENCY,
+                "checkpoint read dependencies differ from expected versions",
+            )
+        return stored, payload, frozen_inputs, dependencies
 
     def _validate_recovered_validator_registrations(
         self,
@@ -557,17 +616,22 @@ class PlaybookEngine:
                     prompt_layers,
                 )
             except PlaybookEngineError as error:
+                cancelled = error.failure.code is EngineErrorCode.CANCELLED
                 mutable_traces.append(
                     self._trace(
                         step,
-                        StepTraceStatus.FAILED,
+                        (
+                            StepTraceStatus.CANCELLED
+                            if cancelled
+                            else StepTraceStatus.FAILED
+                        ),
                         {"error_code": error.failure.code.value},
                     )
                 )
                 failed_checkpoint = self._checkpoint(
                     run_id,
                     pins,
-                    RunStatus.FAILED,
+                    RunStatus.CANCELLED if cancelled else RunStatus.FAILED,
                     index,
                     mutable_outputs,
                     read_dependencies,
@@ -586,11 +650,13 @@ class PlaybookEngine:
                         "failed checkpoint could not be persisted",
                         step.id,
                     )
-                return FailedRunResult(
-                    mutable_outputs,
-                    tuple(mutable_traces),
-                    error.failure,
-                )
+                if cancelled:
+                    return CancelledRunResult(
+                        mutable_outputs,
+                        tuple(mutable_traces),
+                        error.failure,
+                    )
+                return FailedRunResult(mutable_outputs, tuple(mutable_traces), error.failure)
             mutable_outputs[step.output_key] = value
             trace_details = freeze_object(
                 {
@@ -701,6 +767,18 @@ class PlaybookEngine:
                 )
             try:
                 response = await self._model.generate(request)
+            except ModelError as error:
+                if error.code is ModelErrorCode.CANCELLED:
+                    self._raise(
+                        EngineErrorCode.CANCELLED,
+                        "model execution was cancelled",
+                        step.id,
+                    )
+                self._raise(
+                    EngineErrorCode.MODEL_ERROR,
+                    f"model execution failed: {type(error).__name__}",
+                    step.id,
+                )
             except Exception as error:
                 self._raise(
                     EngineErrorCode.MODEL_ERROR,
@@ -715,6 +793,12 @@ class PlaybookEngine:
                 self._raise(
                     EngineErrorCode.MODEL_ERROR,
                     "model invocation provenance does not match the pinned adapter",
+                    step.id,
+                )
+            if response.finish_reason is ModelFinishReason.CANCELLED:
+                self._raise(
+                    EngineErrorCode.CANCELLED,
+                    "model execution was cancelled",
                     step.id,
                 )
             value: JsonValue
@@ -1005,6 +1089,10 @@ def _json_fingerprint(value: JsonValue) -> str:
     return sha256(b"study-agent-json-result-v1\0" + encoded).hexdigest()
 
 
+def _checkpoint_fingerprint(payload: bytes) -> str:
+    return sha256(b"study-agent-playbook-checkpoint-v1\0" + payload).hexdigest()
+
+
 def _validator_receipt(
     executor: Any,
     outcome: ValidationOutcome,
@@ -1226,6 +1314,7 @@ def _validate_checkpoint_shape(
         RunStatus.RUNNING,
         RunStatus.SUSPENDED,
         RunStatus.COMPLETED,
+        RunStatus.CANCELLED,
         RunStatus.FAILED,
     }:
         _checkpoint_error("checkpoint status is unsupported")
@@ -1259,19 +1348,37 @@ def _validate_checkpoint_shape(
                 (step.id, step.kind, StepTraceStatus.SUSPENDED),
             )
         )
-    elif checkpoint.status is RunStatus.FAILED:
+    elif checkpoint.status in {RunStatus.CANCELLED, RunStatus.FAILED}:
         if next_index >= len(definition.steps):
-            _checkpoint_error("failed checkpoint has no failed step")
+            _checkpoint_error("failed or cancelled checkpoint has no current step")
         step = definition.steps[next_index]
+        terminal_trace = (
+            StepTraceStatus.CANCELLED
+            if checkpoint.status is RunStatus.CANCELLED
+            else StepTraceStatus.FAILED
+        )
         expected_trace.extend(
             (
                 (step.id, step.kind, StepTraceStatus.STARTED),
-                (step.id, step.kind, StepTraceStatus.FAILED),
+                (step.id, step.kind, terminal_trace),
             )
         )
     actual_trace = [(item.step_id, item.step_kind, item.status) for item in traces]
     if actual_trace != expected_trace:
         _checkpoint_error("checkpoint trace prefix does not match playbook definition")
+    if checkpoint.status in {RunStatus.CANCELLED, RunStatus.FAILED}:
+        terminal = traces[-1]
+        if set(terminal.details) != {"error_code"}:
+            _checkpoint_error("terminal trace error receipt fields are invalid")
+        try:
+            error_code = EngineErrorCode(cast(str, terminal.details["error_code"]))
+        except (TypeError, ValueError):
+            _checkpoint_error("terminal trace error code is invalid")
+        if checkpoint.status is RunStatus.CANCELLED:
+            if error_code is not EngineErrorCode.CANCELLED:
+                _checkpoint_error("cancelled checkpoint requires a cancelled trace error")
+        elif error_code is EngineErrorCode.CANCELLED:
+            _checkpoint_error("failed checkpoint cannot carry a cancelled trace error")
     steps_by_id = {step.id: step for step in definition.steps}
     for trace in traces:
         if trace.status is not StepTraceStatus.COMPLETED:
