@@ -205,6 +205,7 @@ class PlaybookEngine:
             "resume_generation_fingerprint": _checkpoint_fingerprint(
                 suspended_payload
             ),
+            "resume_generation_updated_at": checkpoint.updated_at.isoformat(),
         }
         claimed_traces = (
             *stored.traces,
@@ -523,6 +524,13 @@ class PlaybookEngine:
                     )
             elif isinstance(step, DialogueStep):
                 _validate_schema_definition(step.response_schema.value)
+                if step.gate is not None:
+                    _validate_schema(
+                        step.response_schema.value,
+                        step.gate.default_response,
+                        "dialogue default response",
+                        step.id,
+                    )
 
         required_tools = {item.name: item.behavior_version for item in skill.required_tools}
         pinned_tools = {item.tool_name: item.version for item in pins.tool_behaviors}
@@ -585,42 +593,28 @@ class PlaybookEngine:
         for index in range(start_index, len(definition.steps)):
             step = definition.steps[index]
             mutable_traces.append(self._trace(step, StepTraceStatus.STARTED))
-            if isinstance(step, DialogueStep):
-                mutable_traces.append(self._trace(step, StepTraceStatus.SUSPENDED))
-                checkpoint = self._checkpoint(
-                    run_id,
-                    pins,
-                    RunStatus.SUSPENDED,
-                    index + 1,
-                    mutable_outputs,
-                    read_dependencies,
-                )
-                replacement = _encode_stored_run(
-                    _StoredRun(
-                        checkpoint,
-                        tuple(mutable_traces),
-                        run_inputs,
-                        _definition_fingerprint(definition),
-                    )
-                )
-                if not self._compare_and_set(run_id, expected_payload, replacement):
-                    self._raise(
-                        EngineErrorCode.RUN_STORE_ERROR,
-                        "checkpoint advance failed after dialogue suspension",
-                    )
-                return SuspendedRunResult(
-                    mutable_outputs,
-                    tuple(mutable_traces),
-                    step.request_text,
-                )
             try:
-                value, termination, trace_details = await self._execute_step(
-                    step,
-                    run_inputs,
-                    mutable_outputs,
-                    activated_fallbacks,
-                    prompt_layers,
-                )
+                should_suspend = isinstance(
+                    step, DialogueStep
+                ) and self._dialogue_should_suspend(step, mutable_outputs)
+                if isinstance(step, DialogueStep):
+                    value = (
+                        step.gate.default_response
+                        if step.gate is not None
+                        else None
+                    )
+                    termination = None
+                    trace_details = freeze_object(
+                        {"dialogue_disposition": "skipped"}
+                    )
+                else:
+                    value, termination, trace_details = await self._execute_step(
+                        step,
+                        run_inputs,
+                        mutable_outputs,
+                        activated_fallbacks,
+                        prompt_layers,
+                    )
             except PlaybookEngineError as error:
                 cancelled = error.failure.code is EngineErrorCode.CANCELLED
                 mutable_traces.append(
@@ -663,6 +657,34 @@ class PlaybookEngine:
                         error.failure,
                     )
                 return FailedRunResult(mutable_outputs, tuple(mutable_traces), error.failure)
+            if isinstance(step, DialogueStep) and should_suspend:
+                mutable_traces.append(self._trace(step, StepTraceStatus.SUSPENDED))
+                checkpoint = self._checkpoint(
+                    run_id,
+                    pins,
+                    RunStatus.SUSPENDED,
+                    index + 1,
+                    mutable_outputs,
+                    read_dependencies,
+                )
+                replacement = _encode_stored_run(
+                    _StoredRun(
+                        checkpoint,
+                        tuple(mutable_traces),
+                        run_inputs,
+                        _definition_fingerprint(definition),
+                    )
+                )
+                if not self._compare_and_set(run_id, expected_payload, replacement):
+                    self._raise(
+                        EngineErrorCode.RUN_STORE_ERROR,
+                        "checkpoint advance failed after dialogue suspension",
+                    )
+                return SuspendedRunResult(
+                    mutable_outputs,
+                    tuple(mutable_traces),
+                    step.request_text,
+                )
             mutable_outputs[step.output_key] = value
             trace_details = freeze_object(
                 {
@@ -708,6 +730,23 @@ class PlaybookEngine:
             mutable_outputs,
             tuple(mutable_traces),
         )
+
+    def _dialogue_should_suspend(
+        self,
+        step: DialogueStep,
+        outputs: Mapping[str, JsonValue],
+    ) -> bool:
+        if step.gate is None:
+            return True
+        try:
+            condition = _dialogue_gate_condition(step, outputs)
+        except (KeyError, TypeError) as error:
+            self._raise(
+                EngineErrorCode.BINDING_ERROR,
+                f"dialogue gate resolution failed: {type(error).__name__}",
+                step.id,
+            )
+        return condition
 
     async def _execute_step(
         self,
@@ -1042,7 +1081,7 @@ class PlaybookEngine:
                 EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
                 "checkpoint playbook definition changed",
             )
-        _validate_checkpoint_shape(definition, checkpoint, stored.traces)
+        _validate_checkpoint_shape(definition, stored)
 
     @staticmethod
     def _raise(code: EngineErrorCode, message: str, step_id: str | None = None) -> NoReturn:
@@ -1285,6 +1324,15 @@ def _definition_fingerprint(definition: PlaybookDefinition) -> str:
                     "response_schema": _plain(step.response_schema.value),
                 }
             )
+            if step.gate is not None:
+                common["gate"] = {
+                    "suspend_when": {
+                        "source": step.gate.suspend_when.source.value,
+                        "key": step.gate.suspend_when.key,
+                        "path": step.gate.suspend_when.path,
+                    },
+                    "default_response": _plain(step.gate.default_response),
+                }
         elif isinstance(step, ValidateStep):
             common.update(
                 {
@@ -1310,9 +1358,10 @@ def _definition_fingerprint(definition: PlaybookDefinition) -> str:
 
 def _validate_checkpoint_shape(
     definition: PlaybookDefinition,
-    checkpoint: PlaybookCheckpoint,
-    traces: tuple[StepTrace, ...],
+    stored: _StoredRun,
 ) -> None:
+    checkpoint = stored.checkpoint
+    traces = stored.traces
     next_index = checkpoint.next_step_index
     if not 0 <= next_index <= len(definition.steps):
         _checkpoint_error("checkpoint next-step index is invalid")
@@ -1343,11 +1392,20 @@ def _validate_checkpoint_shape(
     for index in range(completed_count):
         step = definition.steps[index]
         expected_trace.append((step.id, step.kind, StepTraceStatus.STARTED))
-        if isinstance(step, DialogueStep):
+        if isinstance(step, DialogueStep) and (
+            step.gate is None
+            or _checkpoint_dialogue_gate_condition(step, checkpoint.outputs)
+        ):
             expected_trace.append((step.id, step.kind, StepTraceStatus.SUSPENDED))
         expected_trace.append((step.id, step.kind, StepTraceStatus.COMPLETED))
     if suspended_dialogue:
         step = definition.steps[next_index - 1]
+        if (
+            isinstance(step, DialogueStep)
+            and step.gate is not None
+            and not _checkpoint_dialogue_gate_condition(step, checkpoint.outputs)
+        ):
+            _checkpoint_error("skipped dialogue cannot own a suspended checkpoint")
         expected_trace.extend(
             (
                 (step.id, step.kind, StepTraceStatus.STARTED),
@@ -1386,7 +1444,7 @@ def _validate_checkpoint_shape(
         elif error_code is EngineErrorCode.CANCELLED:
             _checkpoint_error("failed checkpoint cannot carry a cancelled trace error")
     steps_by_id = {step.id: step for step in definition.steps}
-    for trace in traces:
+    for trace_index, trace in enumerate(traces):
         if trace.status is not StepTraceStatus.COMPLETED:
             continue
         step = steps_by_id[trace.step_id]
@@ -1429,9 +1487,35 @@ def _validate_checkpoint_shape(
             for receipt in fallback_receipts:
                 _validate_validator_receipt(receipt, result=None, require_result=True)
         elif isinstance(step, DialogueStep):
-            if set(trace.details) not in (
+            if step.gate is not None:
+                should_suspend = _checkpoint_dialogue_gate_condition(
+                    step, checkpoint.outputs
+                )
+                if should_suspend:
+                    if set(trace.details) != {
+                        "output_fingerprint",
+                        "resume_generation_fingerprint",
+                        "resume_generation_updated_at",
+                    }:
+                        _checkpoint_error("resumed dialogue receipt fields are invalid")
+                else:
+                    if set(trace.details) != {
+                        "dialogue_disposition",
+                        "output_fingerprint",
+                    } or trace.details.get("dialogue_disposition") != "skipped":
+                        _checkpoint_error("skipped dialogue receipt fields are invalid")
+                    if _json_fingerprint(output) != _json_fingerprint(
+                        step.gate.default_response
+                    ):
+                        _checkpoint_error("skipped dialogue output differs from default")
+            elif set(trace.details) not in (
                 {"output_fingerprint"},
                 {"output_fingerprint", "resume_generation_fingerprint"},
+                {
+                    "output_fingerprint",
+                    "resume_generation_fingerprint",
+                    "resume_generation_updated_at",
+                },
             ):
                 _checkpoint_error("dialogue trace receipt fields are invalid")
             generation = trace.details.get("resume_generation_fingerprint")
@@ -1439,6 +1523,16 @@ def _validate_checkpoint_shape(
                 not isinstance(generation, str) or not _is_sha256(generation)
             ):
                 _checkpoint_error("dialogue resume generation fingerprint is invalid")
+            proof_time = trace.details.get("resume_generation_updated_at")
+            if proof_time is not None:
+                _validate_resume_generation_proof(
+                    definition,
+                    stored,
+                    step,
+                    trace_index,
+                    generation,
+                    proof_time,
+                )
             _validate_schema(step.response_schema.value, output, "recovered dialogue output")
         elif isinstance(step, ValidateStep):
             receipt = trace.details.get("validator")
@@ -1559,6 +1653,77 @@ def _checkpoint_error(message: str) -> NoReturn:
     raise PlaybookEngineError(
         EngineFailure(EngineErrorCode.INCOMPATIBLE_CHECKPOINT, message)
     )
+
+
+def _dialogue_gate_condition(
+    step: DialogueStep,
+    outputs: Mapping[str, JsonValue],
+) -> bool:
+    gate = step.gate
+    if gate is None:
+        raise TypeError("unconditional dialogue has no gate condition")
+    value = outputs[gate.suspend_when.key]
+    for part in gate.suspend_when.path:
+        if not isinstance(value, Mapping):
+            raise TypeError("dialogue gate path requires an object")
+        value = value[part]
+    if type(value) is not bool:
+        raise TypeError("dialogue gate condition must resolve to boolean")
+    return value
+
+
+def _checkpoint_dialogue_gate_condition(
+    step: DialogueStep,
+    outputs: Mapping[str, JsonValue],
+) -> bool:
+    try:
+        return _dialogue_gate_condition(step, outputs)
+    except (KeyError, TypeError):
+        _checkpoint_error("dialogue gate condition is missing or not boolean")
+
+
+def _validate_resume_generation_proof(
+    definition: PlaybookDefinition,
+    stored: _StoredRun,
+    step: DialogueStep,
+    trace_index: int,
+    generation: JsonValue | None,
+    proof_time: JsonValue,
+) -> None:
+    if not isinstance(generation, str) or not _is_sha256(generation):
+        _checkpoint_error("dialogue resume generation fingerprint is invalid")
+    if not isinstance(proof_time, str):
+        _checkpoint_error("dialogue resume generation timestamp is invalid")
+    try:
+        updated_at = datetime.fromisoformat(proof_time)
+        step_index = next(
+            index for index, candidate in enumerate(definition.steps) if candidate.id == step.id
+        )
+        prior_outputs = {
+            candidate.output_key: stored.checkpoint.outputs[candidate.output_key]
+            for candidate in definition.steps[:step_index]
+        }
+        suspended = PlaybookCheckpoint(
+            stored.checkpoint.run_id,
+            stored.checkpoint.pins,
+            RunStatus.SUSPENDED,
+            step_index + 1,
+            prior_outputs,
+            stored.checkpoint.read_dependencies,
+            updated_at,
+            stored.checkpoint.schema_version,
+        )
+        prior = _StoredRun(
+            suspended,
+            stored.traces[:trace_index],
+            stored.run_inputs,
+            stored.definition_fingerprint,
+        )
+        expected = _checkpoint_fingerprint(_encode_stored_run(prior))
+    except (KeyError, StopIteration, TypeError, ValueError):
+        _checkpoint_error("dialogue resume generation proof is invalid")
+    if generation != expected:
+        _checkpoint_error("dialogue resume generation proof does not match suspension")
 
 
 _SCHEMA_KEYWORDS = frozenset(

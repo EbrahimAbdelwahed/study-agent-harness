@@ -1,6 +1,6 @@
 # Task Bead: TUT-03C2 built-in capability packages and evals
 
-Status: Blocked on TUT-03C1
+Status: Ready
 Priority: P0
 Type: expand
 Depends On: TUT-03C1

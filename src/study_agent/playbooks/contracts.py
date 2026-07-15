@@ -4,7 +4,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from study_agent.domain._validation import JsonObject, freeze_object, require_aware, require_text
+from study_agent.domain._validation import (
+    JsonObject,
+    JsonValue,
+    freeze_json,
+    freeze_object,
+    require_aware,
+    require_text,
+)
 from study_agent.domain.identifiers import RunId
 from study_agent.portability import reject_provider_selectors
 from study_agent.ports import ModelRequest
@@ -89,16 +96,36 @@ class ModelStep:
 
 
 @dataclass(frozen=True, slots=True)
+class DialogueGate:
+    suspend_when: DataReference
+    default_response: JsonValue
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.suspend_when, DataReference):
+            raise TypeError("dialogue gate suspend_when must be a DataReference")
+        if self.suspend_when.source is not DataSourceKind.STEP_OUTPUT:
+            raise ValueError("dialogue gate must reference a step output")
+        if not self.suspend_when.path:
+            raise ValueError("dialogue gate condition requires a non-empty path")
+        default_response = freeze_json(self.default_response)
+        reject_provider_selectors(default_response, "dialogue gate default response")
+        object.__setattr__(self, "default_response", default_response)
+
+
+@dataclass(frozen=True, slots=True)
 class DialogueStep:
     id: str
     request_text: str
     response_schema: JsonSchema
     output_key: str
+    gate: DialogueGate | None = None
     kind: str = field(default="dialogue", init=False)
 
     def __post_init__(self) -> None:
         _require_step_fields(self.id, self.output_key)
         require_text(self.request_text, "dialogue request_text")
+        if self.gate is not None and not isinstance(self.gate, DialogueGate):
+            raise TypeError("dialogue gate must use DialogueGate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +208,7 @@ class PlaybookDefinition:
         if len(set(outputs)) != len(outputs):
             raise ValueError("playbook output keys must be unique")
         available_outputs: set[str] = set()
+        output_steps: dict[str, PlaybookStep] = {}
         for step in self.steps:
             if isinstance(step, ValidateStep) and not set(step.input_keys) <= available_outputs:
                 raise ValueError("validate steps may reference only previous step outputs")
@@ -195,7 +223,14 @@ class PlaybookDefinition:
                     and binding.source.key not in available_outputs
                 ):
                     raise ValueError("binding references a non-previous step output")
+            if isinstance(step, DialogueStep) and step.gate is not None:
+                condition_step = output_steps.get(step.gate.suspend_when.key)
+                if not isinstance(condition_step, ValidateStep):
+                    raise ValueError(
+                        "dialogue gate must reference a previous validate step output"
+                    )
             available_outputs.add(step.output_key)
+            output_steps[step.output_key] = step
 
 
 def _step_bindings(step: PlaybookStep) -> tuple[DataBinding, ...]:

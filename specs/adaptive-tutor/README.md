@@ -1,16 +1,16 @@
 # Adaptive Tutor
 
 Status: Approved — implementation in progress
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
-and the next dependency-ready slice. The current pickup is TUT-03C built-in
-tutor capabilities and offline evals. Preserve the per-course event stream as
-canonical, keep next
-action selection in the external tutor host, and do not add arbitrary model
-memory, provider behavior in the core, or a global learner aggregate.
+and the next dependency-ready slice. The current pickup is TUT-03C2 built-in
+`explain_concept@1` and `assess_understanding@1` capability packages and offline
+evals. Preserve the per-course event stream as canonical, keep next-action
+selection in the external tutor host, and do not add arbitrary model memory,
+provider behavior in the core, or a global learner aggregate.
 
 Global TODO:
 
