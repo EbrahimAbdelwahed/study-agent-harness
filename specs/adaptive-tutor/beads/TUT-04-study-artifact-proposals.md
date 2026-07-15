@@ -1,6 +1,6 @@
 # Task Bead: TUT-04 study artifact proposals
 
-Status: Ready
+Status: In progress
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02
@@ -14,6 +14,14 @@ artifact lifecycle/provenance contracts
 
 Versioned flashcard, assessment-item, exam-blueprint, and study-brief proposals
 can be decided and revised with complete provenance.
+
+## Child Beads
+
+- [TUT-04A — artifact and pedagogical-profile contracts](TUT-04A-artifact-and-profile-contracts.md)
+- [TUT-04B — canonical proposal and decision lifecycle](TUT-04B-canonical-artifact-lifecycle.md)
+- [TUT-04C — grounded flashcard proposal capabilities](TUT-04C-grounded-flashcard-proposals.md)
+- [TUT-04D — grounded exam-sample analysis](TUT-04D-grounded-exam-sample-analysis.md)
+- [TUT-04E — verified commit and export integration](TUT-04E-artifact-integration.md)
 
 ## Acceptance Criteria
 

@@ -7,10 +7,10 @@ Last updated: 2026-07-15
 
 Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
 and the next dependency-ready slice. TUT-03 is complete; the current pickup is
-TUT-04 study artifact proposals. Preserve the per-course event stream as
-canonical, keep next-action selection in the external tutor host, and do not
-add arbitrary model memory, provider behavior in the core, or a global learner
-aggregate.
+TUT-04A artifact and pedagogical-profile contracts under ADR-0008. Preserve the
+per-course event stream as canonical, keep next-action and per-request profile
+selection in the external tutor host, and do not add Anki/product/provider
+behavior, arbitrary model memory, or a global learner aggregate.
 
 Global TODO:
 
