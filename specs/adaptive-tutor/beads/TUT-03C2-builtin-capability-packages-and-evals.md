@@ -1,6 +1,6 @@
 # Task Bead: TUT-03C2 built-in capability packages and evals
 
-Status: Ready
+Status: In progress
 Priority: P0
 Type: expand
 Depends On: TUT-03C1
@@ -9,6 +9,11 @@ Depends On: TUT-03C1
 
 Trusted portable `explain_concept@1` and `assess_understanding@1` packages use
 the gateway and optional dialogue primitive with deterministic offline evals.
+
+## Child Beads
+
+- [TUT-03C2A — portable built-in capability packages](TUT-03C2A-portable-builtin-capability-packages.md)
+- [TUT-03C2B — gateway integration and scripted evals](TUT-03C2B-gateway-integration-and-scripted-evals.md)
 
 ## Acceptance Criteria
 
