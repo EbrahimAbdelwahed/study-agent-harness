@@ -6,8 +6,9 @@ Last updated: 2026-07-14
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
-and the next dependency-ready slice. The current pickup is TUT-03B2
-authority-bound capability gateway. Preserve the per-course event stream as canonical, keep next
+and the next dependency-ready slice. The current pickup is TUT-03C built-in
+tutor capabilities and offline evals. Preserve the per-course event stream as
+canonical, keep next
 action selection in the external tutor host, and do not add arbitrary model
 memory, provider behavior in the core, or a global learner aggregate.
 

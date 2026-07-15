@@ -200,12 +200,18 @@ class PlaybookEngine:
         _validate_schema(dialogue.response_schema.value, frozen_resume, "dialogue response")
         outputs = dict(checkpoint.outputs)
         outputs[dialogue.output_key] = frozen_resume
+        resume_details: dict[str, JsonValue] = {
+            "output_fingerprint": _json_fingerprint(frozen_resume),
+            "resume_generation_fingerprint": _checkpoint_fingerprint(
+                suspended_payload
+            ),
+        }
         claimed_traces = (
             *stored.traces,
             self._trace(
                 dialogue,
                 StepTraceStatus.COMPLETED,
-                {"output_fingerprint": _json_fingerprint(frozen_resume)},
+                freeze_object(resume_details),
             ),
         )
         claimed = _StoredRun(
@@ -1423,6 +1429,16 @@ def _validate_checkpoint_shape(
             for receipt in fallback_receipts:
                 _validate_validator_receipt(receipt, result=None, require_result=True)
         elif isinstance(step, DialogueStep):
+            if set(trace.details) not in (
+                {"output_fingerprint"},
+                {"output_fingerprint", "resume_generation_fingerprint"},
+            ):
+                _checkpoint_error("dialogue trace receipt fields are invalid")
+            generation = trace.details.get("resume_generation_fingerprint")
+            if generation is not None and (
+                not isinstance(generation, str) or not _is_sha256(generation)
+            ):
+                _checkpoint_error("dialogue resume generation fingerprint is invalid")
             _validate_schema(step.response_schema.value, output, "recovered dialogue output")
         elif isinstance(step, ValidateStep):
             receipt = trace.details.get("validator")
