@@ -1,6 +1,6 @@
 # Task Bead: TUT-03C2B gateway integration and scripted evals
 
-Status: Blocked on TUT-03C2A
+Status: Ready
 Priority: P0
 Type: expand
 Depends On: TUT-03C2A

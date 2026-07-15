@@ -1,6 +1,6 @@
 # Task Bead: TUT-03C2A portable built-in capability packages
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-03C1
@@ -13,17 +13,17 @@ can bind to request-scoped tools, validators, prompts, and read dependencies.
 
 ## Acceptance Criteria
 
-- [ ] Each package has one closed manifest, skill, linear playbook, prompt,
+- [x] Each package has one closed manifest, skill, linear playbook, prompt,
   output schema, pins, and binding factory with no provider/model selector.
-- [ ] Both flows search trusted sources first, terminate on insufficient or
+- [x] Both flows search trusted sources first, terminate on insufficient or
   conflicting evidence, derive clarification need in a validator, and use one
   validator-gated dialogue before exactly one model call.
-- [ ] Explanation returns a citation-resolved teaching answer; assessment
+- [x] Explanation returns a citation-resolved teaching answer; assessment
   returns questions only, with no answer key, attempt, grade, mastery, schedule,
   or state writes.
-- [ ] Package wiring is composition-root owned and reuses the private
+- [x] Package wiring is composition-root owned and reuses the private
   `source.search@1` executor contract without changing the seven StudyTools.
-- [ ] Definitions and validators reject unknown evidence handles, malformed
+- [x] Definitions and validators reject unknown evidence handles, malformed
   outputs, prompt injection as authority, and provider-selecting content.
 
 ## Verification
