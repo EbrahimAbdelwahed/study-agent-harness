@@ -1,6 +1,6 @@
 # Task Bead: TUT-03C2B gateway integration and scripted evals
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-03C2A
@@ -12,15 +12,15 @@ deterministic scripted models, including direct and clarified tutor turns.
 
 ## Acceptance Criteria
 
-- [ ] Direct sufficient requests complete without dialogue; materially
+- [x] Direct sufficient requests complete without dialogue; materially
   ambiguous requests suspend once and resume from the same bound generation.
-- [ ] Changed input, authority, dependency, or continuation is rejected or
+- [x] Changed input, authority, dependency, or continuation is rejected or
   reported stale without executing a second model call.
-- [ ] Insufficient/conflicting evidence terminates before dialogue/model work;
+- [x] Insufficient/conflicting evidence terminates before dialogue/model work;
   process loss, cancellation, and structured-output fallback remain truthful.
-- [ ] Prompt-injection-shaped evidence remains quoted data and cannot alter
+- [x] Prompt-injection-shaped evidence remains quoted data and cannot alter
   tools, policy, schema, or output provenance.
-- [ ] Offline evals prove explanations are grounded and assessments expose
+- [x] Offline evals prove explanations are grounded and assessments expose
   questions only; the public seven-tool registry remains byte-identical.
 
 ## Verification

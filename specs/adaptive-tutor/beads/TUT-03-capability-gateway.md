@@ -1,6 +1,6 @@
 # Task Bead: TUT-03 capability gateway
 
-Status: In progress
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02
@@ -22,11 +22,11 @@ closed contract, shipping `explain_concept@1` and `assess_understanding@1`.
 
 ## Acceptance Criteria
 
-- [ ] Outcomes use the closed completed/suspended/terminated/cancelled/stale/failed set.
-- [ ] Continuations bind pins, input, read dependencies, authority, and retry identity.
-- [ ] Host chooses capability; gateway never plans the next action.
-- [ ] Existing seven StudyTools and fingerprints are unchanged.
-- [ ] Scripted-model evals cover direct action, minimal clarification, and interruption.
+- [x] Outcomes use the closed completed/suspended/terminated/cancelled/stale/failed set.
+- [x] Continuations bind pins, input, read dependencies, authority, and retry identity.
+- [x] Host chooses capability; gateway never plans the next action.
+- [x] Existing seven StudyTools and fingerprints are unchanged.
+- [x] Scripted-model evals cover direct action, minimal clarification, and interruption.
 
 ## Verification
 

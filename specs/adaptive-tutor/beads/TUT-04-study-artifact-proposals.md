@@ -1,6 +1,6 @@
 # Task Bead: TUT-04 study artifact proposals
 
-Status: Blocked on TUT-02
+Status: Ready
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02
