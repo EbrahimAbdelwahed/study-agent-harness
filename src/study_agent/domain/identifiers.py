@@ -71,6 +71,18 @@ class BlobId(Identifier):
     pass
 
 
+class ArtifactId(Identifier):
+    pass
+
+
+class ArtifactRevisionId(Identifier):
+    pass
+
+
+class ArtifactBatchId(Identifier):
+    pass
+
+
 def answer_id_for(
     course_id: CourseId,
     session_id: SessionId,

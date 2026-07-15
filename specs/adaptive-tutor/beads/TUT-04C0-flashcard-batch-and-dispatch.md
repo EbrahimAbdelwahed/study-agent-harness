@@ -1,6 +1,6 @@
 # Task Bead: TUT-04C0 shared flashcard batch and trusted dispatch
 
-Status: Blocked on TUT-04A and TUT-03
+Status: Ready
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-04A, TUT-03

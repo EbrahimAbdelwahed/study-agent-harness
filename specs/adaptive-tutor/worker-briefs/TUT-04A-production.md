@@ -67,9 +67,10 @@ Reuse `grounded-study-artifact` from
   empty/duplicate/unbounded collections.
 - Define a strict provenance union with an origin discriminator:
   - `generated` composes existing prompt/model/retrieval/validator/source/version
-    leaves plus profile selection, ordered read dependencies, output fingerprint,
-    and run identity; model is optional only when the verified procedure truly
-    made no model call, while prompt/validator/run proof remains required;
+    leaves plus ordered read dependencies, output fingerprint, and run identity;
+    profile selection is required and content-matching exactly for flashcards and
+    forbidden for other kinds; model is optional only when the verified procedure
+    truly made no model call, while prompt/validator/run proof remains required;
   - `human_authored` requires `PrincipalKind.HUMAN`, an `InteractionId`, source
     commitments/read dependencies and optional prior revision, and structurally
     forbids prompt/model/validator/pins/run/output/profile-selection fields.

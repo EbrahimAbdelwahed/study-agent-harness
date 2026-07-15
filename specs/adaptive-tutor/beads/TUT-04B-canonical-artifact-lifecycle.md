@@ -1,6 +1,6 @@
 # Task Bead: TUT-04B canonical proposal and decision lifecycle
 
-Status: Blocked on TUT-04A
+Status: Ready
 Priority: P0
 Type: expand
 Depends On: TUT-04A

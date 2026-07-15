@@ -1,6 +1,6 @@
 # Task Bead: TUT-04A artifact and pedagogical-profile contracts
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02
@@ -13,25 +13,26 @@ the general hybrid and anatomy morphology-first flashcard profiles.
 
 ## Acceptance Criteria
 
-- [ ] Artifact, revision, batch, and profile identities are typed and
+- [x] Artifact, revision, batch, and profile identities are typed and
   deterministic; no model-authored candidate key becomes canonical identity.
-- [ ] One envelope dispatches to exact versioned codecs for flashcard,
+- [x] One envelope dispatches to exact versioned codecs for flashcard,
   assessment-item, exam-blueprint, and study-brief content; extra/unknown fields
   and invalid discriminated unions fail closed.
-- [ ] Artifact provenance is a strict origin union: generated binds verified
-  profile/run/prompt/model/validator/pins/output/dependencies; human-authored
+- [x] Artifact provenance is a strict origin union: generated binds verified
+  run/prompt/model/validator/pins/output/dependencies and binds a closed profile
+  receipt exactly for flashcards; human-authored
   binds HUMAN plus an exact interaction and forbids generated-only fields.
-- [ ] Optional media is a closed trusted BlobId/digest/source-index/verifier
+- [x] Optional media is a closed trusted BlobId/digest/source-index/verifier
   receipt/alt-text value; filenames, embedded markup, and unverified media fail.
-- [ ] Profile catalog is immutable, closed, provider-free, and cannot
+- [x] Profile catalog is immutable, closed, provider-free, and cannot
   self-register; general hybrid is the explicit default and morphology-first is
   never inferred from course title or model output.
-- [ ] A typed selection receipt makes default/explicit/trusted-metadata choice
+- [x] A typed selection receipt makes default/explicit/trusted-metadata choice
   auditable; morphology requires a trusted evidence reference and model output
   cannot author or override the receipt.
-- [ ] Agent-facing descriptors state selection rules, budget ceilings,
+- [x] Agent-facing descriptors state selection rules, budget ceilings,
   framework/atomic roles, grounding, and exporter-neutral constraints.
-- [ ] Assessment-item and study-brief v1 schemas implement the minimal closed
+- [x] Assessment-item and study-brief v1 schemas implement the minimal closed
   ADR-0008 fields and reject attempts, grades, mastery, scheduling, learner
   models, Anki fields, and HTML/template metadata.
 

@@ -27,7 +27,8 @@ agent-guidance contracts implemented by TUT-04A.
 - Assessment/study-brief negative fixtures pin the TUT-05/07 boundary.
 - Provenance round-trips with observed technical model receipts but rejects
   missing/failed/duplicate validators, source/read dependency drift, selection
-  mismatch, fingerprints, and secret-shaped fields.
+  mismatch, fingerprints, and secret-shaped fields. Flashcards require a
+  matching closed-catalog selection receipt; non-flashcard artifacts forbid it.
 - Human-authored provenance round-trips only with HUMAN plus an exact
   interaction and rejects every generated-only field; generated provenance
   cannot weaken its required proof fields.
