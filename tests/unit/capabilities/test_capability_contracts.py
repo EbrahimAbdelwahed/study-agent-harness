@@ -53,10 +53,12 @@ def test_public_ids_and_outcome_statuses_are_exact_closed_values() -> None:
     assert tuple(TutorCapabilityId) == (
         TutorCapabilityId.EXPLAIN_CONCEPT,
         TutorCapabilityId.ASSESS_UNDERSTANDING,
+        TutorCapabilityId.PROPOSE_FLASHCARDS,
     )
     assert tuple(item.value for item in TutorCapabilityId) == (
         "explain_concept",
         "assess_understanding",
+        "propose_flashcards",
     )
     assert tuple(item.value for item in CapabilityOutcomeStatus) == (
         "completed",

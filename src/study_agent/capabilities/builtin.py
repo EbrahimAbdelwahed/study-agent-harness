@@ -17,6 +17,8 @@ from study_agent.skills.builtin import (
     EXPLAIN_CONCEPT_INPUT_SCHEMA,
     EXPLAIN_CONCEPT_OUTPUT_SCHEMA,
     EXPLAIN_CONCEPT_SKILL,
+    PROPOSE_FLASHCARDS_INPUT_SCHEMA,
+    PROPOSE_FLASHCARDS_OUTPUT_SCHEMA,
 )
 
 from .bindings import CapabilityBinding, CapabilityDependencyResolver
@@ -38,6 +40,15 @@ ASSESS_UNDERSTANDING_MANIFEST = CapabilityManifest(
     VERSION,
     ASSESS_UNDERSTANDING_INPUT_SCHEMA.value,
     ASSESS_UNDERSTANDING_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    True,
+)
+
+PROPOSE_FLASHCARDS_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.PROPOSE_FLASHCARDS,
+    VERSION,
+    PROPOSE_FLASHCARDS_INPUT_SCHEMA.value,
+    PROPOSE_FLASHCARDS_OUTPUT_SCHEMA.value,
     ("course:read",),
     True,
 )

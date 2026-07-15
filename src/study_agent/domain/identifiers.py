@@ -83,6 +83,20 @@ class ArtifactBatchId(Identifier):
     pass
 
 
+def artifact_event_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    retry_identity: str,
+    command_kind: str,
+) -> EventId:
+    require_text(retry_identity, "retry_identity")
+    require_text(command_kind, "command_kind")
+    payload = (
+        f"artifact-event@1\0{course_id}\0{session_id}\0{retry_identity}\0{command_kind}"
+    ).encode()
+    return EventId(f"event-sha256:{sha256(payload).hexdigest()}")
+
+
 def answer_id_for(
     course_id: CourseId,
     session_id: SessionId,

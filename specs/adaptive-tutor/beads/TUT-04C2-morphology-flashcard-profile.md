@@ -1,6 +1,6 @@
 # Task Bead: TUT-04C2 morphology-first anatomy implementation
 
-Status: Blocked on TUT-04C0
+Status: Ready
 Priority: P0
 Type: expand
 Depends On: TUT-04C0

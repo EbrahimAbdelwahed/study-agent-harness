@@ -33,6 +33,7 @@ from study_agent.tools.schema import validate_schema_definition
 class TutorCapabilityId(StrEnum):
     EXPLAIN_CONCEPT = "explain_concept"
     ASSESS_UNDERSTANDING = "assess_understanding"
+    PROPOSE_FLASHCARDS = "propose_flashcards"
 
 
 class CapabilityOutcomeStatus(StrEnum):

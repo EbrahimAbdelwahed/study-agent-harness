@@ -1,6 +1,6 @@
 # Task Bead: TUT-04C0 shared flashcard batch and trusted dispatch
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-04A, TUT-03
@@ -13,13 +13,13 @@ selection receipt that model content cannot alter.
 
 ## Acceptance Criteria
 
-- [ ] Shared candidate batch schema is bounded to 24, uses temporary candidate
+- [x] Shared candidate batch schema is bounded to 24, uses temporary candidate
   linkage only, and contains no canonical IDs, decisions, Anki fields, provider
   selectors, credentials, raw HTML, or state writes.
-- [ ] Dispatcher defaults only to hybrid and requires a trusted evidence basis
+- [x] Dispatcher defaults only to hybrid and requires a trusted evidence basis
   for morphology; selected profile/prompt/playbook/validator pins are closed in
   the binding and continuation.
-- [ ] Profile selection is absent from model-authored output and cannot be
+- [x] Profile selection is absent from model-authored output and cannot be
   changed on retry/resume.
 
 ## Verification

@@ -163,7 +163,7 @@ def test_contract_modules_add_no_runtime_state_or_effect_owner() -> None:
     assert violations == []
 
 
-def test_exact_seven_tools_and_two_tutor_capabilities_are_unchanged() -> None:
+def test_exact_seven_tools_and_two_ordinary_gateway_capabilities_are_unchanged() -> None:
     tools = tuple(
         (manifest.name, manifest.version, manifest.fingerprint)
         for manifest in public_study_tool_manifests()
@@ -181,4 +181,5 @@ def test_exact_seven_tools_and_two_tutor_capabilities_are_unchanged() -> None:
     assert tuple(TutorCapabilityId) == (
         TutorCapabilityId.EXPLAIN_CONCEPT,
         TutorCapabilityId.ASSESS_UNDERSTANDING,
+        TutorCapabilityId.PROPOSE_FLASHCARDS,
     )

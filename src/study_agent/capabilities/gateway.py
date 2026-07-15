@@ -21,10 +21,11 @@ from study_agent.playbooks import (
     StepTraceStatus,
     VersionPins,
 )
+from study_agent.playbooks.engine import _definition_fingerprint
 from study_agent.skills import ArtifactReference
 from study_agent.tools.schema import SchemaValidationError, validate_json
 
-from .bindings import CapabilityBinding
+from .bindings import CapabilityBinding, ProfiledCapabilityBinding
 from .contracts import (
     CancelledCapabilityOutcome,
     CapabilityContinuation,
@@ -75,10 +76,20 @@ class StudyCapabilityGateway:
         context: ExecutionContext,
     ) -> CapabilityOutcome:
         binding = self._binding(capability_id)
+        return await self._start_bound(binding, inputs, inputs, context)
+
+    async def _start_bound(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        public_inputs: JsonObject,
+        execution_inputs: JsonObject,
+        context: ExecutionContext,
+    ) -> CapabilityOutcome:
         authority, retry = self._authorize(binding, context)
         try:
-            frozen_inputs = freeze_object(inputs)
-            validate_json(frozen_inputs, binding.manifest.input_schema)
+            frozen_public_inputs = freeze_object(public_inputs)
+            frozen_inputs = freeze_object(execution_inputs)
+            validate_json(frozen_public_inputs, binding.manifest.input_schema)
         except (SchemaValidationError, ValueError, TypeError) as error:
             raise CapabilityGatewayError(
                 CapabilityGatewayErrorCode.INVALID_REQUEST,
@@ -123,6 +134,15 @@ class StudyCapabilityGateway:
         if not isinstance(continuation, CapabilityContinuation):
             raise TypeError("continuation must be CapabilityContinuation")
         binding = self._binding(continuation.capability_id)
+        return await self._resume_bound(binding, continuation, response, context)
+
+    async def _resume_bound(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        continuation: CapabilityContinuation,
+        response: JsonValue,
+        context: ExecutionContext,
+    ) -> CapabilityOutcome:
         authority, retry = self._authorize(binding, context)
         self._require_continuation_authority(binding, continuation, authority, retry)
         inspected = self._inspect_required(binding, continuation.run_id)
@@ -198,7 +218,9 @@ class StudyCapabilityGateway:
             ) from error
 
     def _authorize(
-        self, binding: CapabilityBinding, context: ExecutionContext
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        context: ExecutionContext,
     ) -> tuple[str, str]:
         if not isinstance(context, ExecutionContext):
             raise TypeError("capability context must be ExecutionContext")
@@ -242,7 +264,7 @@ class StudyCapabilityGateway:
         return authority, retry
 
     def _inspect_optional(
-        self, binding: CapabilityBinding, run_id: RunId
+        self, binding: CapabilityBinding | ProfiledCapabilityBinding, run_id: RunId
     ) -> InspectedRunRecord | None:
         try:
             return self._engine.inspect(run_id=run_id, definition=binding.playbook)
@@ -254,8 +276,25 @@ class StudyCapabilityGateway:
                 "capability checkpoint could not be inspected safely",
             ) from error
 
+    def _probe_bound(
+        self,
+        binding: ProfiledCapabilityBinding,
+        run_id: RunId,
+    ) -> tuple[InspectedRunRecord | None, EngineErrorCode | None]:
+        """Inspect one closed definition without executing effects or mapping ownership."""
+
+        try:
+            return self._engine.inspect(run_id=run_id, definition=binding.playbook), None
+        except PlaybookEngineError as error:
+            if error.failure.code in {
+                EngineErrorCode.CHECKPOINT_NOT_FOUND,
+                EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
+            }:
+                return None, error.failure.code
+            return None, EngineErrorCode.INCOMPATIBLE_CHECKPOINT
+
     def _inspect_required(
-        self, binding: CapabilityBinding, run_id: RunId
+        self, binding: CapabilityBinding | ProfiledCapabilityBinding, run_id: RunId
     ) -> InspectedRunRecord:
         inspected = self._inspect_optional(binding, run_id)
         if inspected is None:
@@ -267,7 +306,7 @@ class StudyCapabilityGateway:
 
     def _require_start_retry(
         self,
-        binding: CapabilityBinding,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
         inspected: InspectedRunRecord,
         inputs: JsonObject,
     ) -> None:
@@ -280,7 +319,7 @@ class StudyCapabilityGateway:
 
     def _require_continuation_authority(
         self,
-        binding: CapabilityBinding,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
         continuation: CapabilityContinuation,
         authority: str,
         retry: str,
@@ -297,7 +336,7 @@ class StudyCapabilityGateway:
 
     def _require_continuation_bindings(
         self,
-        binding: CapabilityBinding,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
         continuation: CapabilityContinuation,
         inspected: InspectedRunRecord,
     ) -> None:
@@ -319,7 +358,7 @@ class StudyCapabilityGateway:
 
     def _require_persisted_resume(
         self,
-        binding: CapabilityBinding,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
         continuation: CapabilityContinuation,
         inspected: InspectedRunRecord,
         response: JsonValue,
@@ -342,7 +381,7 @@ class StudyCapabilityGateway:
 
     def _observed(
         self,
-        binding: CapabilityBinding,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
         inspected: InspectedRunRecord,
         authority: str,
         retry: str,
@@ -421,7 +460,7 @@ class StudyCapabilityGateway:
 
 
 def _dependencies(
-    binding: CapabilityBinding,
+    binding: CapabilityBinding | ProfiledCapabilityBinding,
     context: ExecutionContext,
     inputs: JsonObject,
 ) -> tuple[ReadDependency, ...]:
@@ -448,7 +487,9 @@ def _dependencies(
     return dependencies
 
 
-def _run_id(binding: CapabilityBinding, authority: str, retry: str) -> RunId:
+def _run_id(
+    binding: CapabilityBinding | ProfiledCapabilityBinding, authority: str, retry: str
+) -> RunId:
     digest = _fingerprint(
         "study-agent-capability-run-v1",
         {
@@ -459,6 +500,10 @@ def _run_id(binding: CapabilityBinding, authority: str, retry: str) -> RunId:
         },
     )
     return RunId(f"capability-run-sha256:{digest}")
+
+
+def _bound_definition_fingerprint(binding: ProfiledCapabilityBinding) -> str:
+    return _definition_fingerprint(binding.playbook)
 
 
 def _pins_payload(pins: VersionPins) -> tuple[object, ...]:

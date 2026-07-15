@@ -1,9 +1,15 @@
 """Trusted, model-independent adaptive-tutor capabilities."""
 
-from .bindings import CapabilityBinding, CapabilityDependencyResolver
+from .bindings import (
+    PROFILE_SELECTION_RECEIPT_INPUT,
+    CapabilityBinding,
+    CapabilityDependencyResolver,
+    ProfiledCapabilityBinding,
+)
 from .builtin import (
     ASSESS_UNDERSTANDING_MANIFEST,
     EXPLAIN_CONCEPT_MANIFEST,
+    PROPOSE_FLASHCARDS_MANIFEST,
     assess_understanding_binding,
     builtin_capability_bindings,
     explain_concept_binding,
@@ -24,12 +30,15 @@ from .contracts import (
     TerminatedCapabilityOutcome,
     TutorCapabilityId,
 )
+from .dispatch import FlashcardCapabilityDispatcher
 from .gateway import StudyCapabilityGateway
 from .registry import StudyCapabilityRegistry
 
 __all__ = [
     "ASSESS_UNDERSTANDING_MANIFEST",
     "EXPLAIN_CONCEPT_MANIFEST",
+    "PROFILE_SELECTION_RECEIPT_INPUT",
+    "PROPOSE_FLASHCARDS_MANIFEST",
     "CancelledCapabilityOutcome",
     "CapabilityBinding",
     "CapabilityContinuation",
@@ -41,6 +50,8 @@ __all__ = [
     "CapabilityOutcomeStatus",
     "CompletedCapabilityOutcome",
     "FailedCapabilityOutcome",
+    "FlashcardCapabilityDispatcher",
+    "ProfiledCapabilityBinding",
     "StaleCapabilityOutcome",
     "StudyCapabilityGateway",
     "StudyCapabilityRegistry",

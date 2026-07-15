@@ -13,6 +13,26 @@ from .content import (
     StudyBriefContent,
     StudyBriefSection,
 )
+from .contracts import (
+    ArtifactBatchRecord,
+    ArtifactDecisionRecord,
+    ArtifactProposal,
+    ArtifactProposalOrigin,
+    ArtifactRevisionRecord,
+    ArtifactSnapshot,
+    GeneratedBatchProofReceipt,
+    ServiceDecisionPolicyReceipt,
+    ServiceDecisionPolicyRequest,
+    VerifiedGeneratedArtifactBatch,
+)
+from .events import (
+    ARTIFACT_EVENT_TYPES,
+    ARTIFACT_SCHEMA_VERSION,
+    DECISION_RECORDED,
+    PROPOSAL_BATCH_RECORDED,
+    decode_decision_recorded,
+    decode_proposal_batch_recorded,
+)
 from .identity import (
     ArtifactProvenance,
     ArtifactProvenanceOrigin,
@@ -27,23 +47,51 @@ from .identity import (
     artifact_revision_id_for,
     human_authored_artifact_batch_id_for,
 )
+from .projection import register_artifact_events
+from .service import (
+    ArtifactCommandError,
+    ArtifactConflictError,
+    ArtifactService,
+    RetryableArtifactConflictError,
+    service_decision_result_fingerprint,
+)
+from .view import ProjectionArtifactView
 
 __all__ = [
+    "ARTIFACT_EVENT_TYPES",
+    "ARTIFACT_SCHEMA_VERSION",
+    "DECISION_RECORDED",
+    "PROPOSAL_BATCH_RECORDED",
     "AnswerBlock",
+    "ArtifactBatchRecord",
+    "ArtifactCommandError",
+    "ArtifactConflictError",
     "ArtifactContent",
+    "ArtifactDecisionRecord",
+    "ArtifactProposal",
+    "ArtifactProposalOrigin",
     "ArtifactProvenance",
     "ArtifactProvenanceOrigin",
+    "ArtifactRevisionRecord",
+    "ArtifactService",
+    "ArtifactSnapshot",
     "AssessmentItemContent",
     "EvidenceObservation",
     "ExamBlueprintContent",
     "FlashcardContent",
     "GeneratedArtifactProvenance",
+    "GeneratedBatchProofReceipt",
     "HumanAuthoredArtifactProvenance",
     "HybridFlashcardContent",
     "MorphologyFlashcardContent",
+    "ProjectionArtifactView",
+    "RetryableArtifactConflictError",
+    "ServiceDecisionPolicyReceipt",
+    "ServiceDecisionPolicyRequest",
     "StudyArtifactEnvelope",
     "StudyBriefContent",
     "StudyBriefSection",
+    "VerifiedGeneratedArtifactBatch",
     "artifact_batch_id_for",
     "artifact_id_for",
     "artifact_provenance_from_bytes",
@@ -51,5 +99,9 @@ __all__ = [
     "artifact_provenance_to_bytes",
     "artifact_provenance_to_json",
     "artifact_revision_id_for",
+    "decode_decision_recorded",
+    "decode_proposal_batch_recorded",
     "human_authored_artifact_batch_id_for",
+    "register_artifact_events",
+    "service_decision_result_fingerprint",
 ]

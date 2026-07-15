@@ -2,6 +2,12 @@
 
 # Public re-exports intentionally define the small package-level API.
 
+from .artifact import (
+    ArtifactViewPort,
+    ServiceDecisionPolicyPort,
+    SourceCommitmentLookupPort,
+    VerifiedGeneratedBatchPort,
+)
 from .clock import ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
 from .model import (
@@ -60,6 +66,7 @@ __all__ = [
     "MAX_TOTAL_SOURCES",
     "MAX_TOTAL_SOURCE_BYTES",
     "AnswerNotFoundError",
+    "ArtifactViewPort",
     "AssistantTurnViewPort",
     "BlobStore",
     "CancellationToken",
@@ -89,8 +96,10 @@ __all__ = [
     "RetrievalPort",
     "RetrievalQuery",
     "RunStore",
+    "ServiceDecisionPolicyPort",
     "SessionNotFoundError",
     "SessionViewPort",
+    "SourceCommitmentLookupPort",
     "SourceContentPort",
     "SourceInputPort",
     "SourceSnapshot",
@@ -99,5 +108,6 @@ __all__ = [
     "StudyTool",
     "ToolCall",
     "TutorSnapshotPort",
+    "VerifiedGeneratedBatchPort",
     "retrieval_read_set_fingerprint",
 ]
