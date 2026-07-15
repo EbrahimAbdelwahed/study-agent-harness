@@ -1,6 +1,6 @@
 # Task Bead: TUT-03C built-in tutor capabilities and offline evals
 
-Status: Blocked on TUT-03B
+Status: In progress
 Priority: P0
 Type: expand
 Depends On: TUT-03B
@@ -9,6 +9,11 @@ Depends On: TUT-03B
 
 `explain_concept@1` and `assess_understanding@1` ship as portable skill and
 playbook packages behind the gateway, with deterministic scripted-model evals.
+
+## Child Beads
+
+- [TUT-03C1 — validator-gated optional dialogue](TUT-03C1-validator-gated-optional-dialogue.md)
+- [TUT-03C2 — built-in capability packages and evals](TUT-03C2-builtin-capability-packages-and-evals.md)
 
 ## Acceptance Criteria
 
