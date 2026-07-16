@@ -66,6 +66,7 @@ from .storage import (
 )
 from .study_context import StudyContextViewPort
 from .tools import StudyTool
+from .tutor_host import TutorDecisionPort, TutorInterruptionToken
 from .tutor_snapshot import TutorSnapshotPort
 
 __all__ = [
@@ -117,6 +118,8 @@ __all__ = [
     "StudyContextViewPort",
     "StudyTool",
     "ToolCall",
+    "TutorDecisionPort",
+    "TutorInterruptionToken",
     "TutorSnapshotPort",
     "VerifiedGeneratedBatchPort",
     "VerifiedGradeOwnerStore",

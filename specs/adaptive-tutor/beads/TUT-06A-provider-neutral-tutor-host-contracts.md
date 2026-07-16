@@ -1,6 +1,6 @@
 # Task Bead: TUT-06A provider-neutral tutor-host contracts
 
-Status: Blocked on TUT-05E
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-03, TUT-05E
