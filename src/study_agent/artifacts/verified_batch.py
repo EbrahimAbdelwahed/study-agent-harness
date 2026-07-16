@@ -1,0 +1,581 @@
+"""Convert exact coordinator-owned B1A proofs into canonical artifact proposals."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from hashlib import sha256
+
+from study_agent.artifacts.candidates import (
+    FlashcardCandidate,
+    FlashcardCandidateBatch,
+    FlashcardPedagogicalRole,
+)
+from study_agent.domain import (
+    ArtifactReadDependency,
+    ExecutionContext,
+    HybridFlashcardRole,
+    ModelProvenance,
+    ModelUsageProvenance,
+    MorphologyFlashcardRole,
+    PromptProvenance,
+    RetrievalProvenance,
+    RunId,
+    SourceCommitment,
+    StudyArtifactKind,
+    ValidatorProvenance,
+    VersionPins,
+)
+from study_agent.domain._validation import JsonObject, freeze_object
+from study_agent.exams.contracts import (
+    ExamAnalysisProposal,
+    ExamEvidenceMapping,
+)
+from study_agent.flashcards.lesson_worker_contracts import (
+    LessonWorkerPageStatus,
+    authority_fingerprint,
+)
+from study_agent.flashcards.planning import PreparedPlannedFlashcardScope
+from study_agent.ports.verified_batch import (
+    GeneratedBatchOwnerReader,
+    GeneratedBatchOwnerResolver,
+    VerifiedChildProofReader,
+    VerifiedExamOwnerMaterial,
+    VerifiedLessonOwnerMaterial,
+)
+from study_agent.state import canonical_json_bytes
+from study_agent.workers import (
+    GenerationWorkerReceipt,
+    GenerationWorkerStatus,
+    GenerationWorkerTask,
+    GenerationWorkerTaskKind,
+    ObservedValidationReceipt,
+    VerifiedChildExecutionProofView,
+    generation_worker_child_context,
+)
+
+from .content import (
+    AnswerBlock,
+    EvidenceObservation,
+    ExamBlueprintContent,
+    HybridFlashcardContent,
+    MorphologyFlashcardContent,
+    StudyArtifactEnvelope,
+)
+from .contracts import (
+    ArtifactProposal,
+    GeneratedBatchProofReceipt,
+    VerifiedGeneratedArtifactBatch,
+)
+from .generated_owner import (
+    ExamGeneratedBatchOwnerReceipt,
+    GeneratedBatchOwnerReceipt,
+    LessonGeneratedBatchOwnerReceipt,
+)
+from .identity import GeneratedArtifactProvenance, artifact_provenance_to_bytes
+
+_VERIFIER_ID = "verified-child-artifact-batch"
+_VERIFIER_VERSION = "1.0.0"
+_BUNDLE_DOMAIN = b"lesson-worker-bundle@1\0"
+_ASSOCIATION_DOMAIN = b"lesson-overview-association@1\0"
+_EVIDENCE_MAPPING_DOMAIN = b"exam-evidence-mapping@1\0"
+_PROOF_DOMAIN = b"verified-generated-artifact-batch@1\0"
+_VALIDATOR_GROUP_DOMAIN = b"artifact-validator-receipt-group@1\0"
+
+
+class VerifiedBatchRecoveryError(ValueError):
+    """Owner, coordinator, proof, or canonical conversion commitments differ."""
+
+
+class UnsupportedVerifiedMediaError(VerifiedBatchRecoveryError):
+    """A candidate names media without a persisted verified media receipt."""
+
+
+class VerifiedGeneratedBatchAdapter:
+    def __init__(
+        self,
+        *,
+        owners: GeneratedBatchOwnerReader,
+        resolver: GeneratedBatchOwnerResolver,
+        proofs: VerifiedChildProofReader,
+    ) -> None:
+        self._owners = owners
+        self._resolver = resolver
+        self._proofs = proofs
+
+    def recover(self, run_id: RunId, context: ExecutionContext) -> VerifiedGeneratedArtifactBatch:
+        if not isinstance(run_id, RunId):
+            raise TypeError("run_id must be RunId")
+        if not isinstance(context, ExecutionContext):
+            raise TypeError("context must be ExecutionContext")
+        if context.session_id is None:
+            raise VerifiedBatchRecoveryError("verified artifact recovery requires a session")
+        owner = self._owners.load(run_id)
+        if owner.child_run_id != run_id:
+            raise VerifiedBatchRecoveryError("owner belongs to another child run")
+        if isinstance(owner, LessonGeneratedBatchOwnerReceipt):
+            lesson_material = self._resolver.resolve_lesson(owner, context)
+            task, receipt = lesson_material.task, lesson_material.receipt
+            self._verify_lesson_owner(owner, lesson_material, context)
+            self._verify_common_owner(owner, task, receipt)
+            child_context = generation_worker_child_context(task, context)
+            proof = self._proofs.load(task, run_id, receipt, child_context)
+            self._verify_proof(owner, task, receipt, proof)
+            proposals = _lesson_proposals(owner, lesson_material, proof)
+        elif isinstance(owner, ExamGeneratedBatchOwnerReceipt):
+            exam_material = self._resolver.resolve_exam(owner, context)
+            task, receipt = exam_material.task, exam_material.receipt
+            self._verify_exam_owner(owner, exam_material)
+            self._verify_common_owner(owner, task, receipt)
+            child_context = generation_worker_child_context(task, context)
+            proof = self._proofs.load(task, run_id, receipt, child_context)
+            self._verify_proof(owner, task, receipt, proof)
+            proposals = _exam_proposals(owner, exam_material, proof)
+        else:
+            raise TypeError("generated owner kind is unsupported")
+        batch_proof = GeneratedBatchProofReceipt(
+            _VERIFIER_ID,
+            _VERIFIER_VERSION,
+            _batch_proof_fingerprint(owner, proof, proposals),
+        )
+        return VerifiedGeneratedArtifactBatch(
+            run_id,
+            context.course_id,
+            context.session_id,
+            proposals,
+            batch_proof,
+        )
+
+    @staticmethod
+    def _verify_common_owner(
+        owner: GeneratedBatchOwnerReceipt,
+        task: GenerationWorkerTask,
+        receipt: GenerationWorkerReceipt,
+    ) -> None:
+        if (
+            task.task_id != owner.child_task_id
+            or task.fingerprint != owner.child_task_fingerprint
+            or receipt.task_id != task.task_id
+            or receipt.task_fingerprint != task.fingerprint
+            or receipt.status is not GenerationWorkerStatus.COMPLETED
+            or receipt.child_run_id != owner.child_run_id
+            or receipt.fingerprint != owner.child_receipt_fingerprint
+        ):
+            raise VerifiedBatchRecoveryError("owner task or completed receipt changed")
+
+    @staticmethod
+    def _verify_lesson_owner(
+        owner: LessonGeneratedBatchOwnerReceipt,
+        material: VerifiedLessonOwnerMaterial,
+        context: ExecutionContext,
+    ) -> None:
+        checkpoint = material.checkpoint
+        request = checkpoint.request
+        expected_authority = authority_fingerprint(
+            freeze_object(
+                {
+                    "principal_kind": context.principal_kind.value,
+                    "principal_id": context.principal_id,
+                    "course_id": str(context.course_id),
+                    "session_id": str(context.session_id) if context.session_id else None,
+                    "required_authority": request.profile_expectation.required_authority,
+                }
+            )
+        )
+        if (
+            checkpoint.run_id != owner.lesson_run_id
+            or checkpoint.authority_fingerprint != expected_authority
+            or checkpoint.fingerprint != owner.coordinator_fingerprint
+            or checkpoint.request_fingerprint != owner.lesson_request_fingerprint
+            or request.plan.plan_fingerprint != owner.lesson_plan_fingerprint
+            or request.profile_expectation.profile_fingerprint != owner.lesson_profile_fingerprint
+            or tuple(item.bundle_id for item in request.plan.bundles) != owner.bundle_order
+            or owner.page_position >= len(checkpoint.pages)
+        ):
+            raise VerifiedBatchRecoveryError("lesson coordinator ownership changed")
+        page = checkpoint.pages[owner.page_position]
+        bundle = request.plan.bundles[owner.page_position]
+        prepared = material.prepared_scope
+        expected_bundle_fingerprint = sha256(
+            _BUNDLE_DOMAIN + canonical_json_bytes(bundle.to_json())
+        ).hexdigest()
+        if (
+            page.status is not LessonWorkerPageStatus.CHILD_TERMINAL
+            or page.receipt is None
+            or page.receipt.failure_code is not None
+            or page.child_task_bytes != material.task.to_bytes()
+            or page.receipt.child_run_id != owner.child_run_id
+            or page.receipt.child_receipt_fingerprint != owner.child_receipt_fingerprint
+            or page.bundle_id != owner.bundle_id
+            or bundle.bundle_id != owner.bundle_id
+            or expected_bundle_fingerprint != owner.bundle_fingerprint
+            or prepared.bundle_id != owner.bundle_id
+            or prepared.plan_fingerprint != owner.lesson_plan_fingerprint
+            or prepared.wrapper_fingerprint != owner.wrapper_fingerprint
+            or prepared.prepared_scope.scope_fingerprint != owner.scope_fingerprint
+            or prepared.prepared_scope.evidence.read_set_fingerprint != owner.read_set_fingerprint
+            or request.revision_commitments_fingerprint != owner.revision_commitments_fingerprint
+        ):
+            raise VerifiedBatchRecoveryError("lesson page ownership changed")
+        if owner.associated_overview_bundle_id is not None:
+            expected = _association_fingerprint(
+                owner.lesson_run_id,
+                owner.lesson_plan_fingerprint,
+                owner.lesson_profile_fingerprint,
+                owner.associated_overview_bundle_id,
+                owner.bundle_id,
+            )
+            if owner.overview_association_fingerprint != expected:
+                raise VerifiedBatchRecoveryError("lesson overview association changed")
+
+    @staticmethod
+    def _verify_exam_owner(
+        owner: ExamGeneratedBatchOwnerReceipt,
+        material: VerifiedExamOwnerMaterial,
+    ) -> None:
+        scope = material.prepared_scope
+        projection = material.prompt_projection
+        projection.verify_scope(scope)
+        if (
+            material.request.to_bytes() != owner.request_bytes
+            or material.task.task_kind is not GenerationWorkerTaskKind.EXAM_ANALYSIS
+            or material.opaque_request_key_fingerprint != owner.opaque_request_key_fingerprint
+            or material.coordinator_fingerprint != owner.coordinator_fingerprint
+            or scope.scope_fingerprint != owner.scope_fingerprint
+            or projection.projection_fingerprint != owner.projection_fingerprint
+            or _evidence_mapping_fingerprint(material.evidence_mapping)
+            != owner.evidence_mapping_fingerprint
+        ):
+            raise VerifiedBatchRecoveryError("exam coordinator ownership changed")
+
+    @staticmethod
+    def _verify_proof(
+        owner: GeneratedBatchOwnerReceipt,
+        task: GenerationWorkerTask,
+        receipt: GenerationWorkerReceipt,
+        proof: VerifiedChildExecutionProofView,
+    ) -> None:
+        if (
+            proof.run_id != owner.child_run_id
+            or proof.fingerprint != owner.child_proof_fingerprint
+            or proof.input_fingerprint != task.payload_fingerprint
+            or proof.output_fingerprint != receipt.output_fingerprint
+            or proof.definition_fingerprint != task.definition_fingerprint
+            or proof.pins != task.pins
+        ):
+            raise VerifiedBatchRecoveryError("verified child proof changed")
+
+
+def _lesson_proposals(
+    owner: LessonGeneratedBatchOwnerReceipt,
+    material: VerifiedLessonOwnerMaterial,
+    proof: VerifiedChildExecutionProofView,
+) -> tuple[ArtifactProposal, ...]:
+    if material.task.task_kind is not GenerationWorkerTaskKind.FLASHCARD_BUNDLE:
+        raise VerifiedBatchRecoveryError("lesson owner resolved a non-flashcard task")
+    if not isinstance(proof.output, Mapping):
+        raise VerifiedBatchRecoveryError("flashcard proof output must be an object")
+    batch = FlashcardCandidateBatch.from_json(proof.output)
+    if not batch.candidates:
+        raise VerifiedBatchRecoveryError("verified page has no artifact candidates")
+    prepared = material.prepared_scope
+    evidence = prepared.prepared_scope.evidence
+    selection = material.checkpoint.request.profile_expectation.profile_selection_receipt
+    key_to_ordinal = {
+        candidate.candidate_key: ordinal for ordinal, candidate in enumerate(batch.candidates)
+    }
+    proposals: list[ArtifactProposal] = []
+    for ordinal, candidate in enumerate(batch.candidates):
+        if candidate.media_evidence_ids:
+            raise UnsupportedVerifiedMediaError(
+                "verified media receipt is not persisted in the child proof"
+            )
+        commitments = _candidate_commitments(candidate, prepared)
+        indices = tuple(range(len(commitments)))
+        blocks = tuple(
+            AnswerBlock(item.label, item.text, item.key_points) for item in candidate.answer_blocks
+        )
+        parent = (
+            key_to_ordinal[candidate.parent_candidate_key]
+            if candidate.parent_candidate_key is not None
+            else None
+        )
+        if candidate.pedagogical_role in {
+            FlashcardPedagogicalRole.OVERVIEW,
+            FlashcardPedagogicalRole.SECTION,
+            FlashcardPedagogicalRole.DETAIL,
+        }:
+            content: HybridFlashcardContent | MorphologyFlashcardContent = HybridFlashcardContent(
+                candidate.retrieval_form,
+                candidate.prompt,
+                blocks,
+                HybridFlashcardRole(candidate.pedagogical_role.value),
+                candidate.rationale,
+                indices,
+                parent,
+            )
+        else:
+            if candidate.morphology_family is None or candidate.cognitive_function is None:
+                raise VerifiedBatchRecoveryError("morphology candidate fields are incomplete")
+            content = MorphologyFlashcardContent(
+                candidate.retrieval_form,
+                candidate.prompt,
+                blocks,
+                MorphologyFlashcardRole(candidate.pedagogical_role.value),
+                candidate.morphology_family,
+                candidate.cognitive_function,
+                candidate.rationale,
+                indices,
+                parent,
+            )
+        envelope = StudyArtifactEnvelope(StudyArtifactKind.FLASHCARD, content)
+        proposals.append(
+            ArtifactProposal(
+                ordinal,
+                envelope,
+                _provenance(proof, commitments, evidence, selection, envelope),
+            )
+        )
+    return tuple(proposals)
+
+
+def _exam_proposals(
+    owner: ExamGeneratedBatchOwnerReceipt,
+    material: VerifiedExamOwnerMaterial,
+    proof: VerifiedChildExecutionProofView,
+) -> tuple[ArtifactProposal, ...]:
+    if not isinstance(proof.output, Mapping):
+        raise VerifiedBatchRecoveryError("exam proof output must be an object")
+    proposal = ExamAnalysisProposal.from_json(proof.output)
+    mappings = {item.evidence_id: item for item in material.evidence_mapping}
+    handles = tuple(
+        dict.fromkeys(
+            evidence_id
+            for observation in (*proposal.observed_topics, *proposal.observed_formats)
+            for evidence_id in observation.evidence_ids
+        )
+    )
+    if not handles or any(handle not in mappings for handle in handles):
+        raise VerifiedBatchRecoveryError("exam observations cite an unverified mapping")
+    commitments = tuple(_mapping_commitment(mappings[handle]) for handle in handles)
+    index = {handle: position for position, handle in enumerate(handles)}
+    topics = tuple(
+        EvidenceObservation(item.value, tuple(index[key] for key in item.evidence_ids))
+        for item in proposal.observed_topics
+    )
+    formats = tuple(
+        EvidenceObservation(item.value, tuple(index[key] for key in item.evidence_ids))
+        for item in proposal.observed_formats
+    )
+    content = StudyArtifactEnvelope(
+        StudyArtifactKind.EXAM_BLUEPRINT,
+        ExamBlueprintContent(proposal.sample_size, topics, formats, proposal.limitations),
+    )
+    return (
+        ArtifactProposal(
+            0,
+            content,
+            _provenance(
+                proof,
+                commitments,
+                material.prepared_scope.evidence,
+                None,
+                content,
+            ),
+        ),
+    )
+
+
+def _candidate_commitments(
+    candidate: FlashcardCandidate,
+    prepared: PreparedPlannedFlashcardScope,
+) -> tuple[SourceCommitment, ...]:
+    trusted = prepared.prepared_scope.evidence.by_handle()
+    if any(handle not in trusted for handle in candidate.evidence_ids):
+        raise VerifiedBatchRecoveryError("candidate cites evidence outside verified scope")
+    return tuple(
+        SourceCommitment(
+            trusted[handle].citation.source_id,
+            trusted[handle].citation.revision_id,
+            trusted[handle].citation.chunk_id,
+            trusted[handle].citation.start_offset,
+            trusted[handle].citation.end_offset,
+        )
+        for handle in candidate.evidence_ids
+    )
+
+
+def _mapping_commitment(value: ExamEvidenceMapping) -> SourceCommitment:
+    return SourceCommitment(
+        value.source_id,
+        value.revision_id,
+        value.chunk_id,
+        value.start_offset,
+        value.end_offset,
+    )
+
+
+def _provenance(
+    proof: VerifiedChildExecutionProofView,
+    commitments: tuple[SourceCommitment, ...],
+    evidence: object,
+    profile_selection: object,
+    content: StudyArtifactEnvelope,
+) -> GeneratedArtifactProvenance:
+    from study_agent.grounding import EvidenceEnvelope
+    from study_agent.pedagogy import ProfileSelectionReceipt
+
+    if not isinstance(evidence, EvidenceEnvelope):
+        raise TypeError("verified evidence envelope is invalid")
+    if profile_selection is not None and not isinstance(profile_selection, ProfileSelectionReceipt):
+        raise TypeError("profile selection receipt is invalid")
+    usage = (
+        ModelUsageProvenance(proof.model.input_tokens, proof.model.output_tokens)
+        if proof.model.input_tokens is not None and proof.model.output_tokens is not None
+        else None
+    )
+    model = ModelProvenance(
+        proof.model.adapter_id,
+        proof.model.adapter_version,
+        proof.model.model_id,
+        proof.model.response_id,
+        proof.run_id,
+        usage,
+    )
+    pins = proof.pins
+    domain_pins = VersionPins(
+        f"{pins.skill.id}@{pins.skill.version}",
+        f"{pins.playbook.id}@{pins.playbook.version}",
+        f"{pins.prompt.id}@{pins.prompt.version}",
+        f"{pins.model_adapter.id}@{pins.model_adapter.version}",
+        f"{pins.state_contract.id}@{pins.state_contract.version}",
+        ",".join(f"{item.tool_name}@{item.version}" for item in pins.tool_behaviors),
+    )
+    dependencies = tuple(
+        ArtifactReadDependency(item.kind, item.id, item.version) for item in proof.read_dependencies
+    )
+    return GeneratedArtifactProvenance(
+        commitments,
+        PromptProvenance(
+            proof.prompt.prompt_id,
+            proof.prompt.prompt_version,
+            proof.prompt.composition_fingerprint,
+            proof.prompt.layer_fingerprints,
+        ),
+        model,
+        RetrievalProvenance(
+            evidence.strategy_id,
+            evidence.strategy_version,
+            evidence.query_fingerprint,
+            evidence.index_version,
+            evidence.read_set_fingerprint,
+        ),
+        _validator_provenance(proof),
+        domain_pins,
+        profile_selection,
+        dependencies,
+        sha256(content.to_bytes()).hexdigest(),
+        proof.run_id,
+    )
+
+
+def _validator_provenance(
+    proof: VerifiedChildExecutionProofView,
+) -> tuple[ValidatorProvenance, ...]:
+    grouped: dict[tuple[str, str], list[ObservedValidationReceipt]] = {}
+    for item in proof.validations:
+        grouped.setdefault((item.validator_id, item.validator_version), []).append(item)
+    result: list[ValidatorProvenance] = []
+    for (validator_id, version), raw_items in grouped.items():
+        items = tuple(raw_items)
+        fingerprint = (
+            items[0].result_fingerprint
+            if len(items) == 1
+            else sha256(
+                _VALIDATOR_GROUP_DOMAIN
+                + canonical_json_bytes({"receipts": tuple(item.to_json() for item in items)})
+            ).hexdigest()
+        )
+        result.append(
+            ValidatorProvenance(
+                validator_id,
+                version,
+                all(item.passed for item in items),
+                items[-1].disposition.value,
+                fingerprint,
+            )
+        )
+    return tuple(result)
+
+
+def _association_fingerprint(
+    lesson_run_id: RunId,
+    plan_fingerprint: str,
+    profile_fingerprint: str,
+    overview_bundle_id: str,
+    bundle_id: str,
+) -> str:
+    return sha256(
+        _ASSOCIATION_DOMAIN
+        + canonical_json_bytes(
+            {
+                "lesson_run_id": str(lesson_run_id),
+                "plan_fingerprint": plan_fingerprint,
+                "profile_fingerprint": profile_fingerprint,
+                "overview_bundle_id": overview_bundle_id,
+                "bundle_id": bundle_id,
+            }
+        )
+    ).hexdigest()
+
+
+def _evidence_mapping_fingerprint(
+    mappings: tuple[ExamEvidenceMapping, ...],
+) -> str:
+    value: JsonObject = freeze_object(
+        {
+            "mappings": tuple(
+                {
+                    "evidence_id": item.evidence_id,
+                    "sample_key": item.sample_key,
+                    "source_id": str(item.source_id),
+                    "revision_id": str(item.revision_id),
+                    "chunk_id": str(item.chunk_id),
+                    "start_offset": item.start_offset,
+                    "end_offset": item.end_offset,
+                }
+                for item in mappings
+            )
+        }
+    )
+    return sha256(_EVIDENCE_MAPPING_DOMAIN + canonical_json_bytes(value)).hexdigest()
+
+
+def _batch_proof_fingerprint(
+    owner: GeneratedBatchOwnerReceipt,
+    proof: VerifiedChildExecutionProofView,
+    proposals: tuple[ArtifactProposal, ...],
+) -> str:
+    return sha256(
+        _PROOF_DOMAIN
+        + canonical_json_bytes(
+            {
+                "owner_fingerprint": owner.fingerprint,
+                "child_proof_fingerprint": proof.fingerprint,
+                "proposals": tuple(
+                    {
+                        "ordinal": item.ordinal,
+                        "content": item.content.to_bytes().decode("utf-8"),
+                        "provenance": artifact_provenance_to_bytes(item.provenance).decode("utf-8"),
+                    }
+                    for item in proposals
+                ),
+            }
+        )
+    ).hexdigest()
+
+
+__all__ = [
+    "UnsupportedVerifiedMediaError",
+    "VerifiedBatchRecoveryError",
+    "VerifiedGeneratedBatchAdapter",
+]
