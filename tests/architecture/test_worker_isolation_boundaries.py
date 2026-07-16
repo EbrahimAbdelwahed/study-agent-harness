@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 from study_agent.tools import public_study_tool_manifests
+from study_agent.workers import generation_worker_child_context
 
 PROJECT_ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = PROJECT_ROOT / "src" / "study_agent"
@@ -125,3 +126,28 @@ def test_worker_package_contains_no_study_tool_manifest_or_raw_callable_field() 
             }:
                 violations.append(f"{path.relative_to(PROJECT_ROOT)} accepts raw {node.arg}")
     assert violations == []
+
+
+def test_worker_service_start_and_resume_share_public_child_context_helper() -> None:
+    assert callable(generation_worker_child_context)
+    service_path = WORKERS / "service.py"
+    tree = ast.parse(service_path.read_text(encoding="utf-8"), filename=str(service_path))
+    service = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "GenerationWorkerService"
+    )
+    methods = {
+        node.name: node
+        for node in service.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for method_name in ("_drive_start", "_drive_resume"):
+        calls = {
+            node.func.id
+            for node in ast.walk(methods[method_name])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "generation_worker_child_context" in calls
+        assert "ExecutionContext" not in calls

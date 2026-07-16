@@ -39,6 +39,7 @@ from study_agent.workers import (
     ValidationReceiptSource,
     VerifiedPromptReceipt,
     fingerprint_output_schema,
+    generation_worker_child_context,
 )
 
 V1 = SemanticVersion.parse("1.0.0")
@@ -329,6 +330,51 @@ def test_start_delegates_only_allowlisted_task_and_fresh_deterministic_child_con
     repeat_service, _, repeat_runs = _service([_completed()])
     _run(repeat_service.start(task, _parent()))
     assert repeat_runs.starts[0][1] == child
+
+
+def test_public_child_context_preserves_parent_identity_and_narrows_authority() -> None:
+    task = _task()
+    parent = _parent(grants=frozenset({"source.read", "course.read"}))
+
+    child = generation_worker_child_context(task, parent)
+
+    assert child == ExecutionContext(
+        principal_kind=PrincipalKind.SERVICE,
+        principal_id="tutor-service",
+        course_id=CourseId("course-1"),
+        correlation_id=CorrelationId(
+            "worker-correlation-sha256:"
+            "033798a80bbef02965207a56d3de9bcd4e266277fa5289be71a796c1956e38c9"
+        ),
+        requested_capabilities=frozenset({"source.read"}),
+        session_id=SessionId("session-1"),
+        model_run_id=None,
+        idempotency_key=(
+            "worker-child-sha256:"
+            "fb4c6aa739cb5b7f849fd733496f125166ee4ed9ddf6ab4325ffb9280e5dd37f"
+        ),
+    )
+    assert generation_worker_child_context(task, parent) == child
+
+
+def test_public_child_context_identity_changes_with_task_not_parent_retry_metadata() -> None:
+    task = _task()
+    parent = _parent()
+    changed_parent_retry = replace(
+        parent,
+        correlation_id=CorrelationId("another-parent-correlation"),
+        idempotency_key="another-parent-retry",
+    )
+
+    original = generation_worker_child_context(task, parent)
+    parent_retry = generation_worker_child_context(task, changed_parent_retry)
+    other_task = generation_worker_child_context(
+        replace(task, task_id="lesson-2:hybrid"), parent
+    )
+
+    assert parent_retry == original
+    assert other_task.correlation_id != original.correlation_id
+    assert other_task.idempotency_key != original.idempotency_key
 
 
 def test_two_suspend_resume_cycles_reuse_one_child_run_and_bound_responses() -> None:

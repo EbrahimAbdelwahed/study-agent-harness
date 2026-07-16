@@ -328,7 +328,9 @@ class GenerationWorkerService:
         self, state: _StoredWorkerState, raw: bytes, parent: ExecutionContext
     ) -> WorkerCompactView:
         task = state.task
-        observation = await self._isolated_runs.start(task, _child_context(task, parent))
+        observation = await self._isolated_runs.start(
+            task, generation_worker_child_context(task, parent)
+        )
         return self._persist_observation(state, raw, observation)
 
     async def _drive_resume(
@@ -341,7 +343,7 @@ class GenerationWorkerService:
             state.task,
             state.continuation,
             response,
-            _child_context(state.task, parent),
+            generation_worker_child_context(state.task, parent),
         )
         return self._persist_observation(state, raw, observation)
 
@@ -569,7 +571,9 @@ def generation_worker_authority_fingerprint(
     return _fingerprint("generation-worker-authority@1", payload)
 
 
-def _child_context(task: GenerationWorkerTask, parent: ExecutionContext) -> ExecutionContext:
+def generation_worker_child_context(
+    task: GenerationWorkerTask, parent: ExecutionContext
+) -> ExecutionContext:
     identity = freeze_object(
         {
             "task_id": task.task_id,

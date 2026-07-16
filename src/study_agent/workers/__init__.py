@@ -30,6 +30,7 @@ from .service import (
     GenerationWorkerConflictError,
     GenerationWorkerService,
     generation_worker_authority_fingerprint,
+    generation_worker_child_context,
 )
 from .view import WorkerCompactView, WorkerDetailView
 
@@ -60,5 +61,6 @@ __all__ = [
     "WorkerDetailView",
     "fingerprint_output_schema",
     "generation_worker_authority_fingerprint",
+    "generation_worker_child_context",
     "verified_child_value_fingerprint",
 ]
