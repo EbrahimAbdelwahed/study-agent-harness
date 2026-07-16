@@ -32,6 +32,26 @@ for its exact prior free-text attempt.
   selection policy, raw scratch traces, and unrelated tutor/session context are
   absent.
 
+## Reviewed implementation constraints
+
+- Reuse the existing isolated gateway worker and sanitized
+  `VerifiedChildExecutionProof`; add only the closed `grade_response` worker
+  task kind and a narrow trusted task factory.
+- A durable owner receipt binds one completed child run to exactly one course,
+  session, attempt, presentation, accepted revision, prepared-scope fingerprint,
+  task, worker receipt, and proof. The registry is idempotent for identical bytes
+  and rejects reuse or drift.
+- The verified-grade adapter reloads the owner, exact task/receipt/proof, and the
+  prepared scope captured by the verified tool output. It re-resolves immutable
+  evidence and reconstructs the final validated output without a model call.
+- `record_verified_grade` accepts only that inward verified outcome, checks the
+  current attempt/rubric/active predecessor, then appends one grade event through
+  the existing CAS/idempotency path. No raw output or caller-authored provenance
+  overload is allowed.
+- The canonical event keeps the sanitized proof fields already modeled by
+  `VerifiedCapabilityGradeProvenance`; confidence and evidence handles remain in
+  the verified operational proof and do not widen the ledger in this bead.
+
 ## Verification
 
 - Verified-port and commit service tests; forged/cross-owner/stale-rubric and
