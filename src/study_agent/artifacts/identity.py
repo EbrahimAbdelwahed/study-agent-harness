@@ -498,11 +498,14 @@ def _model(value: Mapping[str, JsonValue]) -> ModelProvenance:
         usage = ModelUsageProvenance(
             _integer(raw_usage, "input_tokens"), _integer(raw_usage, "output_tokens")
         )
+    response_id = value.get("response_id")
+    if response_id is not None and not isinstance(response_id, str):
+        raise ValueError("response_id must be a string or null")
     return ModelProvenance(
         _string(value, "adapter_id"),
         _string(value, "adapter_version"),
         _string(value, "model_id"),
-        _string(value, "response_id"),
+        response_id,
         RunId(_string(value, "run_id")),
         usage,
     )

@@ -102,6 +102,20 @@ def _generated() -> GeneratedArtifactProvenance:
     )
 
 
+def test_generated_provenance_round_trips_nullable_technical_response_id() -> None:
+    generated = _generated()
+    assert generated.model is not None
+    without_response_id = replace(
+        generated,
+        model=replace(generated.model, response_id=None),
+    )
+
+    assert (
+        artifact_provenance_from_bytes(artifact_provenance_to_bytes(without_response_id))
+        == without_response_id
+    )
+
+
 def _human() -> HumanAuthoredArtifactProvenance:
     return HumanAuthoredArtifactProvenance(
         PrincipalKind.HUMAN,
