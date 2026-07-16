@@ -1,6 +1,6 @@
 # Task Bead: TUT-04C1 hybrid macro-detail implementation
 
-Status: Ready
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-04C0B2, TUT-04C0B1B
