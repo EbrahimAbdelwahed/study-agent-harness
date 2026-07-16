@@ -8,12 +8,20 @@ from typing import NoReturn
 
 import pytest
 
+from study_agent.artifacts.candidates import (
+    FlashcardAnswerBlock,
+    FlashcardCandidate,
+    FlashcardCandidateBatch,
+    FlashcardOmission,
+    FlashcardPedagogicalRole,
+)
 from study_agent.capabilities import TutorCapabilityId
 from study_agent.domain import (
     CorrelationId,
     CourseId,
     ExecutionContext,
     PrincipalKind,
+    RetrievalForm,
     RevisionId,
     RunId,
     SessionId,
@@ -30,6 +38,7 @@ from study_agent.flashcards.lesson_worker_contracts import (
 from study_agent.flashcards.lesson_worker_service import (
     LessonWorkerConflictError,
     LessonWorkerService,
+    _cross_page_span_overlap,
 )
 from study_agent.flashcards.planning import PreparedPlannedFlashcardScope
 from study_agent.skills import ArtifactReference, SemanticVersion
@@ -91,11 +100,7 @@ class _CrashAfterStatusStore(_Store):
     def compare_and_set(self, key: str, expected: bytes, replacement: bytes) -> bool:
         changed = super().compare_and_set(key, expected, replacement)
         checkpoint = LessonWorkerCheckpoint.from_bytes(replacement)
-        if (
-            changed
-            and not self.crashed
-            and checkpoint.pages[0].status is self.status
-        ):
+        if changed and not self.crashed and checkpoint.pages[0].status is self.status:
             self.crashed = True
             raise RuntimeError(f"crash after {self.status.value}")
         return changed
@@ -170,9 +175,7 @@ class _Binding:
     def build(self, task_id, public_inputs, prepared_scope, context):  # type: ignore[no-untyped-def]
         self.calls += 1
         bundle = next(
-            item
-            for item in self.request.plan.bundles
-            if item.bundle_id == prepared_scope.bundle_id
+            item for item in self.request.plan.bundles if item.bundle_id == prepared_scope.bundle_id
         )
         bundle_fingerprint = sha256(
             b"lesson-worker-bundle@1\0" + canonical_json_bytes(bundle.to_json())
@@ -324,6 +327,80 @@ class _MutatingDetailWorker(_ScriptedWorker):
         )
 
 
+class _BatchWorker(_ScriptedWorker):
+    def __init__(
+        self,
+        *,
+        duplicate_keys: bool = False,
+        foreign_evidence: bool = False,
+        invalid_shape: bool = False,
+        overview_positions: frozenset[int] = frozenset(),
+        empty_positions: frozenset[int] = frozenset(),
+        omission_positions: frozenset[int] = frozenset(),
+    ) -> None:
+        super().__init__(
+            {
+                0: [GenerationWorkerStatus.COMPLETED],
+                1: [GenerationWorkerStatus.COMPLETED],
+            }
+        )
+        self.duplicate_keys = duplicate_keys
+        self.foreign_evidence = foreign_evidence
+        self.invalid_shape = invalid_shape
+        self.overview_positions = overview_positions
+        self.empty_positions = empty_positions
+        self.omission_positions = omission_positions
+
+    async def start(self, task, prepared_scope, context):  # type: ignore[no-untyped-def]
+        view = await super().start(task, prepared_scope, context)
+        position = self.positions[task.task_id]
+        handle = prepared_scope.prepared_scope.evidence.items[0].handle
+        if self.foreign_evidence:
+            handle = "foreign-evidence"
+        candidates = ()
+        if position not in self.empty_positions:
+            candidates = (
+                FlashcardCandidate(
+                    candidate_key=(
+                        "same-key" if self.duplicate_keys else f"card-{position}"
+                    ),
+                    parent_candidate_key=None,
+                    retrieval_form=RetrievalForm.DIRECT_RECALL,
+                    prompt=f"Recall page {position}.",
+                    answer_blocks=(
+                        FlashcardAnswerBlock("Answer", "Grounded answer.", ()),
+                    ),
+                    pedagogical_role=(
+                        FlashcardPedagogicalRole.OVERVIEW
+                        if position in self.overview_positions
+                        else FlashcardPedagogicalRole.SECTION
+                    ),
+                    morphology_family=None,
+                    cognitive_function=None,
+                    rationale="Tests one prepared page.",
+                    evidence_ids=(handle,),
+                    media_evidence_ids=(),
+                ),
+            )
+        omissions = (
+            (FlashcardOmission("Explicitly omitted.", (handle,)),)
+            if position in self.omission_positions
+            else ()
+        )
+        batch = FlashcardCandidateBatch(candidates, omissions)
+        output = batch.to_json()
+        if self.invalid_shape:
+            output = {**output, "unexpected": True}
+        result = self.results[task.task_id]
+        self.results[task.task_id] = replace(
+            result,
+            candidate_count=len(candidates),
+            omission_count=len(omissions),
+            detail=WorkerDetailView(result.detail.receipt, output),
+        )
+        return view
+
+
 class _MutatingBinding(_Binding):
     def __init__(
         self,
@@ -346,9 +423,7 @@ _CHANGED_SCHEMA: JsonObject = {
     "required": (),
     "additionalProperties": False,
 }
-_TASK_MUTATIONS: tuple[
-    tuple[str, Callable[[GenerationWorkerTask], GenerationWorkerTask]], ...
-] = (
+_TASK_MUTATIONS: tuple[tuple[str, Callable[[GenerationWorkerTask], GenerationWorkerTask]], ...] = (
     ("task_id", lambda task: replace(task, task_id="changed-task")),
     (
         "task_kind",
@@ -404,9 +479,7 @@ _TASK_MUTATIONS: tuple[
         "validations",
         lambda task: replace(
             task,
-            expected_validations=(
-                replace(task.expected_validations[0], step_id="changed-step"),
-            ),
+            expected_validations=(replace(task.expected_validations[0], step_id="changed-step"),),
         ),
     ),
 )
@@ -521,9 +594,7 @@ def test_global_in_flight_cap_never_claims_a_second_running_page() -> None:
     )
     assert resolver.calls == 1
     assert binding.calls == 1
-    assert {task.task_id for task, _ in worker.starts} == {
-        checkpoint.pages[0].child_task_id
-    }
+    assert {task.task_id for task, _ in worker.starts} == {checkpoint.pages[0].child_task_id}
 
 
 @pytest.mark.parametrize(
@@ -585,9 +656,7 @@ def test_retry_after_b1_terminal_before_page_cas_reuses_the_same_child() -> None
     assert binding.calls == 1
     assert len(worker.tasks) == 1
     assert len(worker.starts) == 2
-    retried_terminal = asyncio.run(
-        service.advance(persisted.run_id, request, _parent())
-    )
+    retried_terminal = asyncio.run(service.advance(persisted.run_id, request, _parent()))
     assert retried_terminal == complete
     assert len(worker.starts) == 2
 
@@ -615,12 +684,8 @@ def test_reversed_child_completion_still_returns_canonical_plan_order() -> None:
     )
 
     running = asyncio.run(service.start(request, _parent()))
-    reversed_partial = asyncio.run(
-        service.advance(running.run_id, request, _parent())
-    )
-    complete = asyncio.run(
-        service.advance(running.run_id, request, _parent())
-    )
+    reversed_partial = asyncio.run(service.advance(running.run_id, request, _parent()))
+    complete = asyncio.run(service.advance(running.run_id, request, _parent()))
 
     assert reversed_partial.completed_positions == (1,)
     assert reversed_partial.pending_positions == (0,)
@@ -753,9 +818,7 @@ def test_conflicting_cas_winner_fails_closed_before_resolution_effect() -> None:
 def test_no_work_plan_completes_without_resolution_binding_or_worker_calls() -> None:
     request = _request(
         plan=_no_work_plan(),
-        revision_commitments=(
-            RevisionContentCommitment(RevisionId("rev-a"), "a" * 64),
-        ),
+        revision_commitments=(RevisionContentCommitment(RevisionId("rev-a"), "a" * 64),),
     )
     store = _Store()
     resolver = _Resolver()
@@ -848,3 +911,145 @@ def test_cross_wired_child_detail_fails_closed_during_page_review(
 
     with pytest.raises(LessonWorkerConflictError, match="completed child receipt changed"):
         service.review_page(complete.run_id, request, 0, _parent())
+
+
+def test_completed_review_exact_decodes_batches_in_canonical_page_order() -> None:
+    request = _request(plan=_multi_plan(), concurrency=2)
+    worker = _BatchWorker()
+    service = LessonWorkerService(
+        store=_Store(),
+        resolver=_Resolver(),
+        task_binding=_Binding(request),
+        worker=worker,
+    )
+    complete = asyncio.run(service.start(request, _parent()))
+
+    reviewed = service.review_completed(complete.run_id, request, _parent())
+
+    assert tuple(page.page_position for page in reviewed.pages) == (0, 1)
+    assert tuple(page.bundle_id for page in reviewed.pages) == tuple(
+        bundle.bundle_id for bundle in request.plan.bundles
+    )
+    assert tuple(page.batch.candidates[0].candidate_key for page in reviewed.pages) == (
+        "card-0",
+        "card-1",
+    )
+    assert reviewed.overview_associations == ()
+    assert reviewed.plan_fingerprint == complete.plan_fingerprint
+    assert reviewed.profile_fingerprint == complete.profile_fingerprint
+    assert not hasattr(complete, "pages")
+
+
+@pytest.mark.parametrize(
+    ("worker", "match"),
+    (
+        (_BatchWorker(duplicate_keys=True), "duplicated across lesson pages"),
+        (_BatchWorker(foreign_evidence=True), "outside its page scope"),
+        (_BatchWorker(invalid_shape=True), "not an exact candidate batch"),
+    ),
+)
+def test_completed_review_fails_closed_on_cross_page_or_scope_violation(
+    worker: _BatchWorker,
+    match: str,
+) -> None:
+    request = _request(plan=_multi_plan(), concurrency=2)
+    service = LessonWorkerService(
+        store=_Store(),
+        resolver=_Resolver(),
+        task_binding=_Binding(request),
+        worker=worker,
+    )
+    complete = asyncio.run(service.start(request, _parent()))
+
+    with pytest.raises(LessonWorkerConflictError, match=match):
+        service.review_completed(complete.run_id, request, _parent())
+
+
+def test_completed_review_requires_every_page_to_succeed() -> None:
+    request = _request()
+    service = LessonWorkerService(
+        store=_Store(),
+        resolver=_Resolver(),
+        task_binding=_Binding(request),
+        worker=_RunningWorker(),
+    )
+    running = asyncio.run(service.start(request, _parent()))
+
+    with pytest.raises(LessonWorkerConflictError, match="review is unavailable"):
+        service.review_completed(running.run_id, request, _parent())
+
+
+def test_completed_review_derives_optional_overview_association_to_later_pages() -> None:
+    request = _request(plan=_multi_plan(), concurrency=2)
+    worker = _BatchWorker(overview_positions=frozenset({0}))
+    service = LessonWorkerService(
+        store=_Store(),
+        resolver=_Resolver(),
+        task_binding=_Binding(request),
+        worker=worker,
+    )
+    complete = asyncio.run(service.start(request, _parent()))
+
+    reviewed = service.review_completed(complete.run_id, request, _parent())
+
+    association = reviewed.overview_associations[0]
+    assert (association.page_position, association.candidate_key) == (0, "card-0")
+    assert association.associated_page_positions == (1,)
+    assert association.associated_bundle_ids == (request.plan.bundles[1].bundle_id,)
+    assert reviewed.pages[1].batch.candidates[0].parent_candidate_key is None
+
+
+@pytest.mark.parametrize(
+    ("worker", "match"),
+    (
+        (
+            _BatchWorker(overview_positions=frozenset({0, 1})),
+            "multiple overview candidates",
+        ),
+        (
+            _BatchWorker(overview_positions=frozenset({1})),
+            "overview is not in the earliest canonical page",
+        ),
+        (
+            _BatchWorker(
+                empty_positions=frozenset({1}),
+                omission_positions=frozenset({1}),
+            ),
+            "candidate coverage is incomplete",
+        ),
+    ),
+)
+def test_completed_review_fails_closed_on_overview_or_coverage_violation(
+    worker: _BatchWorker,
+    match: str,
+) -> None:
+    request = _request(plan=_multi_plan(), concurrency=2)
+    service = LessonWorkerService(
+        store=_Store(),
+        resolver=_Resolver(),
+        task_binding=_Binding(request),
+        worker=worker,
+    )
+    complete = asyncio.run(service.start(request, _parent()))
+
+    with pytest.raises(LessonWorkerConflictError, match=match):
+        service.review_completed(complete.run_id, request, _parent())
+
+
+def test_cross_page_span_overlap_is_revision_scoped_and_uses_half_open_ranges() -> None:
+    assert _cross_page_span_overlap(
+        (0, "source", "revision", 0, 10),
+        (1, "source", "revision", 9, 20),
+    )
+    assert not _cross_page_span_overlap(
+        (0, "source", "revision", 0, 10),
+        (1, "source", "revision", 10, 20),
+    )
+    assert not _cross_page_span_overlap(
+        (0, "source", "revision", 0, 10),
+        (1, "source", "other-revision", 9, 20),
+    )
+    assert not _cross_page_span_overlap(
+        (0, "source", "revision", 0, 10),
+        (0, "source", "revision", 9, 20),
+    )

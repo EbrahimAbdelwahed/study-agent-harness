@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from hashlib import sha256
 from typing import NoReturn
 
+from study_agent.artifacts.candidates import (
+    FlashcardCandidateBatch,
+    FlashcardPedagogicalRole,
+)
 from study_agent.domain import ExecutionContext, RunId
 from study_agent.domain._validation import freeze_object
 from study_agent.flashcards.lesson_worker_contracts import (
@@ -21,7 +26,10 @@ from study_agent.flashcards.lesson_worker_contracts import (
     lesson_run_id,
 )
 from study_agent.flashcards.lesson_worker_view import (
+    LessonWorkerBatchReviewView,
     LessonWorkerCompactView,
+    LessonWorkerCompletedReviewView,
+    LessonWorkerOverviewAssociation,
     LessonWorkerPageReviewView,
 )
 from study_agent.flashcards.planning import (
@@ -117,8 +125,7 @@ class LessonWorkerService:
                 )
 
         in_flight = sum(
-            page.status is LessonWorkerPageStatus.CHILD_CLAIMED
-            for page in checkpoint.pages
+            page.status is LessonWorkerPageStatus.CHILD_CLAIMED for page in checkpoint.pages
         )
         available = request.concurrency - in_flight
         if available <= 0:
@@ -131,13 +138,9 @@ class LessonWorkerService:
                 continue
             if checkpoint.pages[position].status is LessonWorkerPageStatus.CHILD_TERMINAL:
                 continue
-            checkpoint, raw = self._prepare_page(
-                checkpoint, raw, position, request, parent
-            )
+            checkpoint, raw = self._prepare_page(checkpoint, raw, position, request, parent)
             if checkpoint.pages[position].status is LessonWorkerPageStatus.PREPARED:
-                checkpoint, raw = self._claim_child(
-                    checkpoint, raw, position, request, parent
-                )
+                checkpoint, raw = self._claim_child(checkpoint, raw, position, request, parent)
             if checkpoint.pages[position].status is LessonWorkerPageStatus.CHILD_CLAIMED:
                 available -= 1
                 checkpoint, raw = await self._observe_claimed(
@@ -171,9 +174,7 @@ class LessonWorkerService:
             self._conflict("completed lesson page lacks its exact child task")
         task = GenerationWorkerTask.from_bytes(page.child_task_bytes)
         _verify_task(task, page.child_task_id, request, wrapper)
-        verified = self._worker.detail(
-            page.child_task_id, wrapper.wrapper_fingerprint, parent
-        )
+        verified = self._worker.detail(page.child_task_id, wrapper.wrapper_fingerprint, parent)
         _verify_completed_detail(
             verified,
             task,
@@ -201,6 +202,135 @@ class LessonWorkerService:
             detail=verified.detail,
         )
 
+    def review_completed(
+        self,
+        run_id: RunId,
+        request: LessonWorkerRequest,
+        parent: ExecutionContext,
+    ) -> LessonWorkerCompletedReviewView:
+        """Decode and cross-check every verified page for an authorized reviewer."""
+
+        authority = _trusted_authority(request, parent)
+        checkpoint, _ = self._load(run_id, request, authority)
+        if any(
+            page.status is not LessonWorkerPageStatus.CHILD_TERMINAL
+            or page.receipt is None
+            or page.receipt.failure_code is not None
+            or page.wrapper_bytes is None
+            for page in checkpoint.pages
+        ):
+            self._conflict("completed lesson review is unavailable")
+
+        pages: list[LessonWorkerBatchReviewView] = []
+        candidate_keys: set[str] = set()
+        referenced_spans: list[tuple[int, str, str, int, int]] = []
+        overview_candidates: list[tuple[int, str]] = []
+        for position in range(len(checkpoint.pages)):
+            page = checkpoint.pages[position]
+            assert page.receipt is not None and page.wrapper_bytes is not None
+            reviewed = self.review_page(run_id, request, position, parent)
+            if not isinstance(reviewed.detail.output, Mapping):
+                self._conflict("verified flashcard page output is not an object")
+            try:
+                batch = FlashcardCandidateBatch.from_json(reviewed.detail.output)
+            except (TypeError, ValueError) as error:
+                raise LessonWorkerConflictError(
+                    "verified flashcard page output is not an exact candidate batch"
+                ) from error
+            if (
+                len(batch.candidates) != page.receipt.candidate_count
+                or len(batch.omissions) != page.receipt.omission_count
+            ):
+                self._conflict("verified flashcard page batch counts changed")
+
+            keys = {candidate.candidate_key for candidate in batch.candidates}
+            if candidate_keys.intersection(keys):
+                self._conflict("candidate key is duplicated across lesson pages")
+            candidate_keys.update(keys)
+
+            wrapper = PreparedPlannedFlashcardScope.from_bytes(page.wrapper_bytes)
+            evidence = wrapper.prepared_scope.evidence.by_handle()
+            referenced = {
+                handle for candidate in batch.candidates for handle in candidate.evidence_ids
+            } | {handle for omission in batch.omissions for handle in omission.evidence_ids}
+            if not referenced <= set(evidence):
+                self._conflict("candidate batch references evidence outside its page scope")
+            cited_by_candidates = {
+                handle
+                for candidate in batch.candidates
+                for handle in candidate.evidence_ids
+            }
+            index = {entry.topic_key: entry for entry in wrapper.prepared_scope.index}
+            if any(
+                not cited_by_candidates.intersection(index[topic_key].evidence_handles)
+                for topic_key in reviewed.active_topic_keys
+            ):
+                self._conflict("lesson candidate coverage is incomplete")
+            for handle in sorted(referenced):
+                citation = evidence[handle].citation
+                span = (
+                    position,
+                    str(citation.source_id),
+                    str(citation.revision_id),
+                    citation.start_offset,
+                    citation.end_offset,
+                )
+                if any(_cross_page_span_overlap(span, prior) for prior in referenced_spans):
+                    self._conflict("candidate evidence overlaps across lesson pages")
+                referenced_spans.append(span)
+
+            overview_candidates.extend(
+                (position, candidate.candidate_key)
+                for candidate in batch.candidates
+                if candidate.pedagogical_role is FlashcardPedagogicalRole.OVERVIEW
+            )
+
+            pages.append(
+                LessonWorkerBatchReviewView(
+                    page_position=reviewed.page_position,
+                    bundle_id=reviewed.bundle_id,
+                    bundle_kind=reviewed.bundle_kind,
+                    active_topic_keys=reviewed.active_topic_keys,
+                    wrapper_fingerprint=reviewed.wrapper_fingerprint,
+                    scope_fingerprint=reviewed.scope_fingerprint,
+                    read_set_fingerprint=reviewed.read_set_fingerprint,
+                    batch=batch,
+                )
+            )
+        if len(overview_candidates) > 1:
+            self._conflict("lesson contains multiple overview candidates")
+        overview_associations: tuple[LessonWorkerOverviewAssociation, ...] = ()
+        if overview_candidates:
+            overview_position, overview_key = overview_candidates[0]
+            if overview_position != 0:
+                self._conflict("lesson overview is not in the earliest canonical page")
+            associated_pages = tuple(
+                page.page_position
+                for page in pages
+                if page.page_position != overview_position
+            )
+            associated_bundles = tuple(
+                page.bundle_id
+                for page in pages
+                if page.page_position != overview_position
+            )
+            overview_associations = (
+                LessonWorkerOverviewAssociation(
+                    page_position=overview_position,
+                    candidate_key=overview_key,
+                    associated_page_positions=associated_pages,
+                    associated_bundle_ids=associated_bundles,
+                ),
+            )
+        return LessonWorkerCompletedReviewView(
+            run_id=run_id,
+            plan_fingerprint=request.plan.plan_fingerprint,
+            profile_fingerprint=request.profile_expectation.profile_fingerprint,
+            revision_commitments_fingerprint=request.revision_commitments_fingerprint,
+            pages=tuple(pages),
+            overview_associations=overview_associations,
+        )
+
     def _prepare_page(
         self,
         checkpoint: LessonWorkerCheckpoint,
@@ -225,9 +355,7 @@ class LessonWorkerService:
             parent,
         )
         resolved.validate(request.plan, bundle, request.revision_commitments)
-        handles_by_topic: dict[str, list[str]] = {
-            key: [] for key in bundle.active_topic_keys
-        }
+        handles_by_topic: dict[str, list[str]] = {key: [] for key in bundle.active_topic_keys}
         for slot, item in zip(bundle.slots, resolved.envelope.items, strict=True):
             handles_by_topic[slot.topic_key].append(item.handle)
         index = tuple(
@@ -242,9 +370,7 @@ class LessonWorkerService:
             for item in request.plan.index
         )
         legacy = PreparedFlashcardScope.prepare(index, resolved.envelope)
-        wrapper = PreparedPlannedFlashcardScope.prepare(
-            legacy, request.plan, bundle.bundle_id
-        )
+        wrapper = PreparedPlannedFlashcardScope.prepare(legacy, request.plan, bundle.bundle_id)
         wrapper.validate_against_plan(request.plan)
         wrapper_bytes = wrapper.to_bytes()
         if len(wrapper_bytes) > 512 * 1024:
@@ -312,9 +438,7 @@ class LessonWorkerService:
         elif view.status is GenerationWorkerStatus.COMPLETED:
             if view.child_run_id is None or view.receipt_fingerprint is None:
                 self._conflict("completed child lacks compact receipt commitments")
-            verified = self._worker.detail(
-                task.task_id, wrapper.wrapper_fingerprint, parent
-            )
+            verified = self._worker.detail(task.task_id, wrapper.wrapper_fingerprint, parent)
             _verify_completed_detail(
                 verified,
                 task,
@@ -555,6 +679,21 @@ def _page_rank(status: LessonWorkerPageStatus) -> int:
     return tuple(LessonWorkerPageStatus).index(status)
 
 
+def _cross_page_span_overlap(
+    left: tuple[int, str, str, int, int],
+    right: tuple[int, str, str, int, int],
+) -> bool:
+    left_page, left_source, left_revision, left_start, left_end = left
+    right_page, right_source, right_revision, right_start, right_end = right
+    return (
+        left_page != right_page
+        and left_source == right_source
+        and left_revision == right_revision
+        and left_start < right_end
+        and right_start < left_end
+    )
+
+
 def _compact(checkpoint: LessonWorkerCheckpoint) -> LessonWorkerCompactView:
     request = checkpoint.request
     terminal = tuple(
@@ -576,8 +715,7 @@ def _compact(checkpoint: LessonWorkerCheckpoint) -> LessonWorkerCompactView:
         if page.status is not LessonWorkerPageStatus.CHILD_TERMINAL
     )
     in_progress = any(
-        page.status is LessonWorkerPageStatus.CHILD_CLAIMED
-        for page in checkpoint.pages
+        page.status is LessonWorkerPageStatus.CHILD_CLAIMED for page in checkpoint.pages
     )
     all_terminal = len(terminal) == len(checkpoint.pages)
     status = (

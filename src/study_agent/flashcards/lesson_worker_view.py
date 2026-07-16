@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from study_agent.artifacts.candidates import FlashcardCandidateBatch
 from study_agent.domain import RunId
 from study_agent.flashcards.lesson_worker_contracts import LessonWorkerStatus
 from study_agent.flashcards.planning import PlannedBundleKind
@@ -42,4 +43,46 @@ class LessonWorkerPageReviewView:
     detail: WorkerDetailView
 
 
-__all__ = ["LessonWorkerCompactView", "LessonWorkerPageReviewView"]
+@dataclass(frozen=True, slots=True)
+class LessonWorkerBatchReviewView:
+    """One exact-decoded verified batch in canonical lesson-plan order."""
+
+    page_position: int
+    bundle_id: str
+    bundle_kind: PlannedBundleKind
+    active_topic_keys: tuple[str, ...]
+    wrapper_fingerprint: str
+    scope_fingerprint: str
+    read_set_fingerprint: str
+    batch: FlashcardCandidateBatch
+
+
+@dataclass(frozen=True, slots=True)
+class LessonWorkerOverviewAssociation:
+    """One optional overview candidate associated to later canonical pages."""
+
+    page_position: int
+    candidate_key: str
+    associated_page_positions: tuple[int, ...]
+    associated_bundle_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LessonWorkerCompletedReviewView:
+    """Authorized typed review of a fully successful lesson run."""
+
+    run_id: RunId
+    plan_fingerprint: str
+    profile_fingerprint: str
+    revision_commitments_fingerprint: str
+    pages: tuple[LessonWorkerBatchReviewView, ...]
+    overview_associations: tuple[LessonWorkerOverviewAssociation, ...]
+
+
+__all__ = [
+    "LessonWorkerBatchReviewView",
+    "LessonWorkerCompactView",
+    "LessonWorkerCompletedReviewView",
+    "LessonWorkerOverviewAssociation",
+    "LessonWorkerPageReviewView",
+]

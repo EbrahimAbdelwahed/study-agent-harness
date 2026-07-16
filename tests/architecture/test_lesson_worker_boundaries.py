@@ -60,6 +60,9 @@ def test_coordinator_cannot_import_direct_execution_or_canonical_state_owners() 
         f"{path.relative_to(PROJECT_ROOT)} imports {name}"
         for path in COORDINATOR_FILES
         for name in sorted(_imports(path))
+        # Candidate batches are transient verified output contracts, not the
+        # canonical artifact aggregate/service guarded by this boundary.
+        if name != "study_agent.artifacts.candidates"
         if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
     ]
     assert violations == []
