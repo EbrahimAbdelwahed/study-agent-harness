@@ -11,11 +11,19 @@ if TYPE_CHECKING:
         ServiceDecisionPolicyRequest,
         VerifiedGeneratedArtifactBatch,
     )
-    from study_agent.domain import CourseId, EventId, RunId, SourceCommitment
+    from study_agent.domain import (
+        CourseId,
+        EventId,
+        ExecutionContext,
+        RunId,
+        SourceCommitment,
+    )
 
 
 class VerifiedGeneratedBatchPort(Protocol):
-    def recover(self, run_id: RunId) -> VerifiedGeneratedArtifactBatch: ...
+    def recover(
+        self, run_id: RunId, context: ExecutionContext
+    ) -> VerifiedGeneratedArtifactBatch: ...
 
 
 class SourceCommitmentLookupPort(Protocol):

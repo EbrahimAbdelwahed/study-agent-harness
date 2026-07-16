@@ -149,11 +149,13 @@ class Sessions:
 class Generated:
     def __init__(self, batch: VerifiedGeneratedArtifactBatch) -> None:
         self.batch = batch
-        self.calls: list[RunId] = []
+        self.calls: list[tuple[RunId, ExecutionContext]] = []
         self.error: Exception | None = None
 
-    def recover(self, run_id: RunId) -> VerifiedGeneratedArtifactBatch:
-        self.calls.append(run_id)
+    def recover(
+        self, run_id: RunId, context: ExecutionContext
+    ) -> VerifiedGeneratedArtifactBatch:
+        self.calls.append((run_id, context))
         if self.error is not None:
             raise self.error
         return self.batch
@@ -251,18 +253,19 @@ def test_generated_public_signature_accepts_only_run_identity_and_exact_retry_sk
         "expected_sequence",
     )
     service, events, generated, _, _ = harness()
-    first = service.record_generated(RUN, context(PrincipalKind.SERVICE, "generated"), 1)
-    retry = service.record_generated(RUN, context(PrincipalKind.SERVICE, "generated"), 1)
+    service_context = context(PrincipalKind.SERVICE, "generated")
+    first = service.record_generated(RUN, service_context, 1)
+    retry = service.record_generated(RUN, service_context, 1)
     assert retry == first
     assert len(first.revisions) == 1
-    assert generated.calls == [RUN]
+    assert generated.calls == [(RUN, service_context)]
     assert len(events.values) == 2
 
     with pytest.raises(ArtifactConflictError):
         service.record_generated(
             RunId("different-run"), context(PrincipalKind.SERVICE, "generated"), 1
         )
-    assert generated.calls == [RUN]
+    assert generated.calls == [(RUN, service_context)]
 
 
 def test_failed_tampered_and_stale_generated_proof_cannot_append() -> None:

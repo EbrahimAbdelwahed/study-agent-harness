@@ -105,7 +105,7 @@ class ArtifactService:
         if existing is not None:
             return existing
         self._expect_sequence(context, expected_sequence)
-        verified = self._generated_batches.recover(run_id)
+        verified = self._generated_batches.recover(run_id, context)
         if (
             verified.run_id != run_id
             or verified.course_id != context.course_id

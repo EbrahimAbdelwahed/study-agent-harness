@@ -112,6 +112,11 @@ def test_public_commands_and_ports_are_narrow_authority_safe_surfaces() -> None:
         "expected_sequence",
     )
     assert set(dir(VerifiedGeneratedBatchPort)) >= {"recover"}
+    assert tuple(inspect.signature(VerifiedGeneratedBatchPort.recover).parameters) == (
+        "self",
+        "run_id",
+        "context",
+    )
     assert set(dir(SourceCommitmentLookupPort)) >= {"contains"}
     assert set(dir(ServiceDecisionPolicyPort)) >= {"decide"}
     assert set(dir(ArtifactViewPort)) >= {"get", "command_fingerprint"}
