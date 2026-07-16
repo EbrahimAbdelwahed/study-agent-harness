@@ -37,8 +37,25 @@ calling a model, gateway, search, or canonical event owner.
 
 ## Out of scope
 
-- Coordinator/facade owner publication, runtime composition, artifact event
-  append, acceptance policy, export, and verified-media receipt persistence.
+- Runtime composition, acceptance policy, export, and verified-media receipt
+  persistence.
+
+## Wiring delivered
+
+- `VerifiedLessonOwnerWriterAdapter` derives the exact child context, reloads
+  B1A proof, and idempotently claims the owner registry slot.
+- `ExamAnalysisFacade.detail` now requires an owner writer and publishes only
+  after prepared scope, prompt projection, evidence mapping, task, receipt, and
+  proof have all been verified. The exam owner persists canonical task/receipt
+  bytes but only a fingerprint of the opaque request key.
+- `VerifiedExamOwnerWriterAdapter` consumes the already-loaded proof without a
+  second model/tool execution. `VerifiedGeneratedOwnerResolverAdapter` rebuilds
+  lesson material from its checkpoint plus B1 detail, re-resolves every lesson
+  citation, and rebuilds exam material through the trusted scope-preparation
+  port. Any fingerprint or source-content drift fails closed.
+- The remaining composition root must supply a profile-aware
+  `PlannedBundleWorker` router for historical hybrid and morphology task detail;
+  a single request-bound worker is insufficient after process restart.
 
 ## Verification
 

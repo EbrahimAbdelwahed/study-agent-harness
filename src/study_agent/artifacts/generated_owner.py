@@ -148,6 +148,8 @@ class ExamGeneratedBatchOwnerReceipt:
     child_task_fingerprint: str
     child_receipt_fingerprint: str
     child_proof_fingerprint: str
+    task_bytes: bytes
+    receipt_bytes: bytes
     request_bytes: bytes
     request_bytes_fingerprint: str
     opaque_request_key_fingerprint: str
@@ -165,6 +167,8 @@ class ExamGeneratedBatchOwnerReceipt:
             self.child_receipt_fingerprint,
             self.child_proof_fingerprint,
         )
+        _canonical_bound_object(self.task_bytes, "task_bytes", 128 * 1024)
+        _canonical_bound_object(self.receipt_bytes, "receipt_bytes", 64 * 1024)
         if not isinstance(self.request_bytes, bytes):
             raise TypeError("request_bytes must be bytes")
         if not 1 <= len(self.request_bytes) <= MAX_EXAM_REQUEST_BYTES:
@@ -193,6 +197,8 @@ class ExamGeneratedBatchOwnerReceipt:
         child_task_fingerprint: str,
         child_receipt_fingerprint: str,
         child_proof_fingerprint: str,
+        task_bytes: bytes,
+        receipt_bytes: bytes,
         request_bytes: bytes,
         opaque_request_key_fingerprint: str,
         scope_fingerprint: str,
@@ -206,6 +212,8 @@ class ExamGeneratedBatchOwnerReceipt:
             child_task_fingerprint,
             child_receipt_fingerprint,
             child_proof_fingerprint,
+            task_bytes,
+            receipt_bytes,
             request_bytes,
             sha256(_REQUEST_BYTES_DOMAIN + request_bytes).hexdigest(),
             opaque_request_key_fingerprint,
@@ -228,6 +236,8 @@ class ExamGeneratedBatchOwnerReceipt:
                 "child_task_fingerprint": self.child_task_fingerprint,
                 "child_receipt_fingerprint": self.child_receipt_fingerprint,
                 "child_proof_fingerprint": self.child_proof_fingerprint,
+                "task_bytes": base64.b64encode(self.task_bytes).decode("ascii"),
+                "receipt_bytes": base64.b64encode(self.receipt_bytes).decode("ascii"),
                 "request_bytes": base64.b64encode(self.request_bytes).decode("ascii"),
                 "request_bytes_fingerprint": self.request_bytes_fingerprint,
                 "opaque_request_key_fingerprint": self.opaque_request_key_fingerprint,
@@ -316,6 +326,8 @@ def generated_batch_owner_from_bytes(data: bytes) -> GeneratedBatchOwnerReceipt:
             child_task_fingerprint=_string(value, "child_task_fingerprint"),
             child_receipt_fingerprint=_string(value, "child_receipt_fingerprint"),
             child_proof_fingerprint=_string(value, "child_proof_fingerprint"),
+            task_bytes=_base64(value, "task_bytes"),
+            receipt_bytes=_base64(value, "receipt_bytes"),
             request_bytes=_base64(value, "request_bytes"),
             request_bytes_fingerprint=_string(value, "request_bytes_fingerprint"),
             opaque_request_key_fingerprint=_string(value, "opaque_request_key_fingerprint"),
@@ -357,6 +369,8 @@ _LESSON_FIELDS = _COMMON_FIELDS | {
     "overview_association_fingerprint",
 }
 _EXAM_FIELDS = _COMMON_FIELDS | {
+    "task_bytes",
+    "receipt_bytes",
     "request_bytes",
     "request_bytes_fingerprint",
     "opaque_request_key_fingerprint",
@@ -398,6 +412,16 @@ def _canonical_exam_request_bytes(data: bytes) -> None:
         or language != language.strip()
     ):
         raise ValueError("exam analysis request bytes are structurally invalid")
+
+
+def _canonical_bound_object(data: bytes, name: str, maximum: int) -> None:
+    if not isinstance(data, bytes):
+        raise TypeError(f"{name} must be bytes")
+    if not 1 <= len(data) <= maximum:
+        raise ValueError(f"{name} exceeds its canonical bound")
+    value = _decode(data)
+    if not value:
+        raise ValueError(f"{name} must contain a non-empty canonical object")
 
 
 def _fingerprint(value: JsonObject) -> str:

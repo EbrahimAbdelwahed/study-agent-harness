@@ -1,6 +1,6 @@
 # Task Bead: TUT-04E1 verified generated-batch commit
 
-Status: In Progress (lesson owner publication seam complete; proof adapter pending)
+Status: In Progress (proof conversion and owner wiring complete; composition/media pending)
 Priority: P0
 Type: expand
 Depends On: TUT-04B, TUT-04C0B1A, TUT-04C3, TUT-04D
@@ -53,5 +53,10 @@ be caller-forged.
   create `LessonGeneratedBatchOwnerReceipt`; the coordinator verifies returned
   child task/receipt/proof and owner fingerprints and never fabricates proof
   identity. An unconfigured writer fails completed review closed.
-- Remaining E1 work is the outward proof/registry adapter and canonical artifact
-  append path described by the acceptance criteria above.
+- The lesson/exam owner writers, strict registry, proof conversion adapter, and
+  source-drift-checking resolver are implemented. Exam owner receipts persist
+  exact canonical task/receipt bytes and never the raw opaque request key.
+- Remaining E1 work is runtime composition with a profile-aware historical
+  lesson-detail router and persistence of the exact trusted morphology-media
+  receipt. Media-bearing pages currently fail closed rather than weakening the
+  verified chain.

@@ -58,6 +58,8 @@ def _exam() -> ExamGeneratedBatchOwnerReceipt:
         child_task_fingerprint=SHA_A,
         child_receipt_fingerprint=SHA_B,
         child_proof_fingerprint=SHA_C,
+        task_bytes=canonical_json_bytes({"task": "exact"}),
+        receipt_bytes=canonical_json_bytes({"receipt": "exact"}),
         request_bytes=request,
         opaque_request_key_fingerprint=SHA_D,
         scope_fingerprint=SHA_E,

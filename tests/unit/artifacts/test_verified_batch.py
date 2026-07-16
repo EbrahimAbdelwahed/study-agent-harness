@@ -13,18 +13,24 @@ from study_agent.artifacts.candidates import (
 )
 from study_agent.artifacts.generated_owner import (
     ExamGeneratedBatchOwnerReceipt,
+    GeneratedBatchOwnerRegistry,
     LessonGeneratedBatchOwnerReceipt,
 )
 from study_agent.artifacts.verified_batch import (
     UnsupportedVerifiedMediaError,
     VerifiedBatchRecoveryError,
+    VerifiedExamOwnerWriterAdapter,
     VerifiedGeneratedBatchAdapter,
+    VerifiedGeneratedOwnerResolverAdapter,
+    VerifiedLessonOwnerWriterAdapter,
+    exam_owner_coordinator_fingerprint,
 )
 from study_agent.domain import (
     CorrelationId,
     CourseId,
     ExecutionContext,
     PrincipalKind,
+    ResolvedCitation,
     RetrievalForm,
     RevisionId,
     RunId,
@@ -37,17 +43,24 @@ from study_agent.exams.contracts import (
     ExamEvidenceMapping,
     ExamPromptEvidenceProjection,
 )
+from study_agent.exams.worker import ExamAnalysisFacade
 from study_agent.flashcards.lesson_worker_contracts import (
     LessonWorkerCheckpoint,
     LessonWorkerPageCheckpoint,
     LessonWorkerPageReceipt,
     LessonWorkerPageStatus,
     ResolvedPlannedBundleEvidence,
+    VerifiedFlashcardPageResult,
     authority_fingerprint,
     child_task_id,
     lesson_run_id,
 )
 from study_agent.playbooks import ReadDependency, ValidatorDisposition
+from study_agent.ports.exam import (
+    ExamGeneratedBatchOwnerCommitment,
+    exam_opaque_request_key_fingerprint,
+)
+from study_agent.ports.lesson_worker import LessonGeneratedBatchOwnerCommitment
 from study_agent.ports.verified_batch import (
     VerifiedExamOwnerMaterial,
     VerifiedLessonOwnerMaterial,
@@ -61,9 +74,12 @@ from study_agent.workers import (
     TechnicalModelReceipt,
     VerifiedChildExecutionProof,
     VerifiedPromptReceipt,
+    VerifiedToolOutput,
     generation_worker_child_context,
 )
 from study_agent.workers.contracts import fingerprint_output
+from study_agent.workers.proof import verified_child_value_fingerprint
+from study_agent.workers.view import WorkerDetailView
 from tests.unit.exams.test_exam_analysis import _scope as _exam_scope
 from tests.unit.flashcards.test_lesson_worker_contracts import _request, _wrapper
 from tests.unit.flashcards.test_lesson_worker_service import _Binding
@@ -323,14 +339,40 @@ def _exam_fixture():  # type: ignore[no-untyped-def]
         output,
         (ReadDependency("source_revision", str(citation.source_id), str(citation.revision_id)),),
     )
+    prepared_value = {
+        "prepared_scope": scope.to_json(),
+        "prompt_projection": projection.to_json(),
+    }
+    proof = replace(
+        proof,
+        tool_outputs=(
+            VerifiedToolOutput(
+                "prepare_exam_sample_scope",
+                "prepared_exam",
+                "source.prepare_exam_sample_scope",
+                "1.0.0",
+                prepared_value,
+                verified_child_value_fingerprint(prepared_value),
+            ),
+        ),
+    )
     key_fingerprint = SHA_D
-    coordinator = SHA_C
+    commitment = ExamGeneratedBatchOwnerCommitment(
+        request,
+        key_fingerprint,
+        scope,
+        projection,
+        mapping,
+    )
+    coordinator = exam_owner_coordinator_fingerprint(commitment, task, receipt, proof)
     owner = ExamGeneratedBatchOwnerReceipt.create(
         child_run_id=proof.run_id,
         child_task_id=task.task_id,
         child_task_fingerprint=task.fingerprint,
         child_receipt_fingerprint=receipt.fingerprint,
         child_proof_fingerprint=proof.fingerprint,
+        task_bytes=task.to_bytes(),
+        receipt_bytes=receipt.to_bytes(),
         request_bytes=request.to_bytes(),
         opaque_request_key_fingerprint=key_fingerprint,
         scope_fingerprint=scope.scope_fingerprint,
@@ -450,3 +492,166 @@ def test_adapter_rejects_parent_context_and_exam_coordinator_drift() -> None:
     without_session = replace(context, session_id=None)
     with pytest.raises(VerifiedBatchRecoveryError, match="requires a session"):
         adapter.recover(owner.child_run_id, without_session)
+
+
+class _OwnerStore:
+    def __init__(self) -> None:
+        self.values: dict[RunId, bytes] = {}
+
+    def create(self, child_run_id: RunId, payload: bytes) -> bool:
+        if child_run_id in self.values:
+            return False
+        self.values[child_run_id] = payload
+        return True
+
+    def load(self, child_run_id: RunId) -> bytes:
+        return self.values[child_run_id]
+
+
+def test_lesson_writer_loads_exact_child_context_and_publishes_once() -> None:
+    owner, material, proof, context = _flashcard_fixture()
+    store = _OwnerStore()
+    proofs = _Proofs(proof)
+    writer = VerifiedLessonOwnerWriterAdapter(proofs, GeneratedBatchOwnerRegistry(store))
+    commitment = LessonGeneratedBatchOwnerCommitment(
+        owner.lesson_run_id,
+        owner.lesson_request_fingerprint,
+        owner.lesson_plan_fingerprint,
+        owner.lesson_profile_fingerprint,
+        owner.coordinator_fingerprint,
+        owner.page_position,
+        owner.bundle_order,
+        owner.bundle_id,
+        owner.bundle_fingerprint,
+        owner.wrapper_fingerprint,
+        owner.scope_fingerprint,
+        owner.read_set_fingerprint,
+        owner.revision_commitments_fingerprint,
+        owner.associated_overview_bundle_id,
+        owner.overview_association_fingerprint,
+    )
+
+    first = writer.create(commitment, material.task, material.receipt, context)
+    second = writer.create(commitment, material.task, material.receipt, context)
+
+    assert first == second
+    assert first.owner_receipt_fingerprint == owner.fingerprint
+    assert proofs.contexts == [
+        generation_worker_child_context(material.task, context),
+        generation_worker_child_context(material.task, context),
+    ]
+
+
+def test_exam_writer_persists_exact_task_and_receipt_without_raw_key() -> None:
+    owner, material, proof, context = _exam_fixture()
+    store = _OwnerStore()
+    registry = GeneratedBatchOwnerRegistry(store)
+    writer = VerifiedExamOwnerWriterAdapter(registry)
+    commitment = ExamGeneratedBatchOwnerCommitment(
+        material.request,
+        owner.opaque_request_key_fingerprint,
+        material.prepared_scope,
+        material.prompt_projection,
+        material.evidence_mapping,
+    )
+
+    publication = writer.create(commitment, material.task, material.receipt, proof, context)
+    stored = registry.load(publication.child_run_id)
+
+    assert isinstance(stored, ExamGeneratedBatchOwnerReceipt)
+    assert stored.task_bytes == material.task.to_bytes()
+    assert stored.receipt_bytes == material.receipt.to_bytes()
+    assert b"opaque-key-1" not in stored.to_bytes()
+
+
+class _LessonStore:
+    def __init__(self, material: VerifiedLessonOwnerMaterial) -> None:
+        self.payload = material.checkpoint.to_bytes()
+
+    def load(self, key: str) -> bytes:
+        return self.payload
+
+
+class _LessonDetail:
+    def __init__(self, material: VerifiedLessonOwnerMaterial, proof) -> None:  # type: ignore[no-untyped-def]
+        self.material = material
+        self.proof = proof
+
+    def detail(self, task_id, prepared_scope_fingerprint, context):  # type: ignore[no-untyped-def]
+        return VerifiedFlashcardPageResult(
+            2,
+            0,
+            self.material.receipt.output_fingerprint,
+            WorkerDetailView(self.material.receipt, self.proof.output),
+        )
+
+
+class _Content:
+    def get_text(self, revision_id: RevisionId) -> str:
+        raise AssertionError("not used")
+
+    def resolve(self, citation):  # type: ignore[no-untyped-def]
+        assert citation.quoted_snippet is not None
+        return ResolvedCitation(citation, citation.quoted_snippet)
+
+
+class _ExamScope:
+    def __init__(self, material: VerifiedExamOwnerMaterial) -> None:
+        self.material = material
+
+    def prepare(self, request, context):  # type: ignore[no-untyped-def]
+        return self.material.prepared_scope
+
+
+def test_concrete_resolver_rebuilds_lesson_and_exam_material() -> None:
+    lesson_owner, lesson_material, lesson_proof, lesson_context = _flashcard_fixture()
+    exam_owner, exam_material, _, exam_context = _exam_fixture()
+    resolver = VerifiedGeneratedOwnerResolverAdapter(
+        lesson_store=_LessonStore(lesson_material),
+        lesson_worker=_LessonDetail(lesson_material, lesson_proof),  # type: ignore[arg-type]
+        exam_scope=_ExamScope(exam_material),  # type: ignore[arg-type]
+        source_content=_Content(),
+    )
+
+    resolved_lesson = resolver.resolve_lesson(lesson_owner, lesson_context)
+    resolved_exam = resolver.resolve_exam(exam_owner, exam_context)
+
+    assert resolved_lesson.task == lesson_material.task
+    assert resolved_exam.task == exam_material.task
+    assert resolved_exam.coordinator_fingerprint == exam_owner.coordinator_fingerprint
+
+
+class _Factory:
+    def __init__(self, material: VerifiedExamOwnerMaterial) -> None:
+        self.material = material
+
+    def build(self, request, opaque_request_key):  # type: ignore[no-untyped-def]
+        return self.material.task
+
+
+class _ExamWorker:
+    def __init__(self, material: VerifiedExamOwnerMaterial, proof) -> None:  # type: ignore[no-untyped-def]
+        self.material = material
+        self.proof = proof
+
+    def detail(self, task_id, context):  # type: ignore[no-untyped-def]
+        return WorkerDetailView(self.material.receipt, self.proof.output)
+
+
+def test_exam_facade_publishes_owner_only_after_verified_mapping() -> None:
+    _, material, proof, context = _exam_fixture()
+    registry = GeneratedBatchOwnerRegistry(_OwnerStore())
+    facade = ExamAnalysisFacade(
+        _Factory(material),  # type: ignore[arg-type]
+        _ExamWorker(material, proof),  # type: ignore[arg-type]
+        _Proofs(proof),
+        VerifiedExamOwnerWriterAdapter(registry),
+    )
+
+    detail = facade.detail(material.request, "opaque-key-1", context)
+
+    stored = registry.load(proof.run_id)
+    assert detail.owner_publication.owner_receipt_fingerprint == stored.fingerprint
+    assert stored.opaque_request_key_fingerprint == exam_opaque_request_key_fingerprint(
+        "opaque-key-1"
+    )

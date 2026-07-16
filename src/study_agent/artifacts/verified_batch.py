@@ -28,13 +28,28 @@ from study_agent.domain import (
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.exams.contracts import (
     ExamAnalysisProposal,
+    ExamAnalysisRequest,
     ExamEvidenceMapping,
+    ExamPromptEvidenceProjection,
 )
 from study_agent.flashcards.lesson_worker_contracts import (
+    LessonWorkerCheckpoint,
     LessonWorkerPageStatus,
     authority_fingerprint,
 )
 from study_agent.flashcards.planning import PreparedPlannedFlashcardScope
+from study_agent.ports.exam import (
+    ExamGeneratedBatchOwnerCommitment,
+    ExamGeneratedBatchOwnerPublication,
+    ExamSampleScopePreparationPort,
+)
+from study_agent.ports.lesson_worker import (
+    LessonGeneratedBatchOwnerCommitment,
+    LessonGeneratedBatchOwnerPublication,
+    LessonWorkerStore,
+    PlannedBundleWorker,
+)
+from study_agent.ports.storage import SourceContentPort
 from study_agent.ports.verified_batch import (
     GeneratedBatchOwnerReader,
     GeneratedBatchOwnerResolver,
@@ -69,6 +84,7 @@ from .contracts import (
 from .generated_owner import (
     ExamGeneratedBatchOwnerReceipt,
     GeneratedBatchOwnerReceipt,
+    GeneratedBatchOwnerRegistry,
     LessonGeneratedBatchOwnerReceipt,
 )
 from .identity import GeneratedArtifactProvenance, artifact_provenance_to_bytes
@@ -76,8 +92,8 @@ from .identity import GeneratedArtifactProvenance, artifact_provenance_to_bytes
 _VERIFIER_ID = "verified-child-artifact-batch"
 _VERIFIER_VERSION = "1.0.0"
 _BUNDLE_DOMAIN = b"lesson-worker-bundle@1\0"
-_ASSOCIATION_DOMAIN = b"lesson-overview-association@1\0"
 _EVIDENCE_MAPPING_DOMAIN = b"exam-evidence-mapping@1\0"
+_EXAM_COORDINATOR_DOMAIN = b"exam-generated-owner-coordinator@1\0"
 _PROOF_DOMAIN = b"verified-generated-artifact-batch@1\0"
 _VALIDATOR_GROUP_DOMAIN = b"artifact-validator-receipt-group@1\0"
 
@@ -88,6 +104,195 @@ class VerifiedBatchRecoveryError(ValueError):
 
 class UnsupportedVerifiedMediaError(VerifiedBatchRecoveryError):
     """A candidate names media without a persisted verified media receipt."""
+
+
+class VerifiedLessonOwnerWriterAdapter:
+    """Publish one lesson owner only after exact B1A proof recovery."""
+
+    def __init__(
+        self,
+        proofs: VerifiedChildProofReader,
+        owners: GeneratedBatchOwnerRegistry,
+    ) -> None:
+        self._proofs = proofs
+        self._owners = owners
+
+    def create(
+        self,
+        commitment: LessonGeneratedBatchOwnerCommitment,
+        task: GenerationWorkerTask,
+        receipt: GenerationWorkerReceipt,
+        context: ExecutionContext,
+    ) -> LessonGeneratedBatchOwnerPublication:
+        if task.task_kind is not GenerationWorkerTaskKind.FLASHCARD_BUNDLE:
+            raise VerifiedBatchRecoveryError("lesson owner requires a flashcard task")
+        child_context = generation_worker_child_context(task, context)
+        proof = self._proofs.load(task, receipt.child_run_id, receipt, child_context)
+        _verify_execution(task, receipt, proof)
+        owner = LessonGeneratedBatchOwnerReceipt(
+            child_run_id=proof.run_id,
+            child_task_id=task.task_id,
+            child_task_fingerprint=task.fingerprint,
+            child_receipt_fingerprint=receipt.fingerprint,
+            child_proof_fingerprint=proof.fingerprint,
+            lesson_run_id=commitment.lesson_run_id,
+            lesson_request_fingerprint=commitment.lesson_request_fingerprint,
+            lesson_plan_fingerprint=commitment.lesson_plan_fingerprint,
+            lesson_profile_fingerprint=commitment.lesson_profile_fingerprint,
+            coordinator_fingerprint=commitment.coordinator_fingerprint,
+            page_position=commitment.page_position,
+            bundle_order=commitment.bundle_order,
+            bundle_id=commitment.bundle_id,
+            bundle_fingerprint=commitment.bundle_fingerprint,
+            wrapper_fingerprint=commitment.wrapper_fingerprint,
+            scope_fingerprint=commitment.scope_fingerprint,
+            read_set_fingerprint=commitment.read_set_fingerprint,
+            revision_commitments_fingerprint=(commitment.revision_commitments_fingerprint),
+            associated_overview_bundle_id=commitment.associated_overview_bundle_id,
+            overview_association_fingerprint=(commitment.overview_association_fingerprint),
+        )
+        stored = self._owners.create(owner)
+        return LessonGeneratedBatchOwnerPublication(
+            stored.child_run_id,
+            stored.child_task_fingerprint,
+            stored.child_receipt_fingerprint,
+            stored.child_proof_fingerprint,
+            stored.fingerprint,
+        )
+
+
+class VerifiedExamOwnerWriterAdapter:
+    """Publish one exam owner from the proof already verified by the facade."""
+
+    def __init__(self, owners: GeneratedBatchOwnerRegistry) -> None:
+        self._owners = owners
+
+    def create(
+        self,
+        commitment: ExamGeneratedBatchOwnerCommitment,
+        task: GenerationWorkerTask,
+        receipt: GenerationWorkerReceipt,
+        proof: VerifiedChildExecutionProofView,
+        context: ExecutionContext,
+    ) -> ExamGeneratedBatchOwnerPublication:
+        del context
+        if task.task_kind is not GenerationWorkerTaskKind.EXAM_ANALYSIS:
+            raise VerifiedBatchRecoveryError("exam owner requires an exam-analysis task")
+        _verify_execution(task, receipt, proof)
+        commitment.prompt_projection.verify_scope(commitment.prepared_scope)
+        if task.payload != commitment.request.to_json():
+            raise VerifiedBatchRecoveryError("exam task request changed")
+        mapping_fingerprint = _evidence_mapping_fingerprint(commitment.evidence_mapping)
+        coordinator_fingerprint = exam_owner_coordinator_fingerprint(
+            commitment, task, receipt, proof
+        )
+        owner = ExamGeneratedBatchOwnerReceipt.create(
+            child_run_id=proof.run_id,
+            child_task_id=task.task_id,
+            child_task_fingerprint=task.fingerprint,
+            child_receipt_fingerprint=receipt.fingerprint,
+            child_proof_fingerprint=proof.fingerprint,
+            task_bytes=task.to_bytes(),
+            receipt_bytes=receipt.to_bytes(),
+            request_bytes=commitment.request.to_bytes(),
+            opaque_request_key_fingerprint=(commitment.opaque_request_key_fingerprint),
+            scope_fingerprint=commitment.prepared_scope.scope_fingerprint,
+            projection_fingerprint=(commitment.prompt_projection.projection_fingerprint),
+            evidence_mapping_fingerprint=mapping_fingerprint,
+            coordinator_fingerprint=coordinator_fingerprint,
+        )
+        stored = self._owners.create(owner)
+        return ExamGeneratedBatchOwnerPublication(
+            stored.child_run_id,
+            stored.child_task_fingerprint,
+            stored.child_receipt_fingerprint,
+            stored.child_proof_fingerprint,
+            stored.fingerprint,
+        )
+
+
+class VerifiedGeneratedOwnerResolverAdapter:
+    """Rebuild exact owner material from coordinator stores and trusted sources."""
+
+    def __init__(
+        self,
+        *,
+        lesson_store: LessonWorkerStore,
+        lesson_worker: PlannedBundleWorker,
+        exam_scope: ExamSampleScopePreparationPort,
+        source_content: SourceContentPort,
+    ) -> None:
+        self._lesson_store = lesson_store
+        self._lesson_worker = lesson_worker
+        self._exam_scope = exam_scope
+        self._source_content = source_content
+
+    def resolve_lesson(
+        self,
+        owner: LessonGeneratedBatchOwnerReceipt,
+        context: ExecutionContext,
+    ) -> VerifiedLessonOwnerMaterial:
+        checkpoint = LessonWorkerCheckpoint.from_bytes(
+            self._lesson_store.load(str(owner.lesson_run_id))
+        )
+        if not 0 <= owner.page_position < len(checkpoint.pages):
+            raise VerifiedBatchRecoveryError("lesson owner page is outside checkpoint")
+        page = checkpoint.pages[owner.page_position]
+        if page.child_task_bytes is None or page.wrapper_bytes is None:
+            raise VerifiedBatchRecoveryError("lesson owner material is incomplete")
+        task = GenerationWorkerTask.from_bytes(page.child_task_bytes)
+        prepared = PreparedPlannedFlashcardScope.from_bytes(page.wrapper_bytes)
+        detail = self._lesson_worker.detail(task.task_id, prepared.wrapper_fingerprint, context)
+        for item in prepared.prepared_scope.evidence.items:
+            resolved = self._source_content.resolve(item.evidence.citation)
+            if resolved.citation != item.evidence.citation or resolved.text != item.evidence.text:
+                raise VerifiedBatchRecoveryError("lesson source evidence changed")
+        return VerifiedLessonOwnerMaterial(checkpoint, task, detail.detail.receipt, prepared)
+
+    def resolve_exam(
+        self,
+        owner: ExamGeneratedBatchOwnerReceipt,
+        context: ExecutionContext,
+    ) -> VerifiedExamOwnerMaterial:
+        request = ExamAnalysisRequest.from_bytes(owner.request_bytes)
+        task = GenerationWorkerTask.from_bytes(owner.task_bytes)
+        receipt = GenerationWorkerReceipt.from_bytes(owner.receipt_bytes)
+        scope = self._exam_scope.prepare(request, context)
+        projection = ExamPromptEvidenceProjection.from_scope(scope)
+        by_handle = {item.handle: item.evidence for item in scope.evidence.items}
+        mappings = tuple(
+            ExamEvidenceMapping(
+                handle,
+                sample.sample_key,
+                sample.source_id,
+                sample.revision_id,
+                by_handle[handle].chunk.chunk_id,
+                by_handle[handle].citation.start_offset,
+                by_handle[handle].citation.end_offset,
+            )
+            for sample in scope.samples
+            for handle in sample.evidence_ids
+        )
+        coordinator = _exam_coordinator_fingerprint(
+            request=request,
+            opaque_request_key_fingerprint=owner.opaque_request_key_fingerprint,
+            task_fingerprint=task.fingerprint,
+            receipt_fingerprint=receipt.fingerprint,
+            proof_fingerprint=owner.child_proof_fingerprint,
+            scope_fingerprint=scope.scope_fingerprint,
+            projection_fingerprint=projection.projection_fingerprint,
+            evidence_mapping_fingerprint=_evidence_mapping_fingerprint(mappings),
+        )
+        return VerifiedExamOwnerMaterial(
+            request,
+            task,
+            receipt,
+            scope,
+            projection,
+            mappings,
+            owner.opaque_request_key_fingerprint,
+            coordinator,
+        )
 
 
 class VerifiedGeneratedBatchAdapter:
@@ -216,16 +421,6 @@ class VerifiedGeneratedBatchAdapter:
             or request.revision_commitments_fingerprint != owner.revision_commitments_fingerprint
         ):
             raise VerifiedBatchRecoveryError("lesson page ownership changed")
-        if owner.associated_overview_bundle_id is not None:
-            expected = _association_fingerprint(
-                owner.lesson_run_id,
-                owner.lesson_plan_fingerprint,
-                owner.lesson_profile_fingerprint,
-                owner.associated_overview_bundle_id,
-                owner.bundle_id,
-            )
-            if owner.overview_association_fingerprint != expected:
-                raise VerifiedBatchRecoveryError("lesson overview association changed")
 
     @staticmethod
     def _verify_exam_owner(
@@ -507,25 +702,69 @@ def _validator_provenance(
     return tuple(result)
 
 
-def _association_fingerprint(
-    lesson_run_id: RunId,
-    plan_fingerprint: str,
-    profile_fingerprint: str,
-    overview_bundle_id: str,
-    bundle_id: str,
+def exam_owner_coordinator_fingerprint(
+    commitment: ExamGeneratedBatchOwnerCommitment,
+    task: GenerationWorkerTask,
+    receipt: GenerationWorkerReceipt,
+    proof: VerifiedChildExecutionProofView,
+) -> str:
+    return _exam_coordinator_fingerprint(
+        request=commitment.request,
+        opaque_request_key_fingerprint=commitment.opaque_request_key_fingerprint,
+        task_fingerprint=task.fingerprint,
+        receipt_fingerprint=receipt.fingerprint,
+        proof_fingerprint=proof.fingerprint,
+        scope_fingerprint=commitment.prepared_scope.scope_fingerprint,
+        projection_fingerprint=commitment.prompt_projection.projection_fingerprint,
+        evidence_mapping_fingerprint=_evidence_mapping_fingerprint(commitment.evidence_mapping),
+    )
+
+
+def _exam_coordinator_fingerprint(
+    *,
+    request: ExamAnalysisRequest,
+    opaque_request_key_fingerprint: str,
+    task_fingerprint: str,
+    receipt_fingerprint: str,
+    proof_fingerprint: str,
+    scope_fingerprint: str,
+    projection_fingerprint: str,
+    evidence_mapping_fingerprint: str,
 ) -> str:
     return sha256(
-        _ASSOCIATION_DOMAIN
+        _EXAM_COORDINATOR_DOMAIN
         + canonical_json_bytes(
             {
-                "lesson_run_id": str(lesson_run_id),
-                "plan_fingerprint": plan_fingerprint,
-                "profile_fingerprint": profile_fingerprint,
-                "overview_bundle_id": overview_bundle_id,
-                "bundle_id": bundle_id,
+                "request": request.to_json(),
+                "opaque_request_key_fingerprint": opaque_request_key_fingerprint,
+                "task_fingerprint": task_fingerprint,
+                "receipt_fingerprint": receipt_fingerprint,
+                "proof_fingerprint": proof_fingerprint,
+                "scope_fingerprint": scope_fingerprint,
+                "projection_fingerprint": projection_fingerprint,
+                "evidence_mapping_fingerprint": evidence_mapping_fingerprint,
             }
         )
     ).hexdigest()
+
+
+def _verify_execution(
+    task: GenerationWorkerTask,
+    receipt: GenerationWorkerReceipt,
+    proof: VerifiedChildExecutionProofView,
+) -> None:
+    if (
+        receipt.status is not GenerationWorkerStatus.COMPLETED
+        or receipt.task_id != task.task_id
+        or receipt.task_fingerprint != task.fingerprint
+        or receipt.child_run_id != proof.run_id
+        or receipt.input_fingerprint != task.payload_fingerprint
+        or receipt.output_fingerprint != proof.output_fingerprint
+        or proof.input_fingerprint != task.payload_fingerprint
+        or proof.definition_fingerprint != task.definition_fingerprint
+        or proof.pins != task.pins
+    ):
+        raise VerifiedBatchRecoveryError("task, receipt, and child proof changed")
 
 
 def _evidence_mapping_fingerprint(
@@ -577,5 +816,9 @@ def _batch_proof_fingerprint(
 __all__ = [
     "UnsupportedVerifiedMediaError",
     "VerifiedBatchRecoveryError",
+    "VerifiedExamOwnerWriterAdapter",
     "VerifiedGeneratedBatchAdapter",
+    "VerifiedGeneratedOwnerResolverAdapter",
+    "VerifiedLessonOwnerWriterAdapter",
+    "exam_owner_coordinator_fingerprint",
 ]

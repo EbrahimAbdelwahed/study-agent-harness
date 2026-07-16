@@ -15,7 +15,13 @@ from study_agent.exams.contracts import (
     ExamPromptEvidenceProjection,
     PreparedExamSampleScope,
 )
-from study_agent.ports.exam import ExamVerifiedChildProofReader
+from study_agent.ports.exam import (
+    ExamGeneratedBatchOwnerCommitment,
+    ExamGeneratedBatchOwnerPublication,
+    ExamGeneratedBatchOwnerWriter,
+    ExamVerifiedChildProofReader,
+    exam_opaque_request_key_fingerprint,
+)
 from study_agent.workers import (
     GenerationWorkerService,
     GenerationWorkerStatus,
@@ -41,6 +47,7 @@ class ExamAnalysisDetailView:
     proposal: ExamAnalysisProposal
     evidence_mapping: tuple[ExamEvidenceMapping, ...]
     proof_reference: ExamAnalysisProofReference
+    owner_publication: ExamGeneratedBatchOwnerPublication
 
 
 class ExamAnalysisFacade:
@@ -49,10 +56,12 @@ class ExamAnalysisFacade:
         factory: ExamAnalysisTaskFactory,
         worker: GenerationWorkerService,
         proof_reader: ExamVerifiedChildProofReader,
+        owner_writer: ExamGeneratedBatchOwnerWriter,
     ) -> None:
         self._factory = factory
         self._worker = worker
         self._proof_reader = proof_reader
+        self._owner_writer = owner_writer
 
     async def start(
         self,
@@ -147,6 +156,26 @@ class ExamAnalysisFacade:
             for sample in scope.samples
             for handle in sample.evidence_ids
         )
+        publication = self._owner_writer.create(
+            ExamGeneratedBatchOwnerCommitment(
+                request,
+                exam_opaque_request_key_fingerprint(opaque_request_key),
+                scope,
+                projection,
+                mappings,
+            ),
+            task,
+            detail.receipt,
+            proof,
+            parent,
+        )
+        if (
+            publication.child_run_id != proof.run_id
+            or publication.child_task_fingerprint != task.fingerprint
+            or publication.child_receipt_fingerprint != detail.receipt.fingerprint
+            or publication.child_proof_fingerprint != proof.fingerprint
+        ):
+            raise ValueError("exam owner publication changed verified child identity")
         return ExamAnalysisDetailView(
             proposal,
             mappings,
@@ -156,6 +185,7 @@ class ExamAnalysisFacade:
                 detail.receipt.fingerprint,
                 proof.fingerprint,
             ),
+            publication,
         )
 
 
