@@ -20,6 +20,10 @@ from study_agent.skills.builtin import (
     PROPOSE_FLASHCARDS_INPUT_SCHEMA,
     PROPOSE_FLASHCARDS_OUTPUT_SCHEMA,
 )
+from study_agent.skills.builtin.analyze_exam_sample import (
+    EXAM_ANALYSIS_INPUT_SCHEMA,
+    EXAM_ANALYSIS_OUTPUT_SCHEMA,
+)
 
 from .bindings import CapabilityBinding, CapabilityDependencyResolver
 from .contracts import CapabilityManifest, TutorCapabilityId
@@ -51,6 +55,15 @@ PROPOSE_FLASHCARDS_MANIFEST = CapabilityManifest(
     PROPOSE_FLASHCARDS_OUTPUT_SCHEMA.value,
     ("course:read",),
     True,
+)
+
+ANALYZE_EXAM_SAMPLE_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.ANALYZE_EXAM_SAMPLE,
+    VERSION,
+    EXAM_ANALYSIS_INPUT_SCHEMA.value,
+    EXAM_ANALYSIS_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    False,
 )
 
 

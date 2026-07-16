@@ -7,6 +7,7 @@ from .bindings import (
     ProfiledCapabilityBinding,
 )
 from .builtin import (
+    ANALYZE_EXAM_SAMPLE_MANIFEST,
     ASSESS_UNDERSTANDING_MANIFEST,
     EXPLAIN_CONCEPT_MANIFEST,
     PROPOSE_FLASHCARDS_MANIFEST,
@@ -35,6 +36,7 @@ from .gateway import StudyCapabilityGateway
 from .registry import StudyCapabilityRegistry
 
 __all__ = [
+    "ANALYZE_EXAM_SAMPLE_MANIFEST",
     "ASSESS_UNDERSTANDING_MANIFEST",
     "EXPLAIN_CONCEPT_MANIFEST",
     "PROFILE_SELECTION_RECEIPT_INPUT",

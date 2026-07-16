@@ -182,4 +182,5 @@ def test_exact_seven_tools_and_two_ordinary_gateway_capabilities_are_unchanged()
         TutorCapabilityId.EXPLAIN_CONCEPT,
         TutorCapabilityId.ASSESS_UNDERSTANDING,
         TutorCapabilityId.PROPOSE_FLASHCARDS,
+        TutorCapabilityId.ANALYZE_EXAM_SAMPLE,
     )

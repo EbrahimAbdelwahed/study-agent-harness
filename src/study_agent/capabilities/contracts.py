@@ -34,6 +34,7 @@ class TutorCapabilityId(StrEnum):
     EXPLAIN_CONCEPT = "explain_concept"
     ASSESS_UNDERSTANDING = "assess_understanding"
     PROPOSE_FLASHCARDS = "propose_flashcards"
+    ANALYZE_EXAM_SAMPLE = "analyze_exam_sample"
 
 
 class CapabilityOutcomeStatus(StrEnum):
