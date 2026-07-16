@@ -21,7 +21,7 @@ from .contracts import (
     ValidatorDisposition,
     VersionPins,
 )
-from .engine import PlaybookEngine
+from .engine import PlaybookEngine, playbook_definition_fingerprint
 from .runtime import (
     STRUCTURED_OUTPUT_JSON_FALLBACK,
     SUPPORTED_FALLBACK_STRATEGIES,
@@ -82,4 +82,5 @@ __all__ = [
     "ValidatorExecutor",
     "VerifiedRunRecord",
     "VersionPins",
+    "playbook_definition_fingerprint",
 ]

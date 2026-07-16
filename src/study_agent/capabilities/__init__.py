@@ -51,6 +51,7 @@ __all__ = [
     "CompletedCapabilityOutcome",
     "FailedCapabilityOutcome",
     "FlashcardCapabilityDispatcher",
+    "GatewayIsolatedCapabilityRunAdapter",
     "ProfiledCapabilityBinding",
     "StaleCapabilityOutcome",
     "StudyCapabilityGateway",
@@ -63,3 +64,13 @@ __all__ = [
     "builtin_tutor_validators",
     "explain_concept_binding",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load the worker adapter without making capability contracts depend on workers."""
+
+    if name == "GatewayIsolatedCapabilityRunAdapter":
+        from .worker_adapter import GatewayIsolatedCapabilityRunAdapter
+
+        return GatewayIsolatedCapabilityRunAdapter
+    raise AttributeError(name)

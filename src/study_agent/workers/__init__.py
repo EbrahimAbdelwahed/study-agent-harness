@@ -18,7 +18,19 @@ from .contracts import (
     VerifiedPromptReceipt,
     fingerprint_output_schema,
 )
-from .service import GenerationWorkerConflictError, GenerationWorkerService
+from .proof import (
+    TechnicalModelReceipt,
+    VerifiedChildExecutionProof,
+    VerifiedChildExecutionProofView,
+    VerifiedChildProofOwner,
+    VerifiedToolOutput,
+    verified_child_value_fingerprint,
+)
+from .service import (
+    GenerationWorkerConflictError,
+    GenerationWorkerService,
+    generation_worker_authority_fingerprint,
+)
 from .view import WorkerCompactView, WorkerDetailView
 
 __all__ = [
@@ -36,10 +48,17 @@ __all__ = [
     "GenerationWorkerTask",
     "GenerationWorkerTaskKind",
     "ObservedValidationReceipt",
+    "TechnicalModelReceipt",
     "ValidationExpectation",
     "ValidationReceiptSource",
+    "VerifiedChildExecutionProof",
+    "VerifiedChildExecutionProofView",
+    "VerifiedChildProofOwner",
     "VerifiedPromptReceipt",
+    "VerifiedToolOutput",
     "WorkerCompactView",
     "WorkerDetailView",
     "fingerprint_output_schema",
+    "generation_worker_authority_fingerprint",
+    "verified_child_value_fingerprint",
 ]

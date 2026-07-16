@@ -259,7 +259,9 @@ class RecordingRuns:
     def __init__(self, observations: Sequence[ChildCapabilityObservation | BaseException]) -> None:
         self.observations = list(observations)
         self.starts: list[tuple[GenerationWorkerTask, ExecutionContext]] = []
-        self.resumes: list[tuple[CapabilityContinuation, JsonValue, ExecutionContext]] = []
+        self.resumes: list[
+            tuple[GenerationWorkerTask, CapabilityContinuation, JsonValue, ExecutionContext]
+        ] = []
 
     def _next(self) -> ChildCapabilityObservation:
         result = self.observations.pop(0)
@@ -275,11 +277,12 @@ class RecordingRuns:
 
     async def resume(
         self,
+        task: GenerationWorkerTask,
         continuation: CapabilityContinuation,
         response: JsonValue,
         context: ExecutionContext,
     ) -> ChildCapabilityObservation:
-        self.resumes.append((continuation, response, context))
+        self.resumes.append((task, continuation, response, context))
         return self._next()
 
 
@@ -345,9 +348,10 @@ def test_two_suspend_resume_cycles_reuse_one_child_run_and_bound_responses() -> 
     assert (next_view.status, next_view.generation) == (GenerationWorkerStatus.SUSPENDED, 1)
     final = _run(service.resume(task.task_id, 1, {"answer": "second"}, _parent()))
     assert final.status is GenerationWorkerStatus.COMPLETED
-    assert [item[0].run_id for item in runs.resumes] == [RunId("child-run-1")] * 2
-    assert [item[1] for item in runs.resumes] == [{"answer": "first"}, {"answer": "second"}]
-    assert runs.starts[0][1] == runs.resumes[0][2] == runs.resumes[1][2]
+    assert [item[0] for item in runs.resumes] == [task, task]
+    assert [item[1].run_id for item in runs.resumes] == [RunId("child-run-1")] * 2
+    assert [item[2] for item in runs.resumes] == [{"answer": "first"}, {"answer": "second"}]
+    assert runs.starts[0][1] == runs.resumes[0][3] == runs.resumes[1][3]
 
 
 def test_resume_rejects_changed_run_and_preserves_original_continuation_run() -> None:
@@ -372,7 +376,8 @@ def test_resume_rejects_changed_run_and_preserves_original_continuation_run() ->
     view = _run(service.resume(task.task_id, 0, {"answer": "first"}, _parent()))
     assert view.status is GenerationWorkerStatus.FAILED
     assert view.failure_code == "child_run_mismatch"
-    assert runs.resumes[0][0].run_id == first.run_id
+    assert runs.resumes[0][0] == task
+    assert runs.resumes[0][1].run_id == first.run_id
 
 
 def test_continuations_and_verified_runs_cannot_contaminate_task_inputs() -> None:
@@ -432,7 +437,8 @@ def test_claimed_response_recovers_after_crash_and_rejects_different_response() 
         _run(service.resume(task.task_id, 0, {"answer": "forged"}, _parent()))
     recovered = _run(service.resume(task.task_id, 0, {"answer": "stored"}, _parent()))
     assert recovered.status is GenerationWorkerStatus.COMPLETED
-    assert [call[1] for call in runs.resumes] == [{"answer": "stored"}] * 2
+    assert [call[0] for call in runs.resumes] == [task, task]
+    assert [call[2] for call in runs.resumes] == [{"answer": "stored"}] * 2
 
 
 def test_terminal_retry_and_detail_do_not_delegate_and_are_authority_scoped() -> None:

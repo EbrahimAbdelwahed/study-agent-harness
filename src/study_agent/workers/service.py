@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, NoReturn, cast
 
-from study_agent.capabilities import CapabilityContinuation, TutorCapabilityId
+from study_agent.capabilities.contracts import CapabilityContinuation, TutorCapabilityId
 from study_agent.domain import CorrelationId, ExecutionContext, RunId
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_json, freeze_object
 from study_agent.playbooks import ReadDependency
@@ -242,7 +242,7 @@ class GenerationWorkerService:
     ) -> WorkerCompactView:
         if not isinstance(task, GenerationWorkerTask):
             raise TypeError("task must be GenerationWorkerTask")
-        authority = _authority_fingerprint(task, parent)
+        authority = generation_worker_authority_fingerprint(task, parent)
         pending = _StoredWorkerState(
             task_bytes=task.to_bytes(),
             task_fingerprint=task.fingerprint,
@@ -271,7 +271,7 @@ class GenerationWorkerService:
     ) -> WorkerCompactView:
         raw = self._store.load(task_id)
         state = _StoredWorkerState.from_bytes(raw)
-        authority = _authority_fingerprint(state.task, parent)
+        authority = generation_worker_authority_fingerprint(state.task, parent)
         self._require_identity(state, state.task, authority)
         if type(generation) is not int or generation < 0:
             raise ValueError("generation must be a non-negative integer")
@@ -314,7 +314,7 @@ class GenerationWorkerService:
 
     def detail(self, task_id: str, parent: ExecutionContext) -> WorkerDetailView:
         state = _StoredWorkerState.from_bytes(self._store.load(task_id))
-        authority = _authority_fingerprint(state.task, parent)
+        authority = generation_worker_authority_fingerprint(state.task, parent)
         self._require_identity(state, state.task, authority)
         if (
             state.status is not GenerationWorkerStatus.COMPLETED
@@ -338,7 +338,10 @@ class GenerationWorkerService:
             raise ValueError("claimed resume state is incomplete")
         response = _decode_json_value(state.response_bytes, "worker response")
         observation = await self._isolated_runs.resume(
-            state.continuation, response, _child_context(state.task, parent)
+            state.task,
+            state.continuation,
+            response,
+            _child_context(state.task, parent),
         )
         return self._persist_observation(state, raw, observation)
 
@@ -546,7 +549,9 @@ def _compact(state: _StoredWorkerState, *, running_id: RunId | None = None) -> W
     )
 
 
-def _authority_fingerprint(task: GenerationWorkerTask, parent: ExecutionContext) -> str:
+def generation_worker_authority_fingerprint(
+    task: GenerationWorkerTask, parent: ExecutionContext
+) -> str:
     if not isinstance(parent, ExecutionContext):
         raise TypeError("parent must be ExecutionContext")
     missing = set(task.required_authority) - set(parent.requested_capabilities)

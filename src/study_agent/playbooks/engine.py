@@ -124,7 +124,7 @@ class PlaybookEngine:
             self._checkpoint(run_id, pins, RunStatus.RUNNING, 0, {}, dependencies),
             (),
             frozen_inputs,
-            _definition_fingerprint(definition),
+            playbook_definition_fingerprint(definition),
         )
         expected = _encode_stored_run(initial)
         try:
@@ -641,7 +641,7 @@ class PlaybookEngine:
                         failed_checkpoint,
                         tuple(mutable_traces),
                         run_inputs,
-                        _definition_fingerprint(definition),
+                        playbook_definition_fingerprint(definition),
                     )
                 )
                 if not self._compare_and_set(run_id, expected_payload, failed_payload):
@@ -672,7 +672,7 @@ class PlaybookEngine:
                         checkpoint,
                         tuple(mutable_traces),
                         run_inputs,
-                        _definition_fingerprint(definition),
+                        playbook_definition_fingerprint(definition),
                     )
                 )
                 if not self._compare_and_set(run_id, expected_payload, replacement):
@@ -710,7 +710,7 @@ class PlaybookEngine:
                     checkpoint,
                     tuple(mutable_traces),
                     run_inputs,
-                    _definition_fingerprint(definition),
+                    playbook_definition_fingerprint(definition),
                 )
             )
             if not self._compare_and_set(run_id, expected_payload, replacement):
@@ -1076,7 +1076,7 @@ class PlaybookEngine:
                 EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
                 "checkpoint schema version is unsupported",
             )
-        if stored.definition_fingerprint != _definition_fingerprint(definition):
+        if stored.definition_fingerprint != playbook_definition_fingerprint(definition):
             self._raise(
                 EngineErrorCode.INCOMPATIBLE_CHECKPOINT,
                 "checkpoint playbook definition changed",
@@ -1260,7 +1260,7 @@ def _binding_payload(binding: DataBinding) -> object:
     }
 
 
-def _definition_fingerprint(definition: PlaybookDefinition) -> str:
+def playbook_definition_fingerprint(definition: PlaybookDefinition) -> str:
     steps: list[object] = []
     for step in definition.steps:
         common: dict[str, object] = {

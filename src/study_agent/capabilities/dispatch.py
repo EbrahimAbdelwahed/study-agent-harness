@@ -19,7 +19,11 @@ from study_agent.pedagogy import (
     ProfileSelectionReceipt,
     ProfileSelectorKind,
 )
-from study_agent.playbooks import EngineErrorCode, InspectedRunRecord
+from study_agent.playbooks import (
+    EngineErrorCode,
+    InspectedRunRecord,
+    playbook_definition_fingerprint,
+)
 
 from .bindings import PROFILE_SELECTION_RECEIPT_INPUT, ProfiledCapabilityBinding
 from .builtin import PROPOSE_FLASHCARDS_MANIFEST
@@ -32,7 +36,7 @@ from .contracts import (
     CompletedCapabilityOutcome,
     FailedCapabilityOutcome,
 )
-from .gateway import StudyCapabilityGateway, _bound_definition_fingerprint, _run_id
+from .gateway import StudyCapabilityGateway, _run_id
 
 _MAX_CONTINUATION_BYTES = 16 * 1024
 
@@ -63,7 +67,7 @@ class FlashcardCapabilityDispatcher:
             raise ValueError("flashcard bindings must cover the exact closed profile catalog")
         skill_ids = tuple((item.skill.id, item.skill.version) for item in values)
         playbook_ids = tuple((item.playbook.id, item.playbook.version) for item in values)
-        fingerprints = tuple(_bound_definition_fingerprint(item) for item in values)
+        fingerprints = tuple(playbook_definition_fingerprint(item.playbook) for item in values)
         if len(set(skill_ids)) != 2:
             raise ValueError("profile skill identities must be pairwise distinct")
         if len(set(playbook_ids)) != 2:

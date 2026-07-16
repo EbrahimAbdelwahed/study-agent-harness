@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from study_agent.capabilities import CapabilityContinuation
-from study_agent.domain import ExecutionContext
+from study_agent.capabilities.contracts import CapabilityContinuation
+from study_agent.domain import ExecutionContext, RunId
 from study_agent.domain._validation import JsonValue
 from study_agent.workers.contracts import (
     ChildCapabilityObservation,
@@ -32,7 +32,16 @@ class IsolatedCapabilityRunPort(Protocol):
 
     async def resume(
         self,
+        task: GenerationWorkerTask,
         continuation: CapabilityContinuation,
         response: JsonValue,
         context: ExecutionContext,
     ) -> ChildCapabilityObservation: ...
+
+
+class VerifiedChildProofStore(Protocol):
+    """Atomic canonical proof slot keyed by a child capability run."""
+
+    def create(self, run_id: RunId, payload: bytes) -> bool: ...
+
+    def load(self, run_id: RunId) -> bytes: ...

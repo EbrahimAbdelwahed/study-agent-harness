@@ -20,8 +20,8 @@ from study_agent.playbooks import (
     RunStatus,
     StepTraceStatus,
     VersionPins,
+    playbook_definition_fingerprint,
 )
-from study_agent.playbooks.engine import _definition_fingerprint
 from study_agent.skills import ArtifactReference
 from study_agent.tools.schema import SchemaValidationError, validate_json
 
@@ -310,9 +310,11 @@ class StudyCapabilityGateway:
         inspected: InspectedRunRecord,
         inputs: JsonObject,
     ) -> None:
-        if _json_identity_fingerprint(inspected.inputs) != _json_identity_fingerprint(
-            inputs
+        if inspected.definition_fingerprint != playbook_definition_fingerprint(
+            binding.playbook
         ):
+            self._conflict("persisted capability definition differs from trusted binding")
+        if _json_identity_fingerprint(inspected.inputs) != _json_identity_fingerprint(inputs):
             self._conflict("idempotency identity was reused with different inputs")
         if _pins_payload(inspected.pins) != _pins_payload(binding.pins):
             self._conflict("persisted capability pins differ from the trusted binding")
@@ -342,6 +344,8 @@ class StudyCapabilityGateway:
     ) -> None:
         if (
             continuation.definition_fingerprint != inspected.definition_fingerprint
+            or inspected.definition_fingerprint
+            != playbook_definition_fingerprint(binding.playbook)
             or _json_identity_fingerprint(continuation.inputs)
             != _json_identity_fingerprint(inspected.inputs)
             or _pins_payload(continuation.pins) != _pins_payload(inspected.pins)
@@ -500,10 +504,6 @@ def _run_id(
         },
     )
     return RunId(f"capability-run-sha256:{digest}")
-
-
-def _bound_definition_fingerprint(binding: ProfiledCapabilityBinding) -> str:
-    return _definition_fingerprint(binding.playbook)
 
 
 def _pins_payload(pins: VersionPins) -> tuple[object, ...]:
