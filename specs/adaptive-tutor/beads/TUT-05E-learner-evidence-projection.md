@@ -1,6 +1,6 @@
 # Task Bead: TUT-05E learner-evidence projection
 
-Status: Blocked on TUT-05D
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-05D
@@ -41,4 +41,12 @@ supporting, contradicting, uncertain, contested, and superseded evidence.
 - Projection and public-view contract tests; sequence/evidence golden fixtures;
   contested/superseded ratio cases; replay byte equality; explicit no-mastery
   and no-global-aggregate architecture tests; export/repository integration;
-  full offline gates.
+full offline gates.
+
+## V1 ratio semantics
+
+- Format estimates sum the exact `RationalScore` numerators and denominators of
+  active uncontested grades.
+- Criterion estimates use `1/1` for `met` and `0/1` for `not_met` or
+  `uncertain`; the evidence category preserves the distinction.
+- Superseded and contested grades remain ordered evidence but contribute `0/0`.

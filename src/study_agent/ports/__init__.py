@@ -11,6 +11,7 @@ from .artifact import (
 from .assessment import (
     AssessmentViewPort,
     DeterministicClosedGradingPolicyPort,
+    LearnerEvidenceViewPort,
     VerifiedGradeOwnerStore,
     VerifiedGradePort,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "EventStore",
     "EvidenceStatus",
     "IndexReceipt",
+    "LearnerEvidenceViewPort",
     "MessageRole",
     "ModelCapabilities",
     "ModelError",

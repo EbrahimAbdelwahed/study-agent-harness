@@ -70,7 +70,7 @@ from study_agent.workers import (
 )
 from study_agent.workers.contracts import fingerprint_output, fingerprint_validations
 from study_agent.workers.proof import verified_child_value_fingerprint
-from tests.unit.assessments.test_service import (
+from tests.unit.assessments.test_assessment_service import (
     REVISION,
     Artifacts,
     Clock,

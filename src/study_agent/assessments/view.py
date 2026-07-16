@@ -118,6 +118,7 @@ class ProjectionAssessmentView:
             GradeLifecycle(_text(raw, "lifecycle")),
             GradeId(supersedes) if isinstance(supersedes, str) else None,
             _time(raw, "recorded_at"),
+            _integer(raw, "event_sequence"),
         )
 
     @staticmethod
@@ -129,6 +130,7 @@ class ProjectionAssessmentView:
             SessionId(_text(raw, "session_id")),
             _text(raw, "reason"),
             _time(raw, "contested_at"),
+            _integer(raw, "event_sequence"),
         )
 
 
@@ -158,6 +160,13 @@ def _time(value: Mapping[str, JsonValue], key: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{key} must be timezone-aware")
     return parsed
+
+
+def _integer(value: Mapping[str, JsonValue], key: str) -> int:
+    raw = value.get(key)
+    if type(raw) is not int or raw < 0:
+        raise ValueError(f"{key} must be a non-negative integer")
+    return raw
 
 
 __all__ = ["ProjectionAssessmentView", "ProjectionLoader"]

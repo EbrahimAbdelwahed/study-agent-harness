@@ -229,6 +229,7 @@ class GradeRecord:
     lifecycle: GradeLifecycle
     supersedes_grade_id: GradeId | None
     recorded_at: datetime
+    event_sequence: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, GradeStatus) or not isinstance(
@@ -244,6 +245,8 @@ class GradeRecord:
         ):
             raise TypeError("grade provenance is invalid")
         require_aware(self.recorded_at, "recorded_at")
+        if type(self.event_sequence) is not int or self.event_sequence < 0:
+            raise ValueError("grade event_sequence must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,10 +256,13 @@ class GradeContestRecord:
     session_id: SessionId
     reason: str
     contested_at: datetime
+    event_sequence: int = 0
 
     def __post_init__(self) -> None:
         _bounded_text(self.reason, "contest reason")
         require_aware(self.contested_at, "contested_at")
+        if type(self.event_sequence) is not int or self.event_sequence < 0:
+            raise ValueError("contest event_sequence must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)

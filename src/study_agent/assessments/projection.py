@@ -175,6 +175,7 @@ def reduce_grade_recorded(
         "lifecycle": GradeLifecycle.ACTIVE.value,
         "supersedes_grade_id": predecessor_id,
         "recorded_at": _timestamp(event.occurred_at),
+        "event_sequence": event.course_sequence,
     }
     return _replace(
         state,
@@ -199,6 +200,7 @@ def reduce_grade_contested(
         "session_id": str(event.session_id),
         "reason": payload.reason,
         "contested_at": _timestamp(event.occurred_at),
+        "event_sequence": event.course_sequence,
     }
     return _replace(
         state,

@@ -42,7 +42,11 @@ from study_agent.application import (
     GroundingEngineFactory,
 )
 from study_agent.artifacts import register_artifact_events
-from study_agent.assessments import ProjectionAssessmentView, register_assessment_events
+from study_agent.assessments import (
+    ProjectionAssessmentView,
+    ProjectionLearnerEvidenceView,
+    register_assessment_events,
+)
 from study_agent.courses import (
     CourseService,
     ProjectionCourseCatalog,
@@ -391,6 +395,7 @@ class LocalRepository:
         )
         self.study_context = ProjectionStudyContextView(self.events.projection)
         self.assessments = ProjectionAssessmentView(self.events.projection)
+        self.learner_evidence = ProjectionLearnerEvidenceView(self.assessments)
         self.study_context_service = StudyContextService(
             self.events, self.clock, self.study_context, self.courses, self.sessions
         )

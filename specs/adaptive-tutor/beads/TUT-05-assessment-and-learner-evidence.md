@@ -1,6 +1,6 @@
 # Task Bead: TUT-05 assessment and learner evidence
 
-Status: Refined; blocked on TUT-04
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-02, TUT-04

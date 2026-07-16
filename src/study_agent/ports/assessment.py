@@ -9,6 +9,7 @@ from study_agent.domain import CourseId, ExecutionContext, RunId
 if TYPE_CHECKING:
     from study_agent.artifacts.content import AssessmentItemContent
     from study_agent.assessments.contracts import AssessmentSnapshot, CanonicalResponse
+    from study_agent.assessments.evidence import LearnerEvidenceSnapshot
     from study_agent.assessments.grading import DeterministicGradeDecision
     from study_agent.assessments.verified_grading import VerifiedGradeOutcome
 
@@ -39,9 +40,14 @@ class VerifiedGradePort(Protocol):
     ) -> VerifiedGradeOutcome: ...
 
 
+class LearnerEvidenceViewPort(Protocol):
+    def get(self, course_id: CourseId) -> LearnerEvidenceSnapshot: ...
+
+
 __all__ = [
     "AssessmentViewPort",
     "DeterministicClosedGradingPolicyPort",
+    "LearnerEvidenceViewPort",
     "VerifiedGradeOwnerStore",
     "VerifiedGradePort",
 ]
