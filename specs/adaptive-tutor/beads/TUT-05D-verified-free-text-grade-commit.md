@@ -1,6 +1,6 @@
 # Task Bead: TUT-05D verified free-text grade commit
 
-Status: Blocked on TUT-05C
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-05C

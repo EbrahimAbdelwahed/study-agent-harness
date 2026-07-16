@@ -61,6 +61,19 @@ from .service import (
     AssessmentService,
     RetryableAssessmentConflictError,
 )
+from .verified_grading import (
+    GradeResponseTaskFactory,
+    VerifiedGradeAdapter,
+    VerifiedGradeConflictError,
+    VerifiedGradeOutcome,
+    VerifiedGradeOwnerReceipt,
+    VerifiedGradeOwnerRegistry,
+    VerifiedGradeOwnerWriter,
+    VerifiedGradeProofReader,
+    VerifiedGradeRuntime,
+    compose_verified_grade_runtime,
+    grade_response_validation_expectations,
+)
 from .view import ProjectionAssessmentView
 
 __all__ = [
@@ -93,6 +106,7 @@ __all__ = [
     "GradeRecorded",
     "GradeResponseIntegrityValidator",
     "GradeResponseReadinessValidator",
+    "GradeResponseTaskFactory",
     "ItemPresented",
     "LearnerPresentationView",
     "MultipleChoiceResponse",
@@ -104,8 +118,17 @@ __all__ = [
     "SingleChoiceResponse",
     "ValidatorReceipt",
     "VerifiedCapabilityGradeProvenance",
+    "VerifiedGradeAdapter",
+    "VerifiedGradeConflictError",
+    "VerifiedGradeOutcome",
+    "VerifiedGradeOwnerReceipt",
+    "VerifiedGradeOwnerRegistry",
+    "VerifiedGradeOwnerWriter",
+    "VerifiedGradeProofReader",
+    "VerifiedGradeRuntime",
     "attempt_recorded_payload",
     "canonical_multiple_choice",
+    "compose_verified_grade_runtime",
     "decode_attempt_recorded",
     "decode_grade_contested",
     "decode_grade_recorded",
@@ -113,6 +136,7 @@ __all__ = [
     "grade_contested_payload",
     "grade_recorded_payload",
     "grade_response_binding",
+    "grade_response_validation_expectations",
     "item_presented_payload",
     "register_assessment_events",
     "response_fingerprint",

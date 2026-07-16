@@ -51,6 +51,7 @@ _EXECUTION_INPUT_DOMAIN = "generation-worker-execution-input@1"
 class GenerationWorkerTaskKind(StrEnum):
     FLASHCARD_BUNDLE = "flashcard_bundle"
     EXAM_ANALYSIS = "exam_analysis"
+    GRADE_RESPONSE = "grade_response"
 
 
 class ValidationReceiptSource(StrEnum):

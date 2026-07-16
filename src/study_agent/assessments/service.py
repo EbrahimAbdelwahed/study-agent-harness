@@ -22,6 +22,7 @@ from study_agent.domain import (
     GradeStatus,
     PresentationId,
     PrincipalKind,
+    RunId,
     SessionId,
     StudyArtifactKind,
     assessment_event_id_for,
@@ -37,6 +38,7 @@ from study_agent.ports import (
     EventSequenceConflictError,
     EventStore,
     SessionViewPort,
+    VerifiedGradePort,
 )
 from study_agent.ports.assessment import DeterministicClosedGradingPolicyPort
 from study_agent.state import canonical_json_bytes
@@ -51,6 +53,7 @@ from .contracts import (
     MultipleChoiceResponse,
     PresentationRecord,
     SingleChoiceResponse,
+    VerifiedCapabilityGradeProvenance,
 )
 from .events import (
     ASSESSMENT_SCHEMA_VERSION,
@@ -90,6 +93,7 @@ class AssessmentService:
         artifacts: ArtifactViewPort,
         sessions: SessionViewPort,
         grading_policy: DeterministicClosedGradingPolicyPort | None = None,
+        verified_grades: VerifiedGradePort | None = None,
     ) -> None:
         self._events = events
         self._clock = clock
@@ -97,6 +101,7 @@ class AssessmentService:
         self._artifacts = artifacts
         self._sessions = sessions
         self._grading_policy = grading_policy or ExactClosedGradingPolicy()
+        self._verified_grades = verified_grades
 
     def present_item(
         self,
@@ -262,6 +267,104 @@ class AssessmentService:
             raise AssessmentConflictError("initial grade cannot name a predecessor")
         if active and (len(active) != 1 or active[0].id != supersedes_grade_id):
             raise AssessmentConflictError("successor grade must name the exact active predecessor")
+        event = self._domain_event(context, event_id, GRADE_RECORDED, expected_sequence, payload)
+        return self._append(
+            context,
+            expected_sequence,
+            event,
+            cast(str, payload["command_fingerprint"]),
+            lambda: self._view.get(context.course_id).grade(grade_id),
+        )
+
+    def record_verified_grade(
+        self,
+        run_id: RunId,
+        context: ExecutionContext,
+        expected_sequence: int,
+        *,
+        supersedes_grade_id: GradeId | None = None,
+    ) -> GradeRecord:
+        session_id, key = self._context(context, PrincipalKind.SERVICE)
+        _expected_sequence(expected_sequence)
+        if not isinstance(run_id, RunId):
+            raise TypeError("run_id must be RunId")
+        if self._verified_grades is None:
+            raise AssessmentCommandError("verified grading recovery is not configured")
+        outcome = self._verified_grades.recover(run_id, context)
+        if supersedes_grade_id is not None and not isinstance(supersedes_grade_id, GradeId):
+            raise TypeError("supersedes_grade_id must be GradeId or absent")
+        if outcome.course_id != context.course_id or outcome.session_id != session_id:
+            raise AssessmentCommandError("verified grade belongs to another context")
+
+        snapshot = self._view.get(context.course_id)
+        try:
+            attempt = snapshot.attempt(outcome.attempt_id)
+            presentation = snapshot.presentation(attempt.presentation_id)
+        except LookupError as error:
+            raise AssessmentCommandError("verified grade target was not found") from error
+        if (
+            attempt.session_id != session_id
+            or presentation.session_id != session_id
+            or attempt.presentation_id != outcome.presentation_id
+            or presentation.revision_id != outcome.revision_id
+            or presentation.content_fingerprint != outcome.artifact_content_fingerprint
+            or attempt.response_fingerprint != outcome.response_fingerprint
+            or presentation.content.format is not AssessmentFormat.FREE_RESPONSE
+        ):
+            raise AssessmentConflictError("verified grade target commitments changed")
+        rubric_fingerprint = sha256(
+            canonical_json_bytes(
+                {"evaluation_criteria": presentation.content.evaluation_criteria}
+            )
+        ).hexdigest()
+        if (
+            outcome.provenance.rubric_fingerprint != rubric_fingerprint
+            or tuple(item.criterion for item in outcome.criterion_results)
+            != presentation.content.evaluation_criteria
+        ):
+            raise AssessmentConflictError("verified grade rubric changed")
+
+        payload = grade_recorded_payload(
+            outcome.attempt_id,
+            outcome.status,
+            outcome.criterion_results,
+            outcome.score,
+            outcome.provenance,
+            supersedes_grade_id,
+            key,
+            course_id=context.course_id,
+            session_id=session_id,
+        )
+        grade_id = grade_id_for(context.course_id, session_id, outcome.attempt_id, key)
+        event_id = assessment_event_id_for(context.course_id, session_id, key, GRADE_RECORDED)
+        existing = self._exact_retry(event_id, context, cast(str, payload["command_fingerprint"]))
+        if existing:
+            return self._view.get(context.course_id).grade(grade_id)
+
+        for grade in snapshot.grades:
+            provenance = grade.provenance
+            if (
+                isinstance(provenance, VerifiedCapabilityGradeProvenance)
+                and provenance.run_id == outcome.provenance.run_id
+            ):
+                raise AssessmentConflictError("verified grading run was already committed")
+        active = tuple(
+            item
+            for item in snapshot.grades
+            if item.attempt_id == outcome.attempt_id
+            and item.lifecycle is GradeLifecycle.ACTIVE
+        )
+        if not active and supersedes_grade_id is not None:
+            raise AssessmentConflictError("initial verified grade cannot name a predecessor")
+        if active:
+            if len(active) != 1 or active[0].id != supersedes_grade_id:
+                raise AssessmentConflictError(
+                    "verified regrade must name the exact active predecessor"
+                )
+            if not any(item.grade_id == active[0].id for item in snapshot.contests):
+                raise AssessmentConflictError(
+                    "verified regrade predecessor must be actively contested"
+                )
         event = self._domain_event(context, event_id, GRADE_RECORDED, expected_sequence, payload)
         return self._append(
             context,

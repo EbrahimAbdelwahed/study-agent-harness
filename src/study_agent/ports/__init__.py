@@ -8,7 +8,12 @@ from .artifact import (
     SourceCommitmentLookupPort,
     VerifiedGeneratedBatchPort,
 )
-from .assessment import AssessmentViewPort, DeterministicClosedGradingPolicyPort
+from .assessment import (
+    AssessmentViewPort,
+    DeterministicClosedGradingPolicyPort,
+    VerifiedGradeOwnerStore,
+    VerifiedGradePort,
+)
 from .clock import ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
 from .model import (
@@ -112,5 +117,7 @@ __all__ = [
     "ToolCall",
     "TutorSnapshotPort",
     "VerifiedGeneratedBatchPort",
+    "VerifiedGradeOwnerStore",
+    "VerifiedGradePort",
     "retrieval_read_set_fingerprint",
 ]
