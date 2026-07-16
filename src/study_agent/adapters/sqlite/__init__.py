@@ -17,6 +17,7 @@ from .fts_retrieval import (
     normalize_bm25_score,
 )
 from .lifecycle_observer import observe_local_repository
+from .namespaced_run_store import NamespacedSQLiteRunStore
 from .run_store import (
     RunStoreCorruptionError,
     SQLiteRunStore,
@@ -26,6 +27,7 @@ from .run_store import (
 __all__ = [
     "INDEX_VERSION",
     "EventBatchError",
+    "NamespacedSQLiteRunStore",
     "ProjectionConsistencyError",
     "RetrievalIndexIntegrityError",
     "RunStoreCorruptionError",

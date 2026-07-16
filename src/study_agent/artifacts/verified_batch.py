@@ -44,10 +44,10 @@ from study_agent.ports.exam import (
     ExamSampleScopePreparationPort,
 )
 from study_agent.ports.lesson_worker import (
+    HistoricalPlannedBundleWorkerRouter,
     LessonGeneratedBatchOwnerCommitment,
     LessonGeneratedBatchOwnerPublication,
     LessonWorkerStore,
-    PlannedBundleWorker,
 )
 from study_agent.ports.storage import SourceContentPort
 from study_agent.ports.verified_batch import (
@@ -218,7 +218,7 @@ class VerifiedGeneratedOwnerResolverAdapter:
         self,
         *,
         lesson_store: LessonWorkerStore,
-        lesson_worker: PlannedBundleWorker,
+        lesson_worker: HistoricalPlannedBundleWorkerRouter,
         exam_scope: ExamSampleScopePreparationPort,
         source_content: SourceContentPort,
     ) -> None:
@@ -242,7 +242,8 @@ class VerifiedGeneratedOwnerResolverAdapter:
             raise VerifiedBatchRecoveryError("lesson owner material is incomplete")
         task = GenerationWorkerTask.from_bytes(page.child_task_bytes)
         prepared = PreparedPlannedFlashcardScope.from_bytes(page.wrapper_bytes)
-        detail = self._lesson_worker.detail(task.task_id, prepared.wrapper_fingerprint, context)
+        worker = self._lesson_worker.for_request(checkpoint.request)
+        detail = worker.detail(task.task_id, prepared.wrapper_fingerprint, context)
         for item in prepared.prepared_scope.evidence.items:
             resolved = self._source_content.resolve(item.evidence.citation)
             if resolved.citation != item.evidence.citation or resolved.text != item.evidence.text:

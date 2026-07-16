@@ -1,6 +1,6 @@
 # Task Bead: TUT-04E1 verified generated-batch commit
 
-Status: In Progress (proof conversion and owner wiring complete; composition/media pending)
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-04B, TUT-04C0B1A, TUT-04C3, TUT-04D
@@ -56,7 +56,10 @@ be caller-forged.
 - The lesson/exam owner writers, strict registry, proof conversion adapter, and
   source-drift-checking resolver are implemented. Exam owner receipts persist
   exact canonical task/receipt bytes and never the raw opaque request key.
-- Remaining E1 work is runtime composition with a profile-aware historical
-  lesson-detail router and persistence of the exact trusted morphology-media
-  receipt. Media-bearing pages currently fail closed rather than weakening the
-  verified chain.
+- Runtime composition uses one durable owner/proof graph, a profile-aware
+  historical lesson-detail router, and namespaced operational stores that
+  survive restart without key collisions.
+- Media-bearing morphology pages remain an explicitly unsupported optional
+  path and fail closed. Supporting them later requires persisting the exact
+  trusted media receipt in the proof/owner chain; text-only morphology and
+  hybrid pages satisfy this bead without weakening provenance.

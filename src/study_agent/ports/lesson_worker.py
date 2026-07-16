@@ -8,6 +8,7 @@ from typing import Protocol
 from study_agent.domain import ExecutionContext, RunId
 from study_agent.domain._validation import JsonObject
 from study_agent.flashcards.lesson_worker_contracts import (
+    LessonWorkerRequest,
     ProfileTaskExpectation,
     ResolvedPlannedBundleEvidence,
     RevisionContentCommitment,
@@ -61,6 +62,12 @@ class PlannedBundleWorker(Protocol):
     ) -> VerifiedFlashcardPageResult: ...
 
 
+class HistoricalPlannedBundleWorkerRouter(Protocol):
+    """Rebuild the exact request-scoped worker selected by persisted history."""
+
+    def for_request(self, request: LessonWorkerRequest) -> PlannedBundleWorker: ...
+
+
 class LessonWorkerStore(Protocol):
     def create(self, key: str, payload: bytes) -> bool: ...
 
@@ -111,6 +118,7 @@ class LessonGeneratedBatchOwnerWriter(Protocol):
 
 __all__ = [
     "FlashcardProfileTaskBinding",
+    "HistoricalPlannedBundleWorkerRouter",
     "LessonGeneratedBatchOwnerCommitment",
     "LessonGeneratedBatchOwnerPublication",
     "LessonGeneratedBatchOwnerWriter",

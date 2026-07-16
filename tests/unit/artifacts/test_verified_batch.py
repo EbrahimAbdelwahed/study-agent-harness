@@ -577,6 +577,10 @@ class _LessonDetail:
         self.material = material
         self.proof = proof
 
+    def for_request(self, request):  # type: ignore[no-untyped-def]
+        assert request == self.material.checkpoint.request
+        return self
+
     def detail(self, task_id, prepared_scope_fingerprint, context):  # type: ignore[no-untyped-def]
         return VerifiedFlashcardPageResult(
             2,
