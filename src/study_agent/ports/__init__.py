@@ -8,6 +8,7 @@ from .artifact import (
     SourceCommitmentLookupPort,
     VerifiedGeneratedBatchPort,
 )
+from .assessment import AssessmentViewPort
 from .clock import ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
 from .model import (
@@ -67,6 +68,7 @@ __all__ = [
     "MAX_TOTAL_SOURCE_BYTES",
     "AnswerNotFoundError",
     "ArtifactViewPort",
+    "AssessmentViewPort",
     "AssistantTurnViewPort",
     "BlobStore",
     "CancellationToken",

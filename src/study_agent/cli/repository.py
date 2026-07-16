@@ -42,6 +42,7 @@ from study_agent.application import (
     GroundingEngineFactory,
 )
 from study_agent.artifacts import register_artifact_events
+from study_agent.assessments import ProjectionAssessmentView, register_assessment_events
 from study_agent.courses import (
     CourseService,
     ProjectionCourseCatalog,
@@ -369,6 +370,7 @@ class LocalRepository:
         register_session_events(registry)
         register_study_context_events(registry)
         register_artifact_events(registry)
+        register_assessment_events(registry)
         self.events = SQLiteEventStore(
             events_database, registry, connection_identity_guard=events_guard
         )
@@ -388,6 +390,7 @@ class LocalRepository:
             self.events, self.clock, self.sessions, self.assistant_turns
         )
         self.study_context = ProjectionStudyContextView(self.events.projection)
+        self.assessments = ProjectionAssessmentView(self.events.projection)
         self.study_context_service = StudyContextService(
             self.events, self.clock, self.study_context, self.courses, self.sessions
         )

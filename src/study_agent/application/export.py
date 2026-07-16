@@ -11,6 +11,7 @@ from study_agent.artifacts import (
     ProjectionArtifactView,
     register_artifact_events,
 )
+from study_agent.assessments import ASSESSMENT_EVENT_TYPES, register_assessment_events
 from study_agent.courses import register_course_events
 from study_agent.courses.events import COURSE_CREATED, decode_course_created
 from study_agent.domain._validation import JsonObject, freeze_object
@@ -281,7 +282,9 @@ type _EventDecoder = Callable[[DomainEvent], object]
 
 
 def _reject_v1_artifact_stream(stream: Sequence[DomainEvent]) -> None:
-    if any(event.event_type in ARTIFACT_EVENT_TYPES for event in stream):
+    if any(
+        event.event_type in ARTIFACT_EVENT_TYPES | ASSESSMENT_EVENT_TYPES for event in stream
+    ):
         raise ExportStateError("artifact export requires v2")
 
 
@@ -392,6 +395,7 @@ def _replay_v2(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
     register_session_events(registry)
     register_study_context_events(registry)
     register_artifact_events(registry)
+    register_assessment_events(registry)
     state: JsonObject = {}
     try:
         for expected_sequence, event in enumerate(stream, start=1):

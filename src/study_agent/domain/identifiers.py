@@ -83,6 +83,18 @@ class ArtifactBatchId(Identifier):
     pass
 
 
+class PresentationId(Identifier):
+    pass
+
+
+class AttemptId(Identifier):
+    pass
+
+
+class GradeId(Identifier):
+    pass
+
+
 def artifact_event_id_for(
     course_id: CourseId,
     session_id: SessionId,
@@ -95,6 +107,83 @@ def artifact_event_id_for(
         f"artifact-event@1\0{course_id}\0{session_id}\0{retry_identity}\0{command_kind}"
     ).encode()
     return EventId(f"event-sha256:{sha256(payload).hexdigest()}")
+
+
+def presentation_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    revision_id: ArtifactRevisionId,
+    retry_identity: str,
+) -> PresentationId:
+    if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
+        raise TypeError("presentation identity requires typed course and session ids")
+    if not isinstance(revision_id, ArtifactRevisionId):
+        raise TypeError("presentation identity requires ArtifactRevisionId")
+    return PresentationId(
+        "presentation-sha256:"
+        f"{_assessment_digest(course_id, session_id, revision_id, retry_identity, 'presentation')}"
+    )
+
+
+def attempt_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    presentation_id: PresentationId,
+    retry_identity: str,
+) -> AttemptId:
+    if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
+        raise TypeError("attempt identity requires typed course and session ids")
+    if not isinstance(presentation_id, PresentationId):
+        raise TypeError("attempt identity requires PresentationId")
+    return AttemptId(
+        "attempt-sha256:"
+        f"{_assessment_digest(course_id, session_id, presentation_id, retry_identity, 'attempt')}"
+    )
+
+
+def grade_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    attempt_id: AttemptId,
+    retry_identity: str,
+) -> GradeId:
+    if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
+        raise TypeError("grade identity requires typed course and session ids")
+    if not isinstance(attempt_id, AttemptId):
+        raise TypeError("grade identity requires AttemptId")
+    return GradeId(
+        "grade-sha256:"
+        f"{_assessment_digest(course_id, session_id, attempt_id, retry_identity, 'grade')}"
+    )
+
+
+def assessment_event_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    retry_identity: str,
+    event_type: str,
+) -> EventId:
+    require_text(retry_identity, "retry_identity")
+    require_text(event_type, "event_type")
+    payload = (
+        f"assessment-event@1\0{course_id}\0{session_id}\0{retry_identity}\0{event_type}"
+    ).encode()
+    return EventId(f"event-sha256:{sha256(payload).hexdigest()}")
+
+
+def _assessment_digest(
+    course_id: CourseId,
+    session_id: SessionId,
+    target_id: Identifier,
+    retry_identity: str,
+    purpose: str,
+) -> str:
+    require_text(retry_identity, "retry_identity")
+    payload = (
+        f"assessment-identity@1\0{course_id}\0{session_id}\0{target_id}\0"
+        f"{retry_identity}\0{purpose}"
+    ).encode()
+    return sha256(payload).hexdigest()
 
 
 def answer_id_for(
