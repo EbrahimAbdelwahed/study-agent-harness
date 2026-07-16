@@ -87,6 +87,18 @@ class CriterionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RationalScore:
+    numerator: int
+    denominator: int
+
+    def __post_init__(self) -> None:
+        if type(self.numerator) is not int or type(self.denominator) is not int:
+            raise TypeError("rational score terms must be integers")
+        if self.denominator <= 0 or not 0 <= self.numerator <= self.denominator:
+            raise ValueError("rational score must satisfy 0 <= numerator <= denominator")
+
+
+@dataclass(frozen=True, slots=True)
 class DeterministicGradeProvenance:
     policy_id: str
     policy_version: str
@@ -212,6 +224,7 @@ class GradeRecord:
     attempt_id: AttemptId
     status: GradeStatus
     criterion_results: tuple[CriterionResult, ...]
+    score: RationalScore
     provenance: GradeProvenance
     lifecycle: GradeLifecycle
     supersedes_grade_id: GradeId | None
@@ -223,6 +236,8 @@ class GradeRecord:
         ):
             raise TypeError("grade status or lifecycle is invalid")
         object.__setattr__(self, "criterion_results", tuple(self.criterion_results))
+        if not isinstance(self.score, RationalScore):
+            raise TypeError("grade score must be RationalScore")
         if not isinstance(
             self.provenance,
             (DeterministicGradeProvenance, VerifiedCapabilityGradeProvenance),
@@ -264,6 +279,12 @@ class AssessmentSnapshot:
     _presentation_by_id: Mapping[PresentationId, PresentationRecord] = field(
         init=False, repr=False, compare=False
     )
+    _attempt_by_id: Mapping[AttemptId, AttemptRecord] = field(
+        init=False, repr=False, compare=False
+    )
+    _grade_by_id: Mapping[GradeId, GradeRecord] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if type(self.sequence) is not int or self.sequence < 0:
@@ -274,12 +295,33 @@ class AssessmentSnapshot:
         if len(values) != len(self.presentations):
             raise ValueError("assessment snapshot has duplicate presentations")
         object.__setattr__(self, "_presentation_by_id", MappingProxyType(values))
+        attempts = {item.id: item for item in self.attempts}
+        grades = {item.id: item for item in self.grades}
+        if len(attempts) != len(self.attempts) or len(grades) != len(self.grades):
+            raise ValueError("assessment snapshot has duplicate attempts or grades")
+        object.__setattr__(self, "_attempt_by_id", MappingProxyType(attempts))
+        object.__setattr__(self, "_grade_by_id", MappingProxyType(grades))
 
-    def learner_presentation(self, presentation_id: PresentationId) -> LearnerPresentationView:
+    def presentation(self, presentation_id: PresentationId) -> PresentationRecord:
         try:
-            item = self._presentation_by_id[presentation_id]
+            return self._presentation_by_id[presentation_id]
         except KeyError as error:
             raise LookupError(f"presentation {presentation_id} was not found") from error
+
+    def attempt(self, attempt_id: AttemptId) -> AttemptRecord:
+        try:
+            return self._attempt_by_id[attempt_id]
+        except KeyError as error:
+            raise LookupError(f"attempt {attempt_id} was not found") from error
+
+    def grade(self, grade_id: GradeId) -> GradeRecord:
+        try:
+            return self._grade_by_id[grade_id]
+        except KeyError as error:
+            raise LookupError(f"grade {grade_id} was not found") from error
+
+    def learner_presentation(self, presentation_id: PresentationId) -> LearnerPresentationView:
+        item = self.presentation(presentation_id)
         return LearnerPresentationView(
             item.id,
             item.revision_id,
@@ -356,6 +398,7 @@ __all__ = [
     "LearnerPresentationView",
     "MultipleChoiceResponse",
     "PresentationRecord",
+    "RationalScore",
     "SingleChoiceResponse",
     "ValidatorReceipt",
     "VerifiedCapabilityGradeProvenance",

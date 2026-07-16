@@ -13,6 +13,7 @@ from .contracts import (
     LearnerPresentationView,
     MultipleChoiceResponse,
     PresentationRecord,
+    RationalScore,
     SingleChoiceResponse,
     ValidatorReceipt,
     VerifiedCapabilityGradeProvenance,
@@ -39,22 +40,43 @@ from .events import (
     grade_recorded_payload,
     item_presented_payload,
 )
+from .grading import (
+    EXACT_CLOSED_POLICY_FINGERPRINT,
+    EXACT_CLOSED_POLICY_ID,
+    EXACT_CLOSED_POLICY_VERSION,
+    DeterministicGradeDecision,
+    ExactClosedGradingPolicy,
+)
 from .projection import register_assessment_events
+from .service import (
+    AssessmentCommandError,
+    AssessmentConflictError,
+    AssessmentService,
+    RetryableAssessmentConflictError,
+)
 from .view import ProjectionAssessmentView
 
 __all__ = [
     "ASSESSMENT_EVENT_TYPES",
     "ASSESSMENT_SCHEMA_VERSION",
     "ATTEMPT_RECORDED",
+    "EXACT_CLOSED_POLICY_FINGERPRINT",
+    "EXACT_CLOSED_POLICY_ID",
+    "EXACT_CLOSED_POLICY_VERSION",
     "GRADE_CONTESTED",
     "GRADE_RECORDED",
     "ITEM_PRESENTED",
+    "AssessmentCommandError",
+    "AssessmentConflictError",
+    "AssessmentService",
     "AssessmentSnapshot",
     "AttemptRecord",
     "AttemptRecorded",
     "CanonicalResponse",
     "CriterionResult",
+    "DeterministicGradeDecision",
     "DeterministicGradeProvenance",
+    "ExactClosedGradingPolicy",
     "FreeResponse",
     "GradeContestRecord",
     "GradeContested",
@@ -66,6 +88,8 @@ __all__ = [
     "MultipleChoiceResponse",
     "PresentationRecord",
     "ProjectionAssessmentView",
+    "RationalScore",
+    "RetryableAssessmentConflictError",
     "SingleChoiceResponse",
     "ValidatorReceipt",
     "VerifiedCapabilityGradeProvenance",

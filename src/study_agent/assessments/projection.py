@@ -161,7 +161,7 @@ def reduce_grade_recorded(
             raise ValueError("a grade cannot supersede another attempt's grade")
         predecessor["lifecycle"] = GradeLifecycle.SUPERSEDED.value
         updated_grades[predecessor_id] = predecessor
-    from .events import _criterion_json, _provenance_json
+    from .events import _criterion_json, _provenance_json, _score_json
 
     updated_grades[str(payload.grade_id)] = {
         "grade_id": str(payload.grade_id),
@@ -170,6 +170,7 @@ def reduce_grade_recorded(
         "attempt_id": str(payload.attempt_id),
         "status": payload.status.value,
         "criterion_results": tuple(_criterion_json(item) for item in payload.criterion_results),
+        "score": _score_json(payload.score),
         "provenance": _provenance_json(payload.provenance),
         "lifecycle": GradeLifecycle.ACTIVE.value,
         "supersedes_grade_id": predecessor_id,

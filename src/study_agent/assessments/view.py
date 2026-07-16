@@ -27,7 +27,7 @@ from .contracts import (
     GradeRecord,
     PresentationRecord,
 )
-from .events import _criterion, _provenance, _response
+from .events import _criterion, _provenance, _response, _score
 
 type ProjectionLoader = Callable[[CourseId], Projection]
 
@@ -113,6 +113,7 @@ class ProjectionAssessmentView:
             AttemptId(_text(raw, "attempt_id")),
             GradeStatus(_text(raw, "status")),
             tuple(_criterion(item) for item in criteria),
+            _score(raw.get("score")),
             _provenance(raw.get("provenance")),
             GradeLifecycle(_text(raw, "lifecycle")),
             GradeId(supersedes) if isinstance(supersedes, str) else None,

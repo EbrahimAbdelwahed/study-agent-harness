@@ -1,6 +1,6 @@
 # Task Bead: TUT-05A canonical assessment ledger
 
-Status: Blocked on TUT-04
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-04

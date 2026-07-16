@@ -1,6 +1,6 @@
 # Task Bead: TUT-05B deterministic closed grading
 
-Status: Blocked on TUT-05A
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-05A
@@ -38,5 +38,15 @@ superseding grades through ordered CAS writes without invoking a model.
 ## Verification
 
 - Ordering/CAS/idempotency/race unit tests; authority and ownership negatives;
-  exact option grading; contest/supersession history; proof that deterministic
-  code has no model/provider imports; full offline gates.
+exact option grading; contest/supersession history; proof that deterministic
+code has no model/provider imports; full offline gates.
+
+## V1 multiple-choice policy
+
+- Exact match is `MET` with score `1/1`.
+- A non-empty proper subset containing no false positives is `UNCERTAIN` with
+  score `overlap/expected_count`.
+- No overlap or any false-positive option is `NOT_MET` with score
+  `0/expected_count`.
+- Because v1 artifacts do not map individual options to rubric criteria, the
+  derived status is applied to each criterion in its immutable artifact order.

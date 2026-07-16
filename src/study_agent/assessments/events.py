@@ -33,6 +33,7 @@ from .contracts import (
     FreeResponse,
     GradeProvenance,
     MultipleChoiceResponse,
+    RationalScore,
     SingleChoiceResponse,
     ValidatorReceipt,
     VerifiedCapabilityGradeProvenance,
@@ -79,6 +80,7 @@ class GradeRecorded:
     attempt_id: AttemptId
     status: GradeStatus
     criterion_results: tuple[CriterionResult, ...]
+    score: RationalScore
     provenance: GradeProvenance
     supersedes_grade_id: GradeId | None
     idempotency_key: str
@@ -146,6 +148,7 @@ def grade_recorded_payload(
     attempt_id: AttemptId,
     status: GradeStatus,
     criterion_results: tuple[CriterionResult, ...],
+    score: RationalScore,
     provenance: GradeProvenance,
     supersedes_grade_id: GradeId | None,
     idempotency_key: str,
@@ -161,6 +164,7 @@ def grade_recorded_payload(
         "attempt_id": str(attempt_id),
         "status": status.value,
         "criterion_results": tuple(_criterion_json(item) for item in criterion_results),
+        "score": _score_json(score),
         "provenance": _provenance_json(provenance),
         "supersedes_grade_id": str(supersedes_grade_id) if supersedes_grade_id else None,
         "idempotency_key": idempotency_key,
@@ -263,6 +267,7 @@ def decode_grade_recorded(event: DomainEvent) -> GradeRecorded:
             "attempt_id",
             "status",
             "criterion_results",
+            "score",
             "provenance",
             "supersedes_grade_id",
             "idempotency_key",
@@ -279,6 +284,7 @@ def decode_grade_recorded(event: DomainEvent) -> GradeRecorded:
         attempt_id,
         GradeStatus(_text(payload, "status")),
         tuple(_criterion(item) for item in _objects(payload, "criterion_results")),
+        _score(payload.get("score")),
         _provenance(payload.get("provenance")),
         GradeId(supersedes_raw) if isinstance(supersedes_raw, str) else None,
         _key(payload),
@@ -419,6 +425,21 @@ def _criterion_json(value: CriterionResult) -> JsonObject:
         "status": value.status.value,
         "rationale": value.rationale,
     }
+
+
+def _score(value: JsonValue | None) -> RationalScore:
+    if not isinstance(value, Mapping):
+        raise ValueError("grade score must be an object")
+    _exact(value, {"numerator", "denominator"}, "grade score")
+    numerator = value.get("numerator")
+    denominator = value.get("denominator")
+    if type(numerator) is not int or type(denominator) is not int:
+        raise ValueError("grade score terms must be integers")
+    return RationalScore(numerator, denominator)
+
+
+def _score_json(value: RationalScore) -> JsonObject:
+    return {"numerator": value.numerator, "denominator": value.denominator}
 
 
 def _provenance(value: JsonValue | None) -> GradeProvenance:
