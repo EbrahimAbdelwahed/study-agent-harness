@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from study_agent.adapters.filesystem import FilesystemExportWriter, FilesystemSourceInput
 from study_agent.adapters.filesystem.lifecycle import load_lifecycle_manifest
-from study_agent.application import ExportService
+from study_agent.application import ExportService, ExportVersion
 from study_agent.courses import course_profile_manifest
 from study_agent.domain import (
     CorrelationId,
@@ -509,7 +509,11 @@ async def _export(repository: LocalRepository, values: dict[str, object]) -> Com
     output = Path(_text(values, "output"))
     if not output.is_absolute():
         output = repository.paths.root / output
-    bundle = ExportService(repository.events).assemble(course_id)
+    version_value = values.get("version", ExportVersion.V1.value)
+    if not isinstance(version_value, str):
+        raise TypeError("version must be text")
+    version = ExportVersion(version_value)
+    bundle = ExportService(repository.events).assemble(course_id, version=version)
     receipt = FilesystemExportWriter().write(bundle, output)
     return CommandOutcome(
         "export",
@@ -518,6 +522,7 @@ async def _export(repository: LocalRepository, values: dict[str, object]) -> Com
             "destination": str(receipt.destination),
             "manifest_sha256": receipt.manifest_sha256,
             "high_water_sequence": receipt.high_water_sequence,
+            "version": version.value,
         },
     )
 

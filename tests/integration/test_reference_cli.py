@@ -76,6 +76,23 @@ def test_offline_reference_commands_use_canonical_services(
     assert code == 0
     assert exported["data"]["high_water_sequence"] == 2  # type: ignore[index]
 
+    code, exported_v2 = _json_command(
+        capsys,
+        *base,
+        "export",
+        "course-anatomy",
+        "--output",
+        "exports/anatomy-v2",
+        "--version",
+        "2",
+    )
+    assert code == 0
+    assert exported_v2["data"]["version"] == "2"  # type: ignore[index]
+    assert len(exported_v2["data"]["manifest_sha256"]) == 64  # type: ignore[index]
+    manifest = json.loads((root / "exports/anatomy-v2/manifest.json").read_text())
+    assert manifest["schema_version"] == 2
+    assert (root / "exports/anatomy-v2/artifacts.jsonl").read_bytes() == b""
+
     code, doctor = _json_command(capsys, *base, "doctor")
     assert code == 0
     assert doctor["data"]["status"] == "ok"  # type: ignore[index]

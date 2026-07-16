@@ -1,6 +1,6 @@
 # Task Bead: TUT-04E2 artifact replay and export v2
 
-Status: Blocked on TUT-04B
+Status: Done
 Priority: P0
 Type: contract
 Depends On: TUT-04B

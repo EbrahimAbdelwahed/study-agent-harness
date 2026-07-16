@@ -41,6 +41,7 @@ from study_agent.application import (
     GroundingAskService,
     GroundingEngineFactory,
 )
+from study_agent.artifacts import register_artifact_events
 from study_agent.courses import (
     CourseService,
     ProjectionCourseCatalog,
@@ -367,6 +368,7 @@ class LocalRepository:
         register_source_revision_events(registry, self.blobs.get)
         register_session_events(registry)
         register_study_context_events(registry)
+        register_artifact_events(registry)
         self.events = SQLiteEventStore(
             events_database, registry, connection_identity_guard=events_guard
         )

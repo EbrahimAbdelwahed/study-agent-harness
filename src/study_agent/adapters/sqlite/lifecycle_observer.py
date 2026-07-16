@@ -9,6 +9,7 @@ from pathlib import Path
 
 from study_agent.adapters.filesystem.blob_store import FilesystemBlobStore
 from study_agent.adapters.filesystem.repository_target import RepositoryObservationHandle
+from study_agent.artifacts import register_artifact_events
 from study_agent.courses import ProjectionCourseView, register_course_events
 from study_agent.domain import ChunkId, Citation, CourseId, ResolvedCitation
 from study_agent.ingestion import register_source_revision_events
@@ -96,6 +97,7 @@ def observe_local_repository(
                 register_source_revision_events(registry, blobs.get)
                 register_session_events(registry)
                 register_study_context_events(registry)
+                register_artifact_events(registry)
                 events = SQLiteEventStore(events_path, registry, read_only=True)
                 course_ids = events.list_course_ids()
                 projections = {
