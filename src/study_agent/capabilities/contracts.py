@@ -35,6 +35,7 @@ class TutorCapabilityId(StrEnum):
     ASSESS_UNDERSTANDING = "assess_understanding"
     PROPOSE_FLASHCARDS = "propose_flashcards"
     ANALYZE_EXAM_SAMPLE = "analyze_exam_sample"
+    GRADE_RESPONSE = "grade_response"
 
 
 class CapabilityOutcomeStatus(StrEnum):

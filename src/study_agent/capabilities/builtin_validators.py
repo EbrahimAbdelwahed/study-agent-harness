@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from hashlib import sha256
+from typing import TYPE_CHECKING
 
 from study_agent.domain import Citation
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_object
@@ -14,6 +15,12 @@ from study_agent.grounding import (
 from study_agent.playbooks import ValidationOutcome, ValidatorDisposition
 from study_agent.ports import EvidenceStatus, SourceContentPort
 from study_agent.skills import SemanticVersion
+
+if TYPE_CHECKING:
+    from study_agent.assessments.grade_scope import (
+        GradeResponseIntegrityValidator,
+        GradeResponseReadinessValidator,
+    )
 
 VERSION = SemanticVersion.parse("1.0.0")
 
@@ -187,13 +194,22 @@ def builtin_tutor_validators(
     AssessUnderstandingReadinessValidator,
     ExplainConceptIntegrityValidator,
     AssessUnderstandingIntegrityValidator,
+    GradeResponseReadinessValidator,
+    GradeResponseIntegrityValidator,
 ]:
+    from study_agent.assessments.grade_scope import (
+        GradeResponseIntegrityValidator,
+        GradeResponseReadinessValidator,
+    )
+
     return (
         TutorEvidenceGateValidator(),
         ExplainConceptReadinessValidator(),
         AssessUnderstandingReadinessValidator(),
         ExplainConceptIntegrityValidator(content),
         AssessUnderstandingIntegrityValidator(content),
+        GradeResponseReadinessValidator(),
+        GradeResponseIntegrityValidator(content),
     )
 
 

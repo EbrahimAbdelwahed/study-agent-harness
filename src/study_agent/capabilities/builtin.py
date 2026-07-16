@@ -24,6 +24,10 @@ from study_agent.skills.builtin.analyze_exam_sample import (
     EXAM_ANALYSIS_INPUT_SCHEMA,
     EXAM_ANALYSIS_OUTPUT_SCHEMA,
 )
+from study_agent.skills.builtin.grade_response import (
+    GRADE_RESPONSE_INPUT_SCHEMA,
+    GRADE_RESPONSE_OUTPUT_SCHEMA,
+)
 
 from .bindings import CapabilityBinding, CapabilityDependencyResolver
 from .contracts import CapabilityManifest, TutorCapabilityId
@@ -62,6 +66,15 @@ ANALYZE_EXAM_SAMPLE_MANIFEST = CapabilityManifest(
     VERSION,
     EXAM_ANALYSIS_INPUT_SCHEMA.value,
     EXAM_ANALYSIS_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    False,
+)
+
+GRADE_RESPONSE_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.GRADE_RESPONSE,
+    VERSION,
+    GRADE_RESPONSE_INPUT_SCHEMA.value,
+    GRADE_RESPONSE_OUTPUT_SCHEMA.value,
     ("course:read",),
     False,
 )

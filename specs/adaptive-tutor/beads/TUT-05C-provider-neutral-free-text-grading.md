@@ -1,6 +1,6 @@
 # Task Bead: TUT-05C provider-neutral free-text grading
 
-Status: Blocked on TUT-05B
+Status: Done
 Priority: P0
 Type: expand
 Depends On: TUT-05B, TUT-03

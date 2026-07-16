@@ -8,7 +8,7 @@ from .artifact import (
     SourceCommitmentLookupPort,
     VerifiedGeneratedBatchPort,
 )
-from .assessment import AssessmentViewPort
+from .assessment import AssessmentViewPort, DeterministicClosedGradingPolicyPort
 from .clock import ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
 from .model import (
@@ -76,6 +76,7 @@ __all__ = [
     "CourseCatalogPort",
     "CourseNotFoundError",
     "CourseViewPort",
+    "DeterministicClosedGradingPolicyPort",
     "EventSequenceConflictError",
     "EventStore",
     "EvidenceStatus",

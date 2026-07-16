@@ -1,5 +1,6 @@
 """Provider-neutral canonical assessment ledger."""
 
+from .capability import grade_response_binding
 from .contracts import (
     AssessmentSnapshot,
     AttemptRecord,
@@ -39,6 +40,12 @@ from .events import (
     grade_contested_payload,
     grade_recorded_payload,
     item_presented_payload,
+)
+from .grade_scope import (
+    GradeEvidence,
+    GradeResponseIntegrityValidator,
+    GradeResponseReadinessValidator,
+    PreparedGradeScope,
 )
 from .grading import (
     EXACT_CLOSED_POLICY_FINGERPRINT,
@@ -80,12 +87,16 @@ __all__ = [
     "FreeResponse",
     "GradeContestRecord",
     "GradeContested",
+    "GradeEvidence",
     "GradeProvenance",
     "GradeRecord",
     "GradeRecorded",
+    "GradeResponseIntegrityValidator",
+    "GradeResponseReadinessValidator",
     "ItemPresented",
     "LearnerPresentationView",
     "MultipleChoiceResponse",
+    "PreparedGradeScope",
     "PresentationRecord",
     "ProjectionAssessmentView",
     "RationalScore",
@@ -101,6 +112,7 @@ __all__ = [
     "decode_item_presented",
     "grade_contested_payload",
     "grade_recorded_payload",
+    "grade_response_binding",
     "item_presented_payload",
     "register_assessment_events",
     "response_fingerprint",
