@@ -25,18 +25,37 @@ no canonical write authority.
 - [ ] Learner response, artifact text, and evidence are explicitly untrusted
   data rather than instructions. Prompt injection, hidden prompt requests,
   provider/tool choices, learner advice, mastery, and scheduling fail closed.
-- [ ] Model output is a strict `graded | needs_review | ungradable` union. Every
-  ordered rubric criterion appears exactly once with `met | not_met | uncertain`,
-  a bounded rationale, evidence handles, and bounded confidence.
-- [ ] The integrity validator derives status and score from criterion outcomes;
-  it never trusts a model-authored score. Unknown evidence, missing/duplicate
-  criteria, stale rubric fingerprints, unsupported claims, or malformed output
-  become `needs_review`/`ungradable` or terminate without fabricating a grade.
+- [ ] Validated capability output is a strict `graded | needs_review | ungradable`
+  union. Model output contains only the ordered criterion proposals, each with
+  `met | not_met | uncertain`, a bounded rationale, evidence handles, and bounded
+  confidence; overall status and score are absent and cannot be model-authored.
+- [ ] The integrity validator derives the final union and score: all determinate
+  criteria produce `graded`, any `uncertain` produces `needs_review`, and the
+  exact score is `met_count/criterion_count` without reduction. `ungradable`
+  requires an explicit valid evidence-insufficiency result. Unknown evidence,
+  missing/duplicate/reordered criteria, stale rubric fingerprints, unsupported
+  rationales, extra fields, or malformed output terminate validation.
 - [ ] Evidence handles resolve only through the immutable assessment artifact
   provenance and canonical source content.
 - [ ] Prompt, skill, playbook, validator, and capability versions are pinned;
   the same behavior runs with scripted or generic model adapters and does not
   expand the seven public StudyTools.
+- [ ] The prepared scope binds course/session/attempt/presentation/revision,
+  response fingerprint, expected response, ordered rubric fingerprint, accepted
+  artifact/source commitments, a redacted prompt projection, and a closed
+  evidence-handle map. The caller supplies only attempt identity and language.
+- [ ] Learner/artifact text and counts are bounded; the validator re-resolves
+  every cited handle to exact immutable source text before accepting a rationale.
+
+## Reviewed implementation slices
+
+1. Strict request/scope/model/final contracts, prompt, and skill.
+2. Trusted `assessment.prepare_grade_scope` bridge with ownership and staleness checks.
+3. Exact Tool -> readiness/security validator -> Model -> integrity validator playbook.
+4. Additive capability registration and architecture/tool-parity gates.
+
+TUT-05C produces only a validated proposal. It does not write the assessment
+ledger; TUT-05D owns proof-bound canonical commit.
 
 ## Verification
 
