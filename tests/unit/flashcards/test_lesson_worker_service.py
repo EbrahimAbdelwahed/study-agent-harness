@@ -41,6 +41,10 @@ from study_agent.flashcards.lesson_worker_service import (
     _cross_page_span_overlap,
 )
 from study_agent.flashcards.planning import PreparedPlannedFlashcardScope
+from study_agent.ports.lesson_worker import (
+    LessonGeneratedBatchOwnerCommitment,
+    LessonGeneratedBatchOwnerPublication,
+)
 from study_agent.skills import ArtifactReference, SemanticVersion
 from study_agent.state import canonical_json_bytes
 from study_agent.workers import (
@@ -399,6 +403,33 @@ class _BatchWorker(_ScriptedWorker):
             detail=WorkerDetailView(result.detail.receipt, output),
         )
         return view
+
+
+class _OwnerWriter:
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[
+                LessonGeneratedBatchOwnerCommitment,
+                GenerationWorkerTask,
+                GenerationWorkerReceipt,
+                ExecutionContext,
+            ]
+        ] = []
+        self.values: dict[RunId, LessonGeneratedBatchOwnerPublication] = {}
+
+    def create(self, commitment, task, receipt, context):  # type: ignore[no-untyped-def]
+        self.calls.append((commitment, task, receipt, context))
+        publication = LessonGeneratedBatchOwnerPublication(
+            child_run_id=receipt.child_run_id,
+            child_task_fingerprint=task.fingerprint,
+            child_receipt_fingerprint=receipt.fingerprint,
+            child_proof_fingerprint="9" * 64,
+            owner_receipt_fingerprint="8" * 64,
+        )
+        existing = self.values.setdefault(receipt.child_run_id, publication)
+        if existing != publication:
+            raise RuntimeError("owner publication changed")
+        return existing
 
 
 class _MutatingBinding(_Binding):
@@ -916,11 +947,13 @@ def test_cross_wired_child_detail_fails_closed_during_page_review(
 def test_completed_review_exact_decodes_batches_in_canonical_page_order() -> None:
     request = _request(plan=_multi_plan(), concurrency=2)
     worker = _BatchWorker()
+    owner = _OwnerWriter()
     service = LessonWorkerService(
         store=_Store(),
         resolver=_Resolver(),
         task_binding=_Binding(request),
         worker=worker,
+        owner_writer=owner,
     )
     complete = asyncio.run(service.start(request, _parent()))
 
@@ -938,6 +971,13 @@ def test_completed_review_exact_decodes_batches_in_canonical_page_order() -> Non
     assert reviewed.plan_fingerprint == complete.plan_fingerprint
     assert reviewed.profile_fingerprint == complete.profile_fingerprint
     assert not hasattr(complete, "pages")
+    assert len(owner.values) == 2
+    assert tuple(item[0].page_position for item in owner.calls) == (0, 1)
+    assert all(item[0].coordinator_fingerprint for item in owner.calls)
+
+    retried = service.review_completed(complete.run_id, request, _parent())
+    assert retried == reviewed
+    assert len(owner.values) == 2
 
 
 @pytest.mark.parametrize(
@@ -953,16 +993,19 @@ def test_completed_review_fails_closed_on_cross_page_or_scope_violation(
     match: str,
 ) -> None:
     request = _request(plan=_multi_plan(), concurrency=2)
+    owner = _OwnerWriter()
     service = LessonWorkerService(
         store=_Store(),
         resolver=_Resolver(),
         task_binding=_Binding(request),
         worker=worker,
+        owner_writer=owner,
     )
     complete = asyncio.run(service.start(request, _parent()))
 
     with pytest.raises(LessonWorkerConflictError, match=match):
         service.review_completed(complete.run_id, request, _parent())
+    assert owner.calls == []
 
 
 def test_completed_review_requires_every_page_to_succeed() -> None:
@@ -979,14 +1022,30 @@ def test_completed_review_requires_every_page_to_succeed() -> None:
         service.review_completed(running.run_id, request, _parent())
 
 
+def test_completed_review_fails_closed_without_generated_owner_writer() -> None:
+    request = _request(plan=_multi_plan(), concurrency=2)
+    service = LessonWorkerService(
+        store=_Store(),
+        resolver=_Resolver(),
+        task_binding=_Binding(request),
+        worker=_BatchWorker(),
+    )
+    complete = asyncio.run(service.start(request, _parent()))
+
+    with pytest.raises(LessonWorkerConflictError, match="owner writer is not configured"):
+        service.review_completed(complete.run_id, request, _parent())
+
+
 def test_completed_review_derives_optional_overview_association_to_later_pages() -> None:
     request = _request(plan=_multi_plan(), concurrency=2)
     worker = _BatchWorker(overview_positions=frozenset({0}))
+    owner = _OwnerWriter()
     service = LessonWorkerService(
         store=_Store(),
         resolver=_Resolver(),
         task_binding=_Binding(request),
         worker=worker,
+        owner_writer=owner,
     )
     complete = asyncio.run(service.start(request, _parent()))
 
@@ -997,6 +1056,10 @@ def test_completed_review_derives_optional_overview_association_to_later_pages()
     assert association.associated_page_positions == (1,)
     assert association.associated_bundle_ids == (request.plan.bundles[1].bundle_id,)
     assert reviewed.pages[1].batch.candidates[0].parent_candidate_key is None
+    first_owner, second_owner = (call[0] for call in owner.calls)
+    assert first_owner.associated_overview_bundle_id is None
+    assert second_owner.associated_overview_bundle_id == request.plan.bundles[0].bundle_id
+    assert second_owner.overview_association_fingerprint is not None
 
 
 @pytest.mark.parametrize(
@@ -1024,16 +1087,19 @@ def test_completed_review_fails_closed_on_overview_or_coverage_violation(
     match: str,
 ) -> None:
     request = _request(plan=_multi_plan(), concurrency=2)
+    owner = _OwnerWriter()
     service = LessonWorkerService(
         store=_Store(),
         resolver=_Resolver(),
         task_binding=_Binding(request),
         worker=worker,
+        owner_writer=owner,
     )
     complete = asyncio.run(service.start(request, _parent()))
 
     with pytest.raises(LessonWorkerConflictError, match=match):
         service.review_completed(complete.run_id, request, _parent())
+    assert owner.calls == []
 
 
 def test_cross_page_span_overlap_is_revision_scoped_and_uses_half_open_ranges() -> None:

@@ -80,6 +80,10 @@ a compact tutor-facing summary.
   page positions and bundle IDs. No new `PlannedBundleKind`, cross-page parent
   edge, or inferred overview is introduced; lessons without an overview expose
   an empty association tuple.
-- Consequently the combined direct/retry/interruption/source-drift/fallback/
-  injection matrix and the full profile-selection/output criterion remain open
-  where they depend on lesson-wide verified candidate aggregation.
+- After successful aggregation, the coordinator publishes one inward
+  `LessonGeneratedBatchOwnerCommitment` per verified page. The owner writer is
+  required for completed review, receives the exact task, worker receipt, and
+  child context needed to load the persisted B1A proof, and returns proof/owner
+  receipt commitments that the coordinator verifies before returning review.
+  Exact retry is delegated to the idempotent owner slot; missing publication is
+  fail-closed rather than silently skipped.

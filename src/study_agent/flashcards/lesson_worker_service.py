@@ -39,12 +39,16 @@ from study_agent.flashcards.planning import (
 from study_agent.flashcards.scope import FlashcardScopeIndexEntry, PreparedFlashcardScope
 from study_agent.ports.lesson_worker import (
     FlashcardProfileTaskBinding,
+    LessonGeneratedBatchOwnerCommitment,
+    LessonGeneratedBatchOwnerPublication,
+    LessonGeneratedBatchOwnerWriter,
     LessonWorkerStore,
     PlannedBundleEvidenceResolver,
     PlannedBundleWorker,
 )
 from study_agent.state import canonical_json_bytes
 from study_agent.workers.contracts import (
+    GenerationWorkerReceipt,
     GenerationWorkerStatus,
     GenerationWorkerTask,
     GenerationWorkerTaskKind,
@@ -56,6 +60,21 @@ class LessonWorkerConflictError(RuntimeError):
     """An exact request, authority, plan, profile, source, or task binding changed."""
 
 
+class _UnconfiguredGeneratedBatchOwnerWriter:
+    def create(
+        self,
+        commitment: LessonGeneratedBatchOwnerCommitment,
+        task: GenerationWorkerTask,
+        receipt: GenerationWorkerReceipt,
+        context: ExecutionContext,
+    ) -> LessonGeneratedBatchOwnerPublication:
+        del commitment, task, receipt, context
+        raise LessonWorkerConflictError("generated batch owner writer is not configured")
+
+
+_UNCONFIGURED_OWNER_WRITER = _UnconfiguredGeneratedBatchOwnerWriter()
+
+
 class LessonWorkerService:
     def __init__(
         self,
@@ -64,11 +83,13 @@ class LessonWorkerService:
         resolver: PlannedBundleEvidenceResolver,
         task_binding: FlashcardProfileTaskBinding,
         worker: PlannedBundleWorker,
+        owner_writer: LessonGeneratedBatchOwnerWriter = _UNCONFIGURED_OWNER_WRITER,
     ) -> None:
         self._store = store
         self._resolver = resolver
         self._task_binding = task_binding
         self._worker = worker
+        self._owner_writer = owner_writer
 
     async def start(
         self,
@@ -322,6 +343,71 @@ class LessonWorkerService:
                     associated_bundle_ids=associated_bundles,
                 ),
             )
+        overview_bundle_id: str | None = None
+        overview_fingerprint: str | None = None
+        if overview_associations:
+            association = overview_associations[0]
+            overview_bundle_id = pages[association.page_position].bundle_id
+            overview_fingerprint = sha256(
+                b"lesson-overview-association@1\0"
+                + canonical_json_bytes(
+                    freeze_object(
+                        {
+                            "page_position": association.page_position,
+                            "candidate_key": association.candidate_key,
+                            "associated_page_positions": association.associated_page_positions,
+                            "associated_bundle_ids": association.associated_bundle_ids,
+                        }
+                    )
+                )
+            ).hexdigest()
+        bundle_order = tuple(bundle.bundle_id for bundle in request.plan.bundles)
+        for owner_page in pages:
+            checkpoint_page = checkpoint.pages[owner_page.page_position]
+            if checkpoint_page.child_task_bytes is None or checkpoint_page.receipt is None:
+                self._conflict("completed lesson page lacks owner commitments")
+            task = GenerationWorkerTask.from_bytes(checkpoint_page.child_task_bytes)
+            detail = self._worker.detail(
+                task.task_id, owner_page.wrapper_fingerprint, parent
+            )
+            _verify_completed_detail(
+                detail,
+                task,
+                checkpoint_page.receipt.child_receipt_fingerprint,
+                checkpoint_page.receipt.child_run_id,
+            )
+            bundle = request.plan.bundles[owner_page.page_position]
+            association_id = (
+                overview_bundle_id
+                if overview_bundle_id is not None and owner_page.page_position != 0
+                else None
+            )
+            association_fingerprint = overview_fingerprint if association_id else None
+            publication = self._owner_writer.create(
+                LessonGeneratedBatchOwnerCommitment(
+                    lesson_run_id=run_id,
+                    lesson_request_fingerprint=request.fingerprint,
+                    lesson_plan_fingerprint=request.plan.plan_fingerprint,
+                    lesson_profile_fingerprint=request.profile_expectation.profile_fingerprint,
+                    coordinator_fingerprint=checkpoint.fingerprint,
+                    page_position=owner_page.page_position,
+                    bundle_order=bundle_order,
+                    bundle_id=owner_page.bundle_id,
+                    bundle_fingerprint=_bundle_fingerprint(bundle),
+                    wrapper_fingerprint=owner_page.wrapper_fingerprint,
+                    scope_fingerprint=owner_page.scope_fingerprint,
+                    read_set_fingerprint=owner_page.read_set_fingerprint,
+                    revision_commitments_fingerprint=(
+                        request.revision_commitments_fingerprint
+                    ),
+                    associated_overview_bundle_id=association_id,
+                    overview_association_fingerprint=association_fingerprint,
+                ),
+                task,
+                detail.detail.receipt,
+                parent,
+            )
+            _verify_owner_publication(publication, task, detail.detail.receipt)
         return LessonWorkerCompletedReviewView(
             run_id=run_id,
             plan_fingerprint=request.plan.plan_fingerprint,
@@ -580,9 +666,7 @@ def _index_references(
     bundle: PlannedFlashcardBundle,
     wrapper: PreparedPlannedFlashcardScope,
 ) -> tuple[str, ...]:
-    bundle_fingerprint = sha256(
-        b"lesson-worker-bundle@1\0" + canonical_json_bytes(bundle.to_json())
-    ).hexdigest()
+    bundle_fingerprint = _bundle_fingerprint(bundle)
     return (
         f"plan-sha256:{request.plan.plan_fingerprint}",
         f"bundle-sha256:{bundle_fingerprint}",
@@ -591,6 +675,35 @@ def _index_references(
         f"revisions-sha256:{request.revision_commitments_fingerprint}",
         f"profile-sha256:{request.profile_expectation.fingerprint}",
     )
+
+
+def _bundle_fingerprint(bundle: PlannedFlashcardBundle) -> str:
+    return sha256(
+        b"lesson-worker-bundle@1\0" + canonical_json_bytes(bundle.to_json())
+    ).hexdigest()
+
+
+def _verify_owner_publication(
+    publication: LessonGeneratedBatchOwnerPublication,
+    task: GenerationWorkerTask,
+    receipt: GenerationWorkerReceipt,
+) -> None:
+    if not isinstance(publication, LessonGeneratedBatchOwnerPublication):
+        raise LessonWorkerConflictError("generated owner publication is invalid")
+    if not isinstance(receipt, GenerationWorkerReceipt):
+        raise LessonWorkerConflictError("generated owner receipt is invalid")
+    if (
+        publication.child_run_id != receipt.child_run_id
+        or publication.child_task_fingerprint != task.fingerprint
+        or publication.child_receipt_fingerprint != receipt.fingerprint
+    ):
+        raise LessonWorkerConflictError("generated owner publication changed child identity")
+    for value in (
+        publication.child_proof_fingerprint,
+        publication.owner_receipt_fingerprint,
+    ):
+        if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            raise LessonWorkerConflictError("generated owner publication is invalid")
 
 
 def _verify_worker_view(view: WorkerCompactView, task: GenerationWorkerTask) -> None:

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
-from study_agent.domain import ExecutionContext
+from study_agent.domain import ExecutionContext, RunId
 from study_agent.domain._validation import JsonObject
 from study_agent.flashcards.lesson_worker_contracts import (
     ProfileTaskExpectation,
@@ -17,7 +18,7 @@ from study_agent.flashcards.planning import (
     PlannedFlashcardBundle,
     PreparedPlannedFlashcardScope,
 )
-from study_agent.workers.contracts import GenerationWorkerTask
+from study_agent.workers.contracts import GenerationWorkerReceipt, GenerationWorkerTask
 from study_agent.workers.view import WorkerCompactView
 
 
@@ -68,8 +69,51 @@ class LessonWorkerStore(Protocol):
     def load(self, key: str) -> bytes: ...
 
 
+@dataclass(frozen=True, slots=True)
+class LessonGeneratedBatchOwnerCommitment:
+    lesson_run_id: RunId
+    lesson_request_fingerprint: str
+    lesson_plan_fingerprint: str
+    lesson_profile_fingerprint: str
+    coordinator_fingerprint: str
+    page_position: int
+    bundle_order: tuple[str, ...]
+    bundle_id: str
+    bundle_fingerprint: str
+    wrapper_fingerprint: str
+    scope_fingerprint: str
+    read_set_fingerprint: str
+    revision_commitments_fingerprint: str
+    associated_overview_bundle_id: str | None
+    overview_association_fingerprint: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LessonGeneratedBatchOwnerPublication:
+    child_run_id: RunId
+    child_task_fingerprint: str
+    child_receipt_fingerprint: str
+    child_proof_fingerprint: str
+    owner_receipt_fingerprint: str
+
+
+class LessonGeneratedBatchOwnerWriter(Protocol):
+    """Load the exact child proof and idempotently persist its lesson owner."""
+
+    def create(
+        self,
+        commitment: LessonGeneratedBatchOwnerCommitment,
+        task: GenerationWorkerTask,
+        receipt: GenerationWorkerReceipt,
+        context: ExecutionContext,
+    ) -> LessonGeneratedBatchOwnerPublication: ...
+
+
 __all__ = [
     "FlashcardProfileTaskBinding",
+    "LessonGeneratedBatchOwnerCommitment",
+    "LessonGeneratedBatchOwnerPublication",
+    "LessonGeneratedBatchOwnerWriter",
     "LessonWorkerStore",
     "PlannedBundleEvidenceResolver",
     "PlannedBundleWorker",
