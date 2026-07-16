@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from study_agent.domain import ExecutionContext
-from study_agent.domain._validation import JsonObject, require_text
-from study_agent.pedagogy import PedagogicalProfileRef
+from study_agent.domain._validation import JsonObject, freeze_object, require_text
+from study_agent.pedagogy import PedagogicalProfileRef, ProfileSelectionReceipt
 from study_agent.playbooks import (
     DataSourceKind,
     DialogueStep,
@@ -111,6 +111,21 @@ class CapabilityBinding:
 
 
 PROFILE_SELECTION_RECEIPT_INPUT = "profile_selection_receipt"
+
+
+def profiled_execution_inputs(
+    public_inputs: JsonObject, receipt: ProfileSelectionReceipt
+) -> JsonObject:
+    """Add trusted selection provenance without widening the public manifest."""
+
+    if not isinstance(receipt, ProfileSelectionReceipt):
+        raise TypeError("profile selection receipt is invalid")
+    return freeze_object(
+        {
+            **public_inputs,
+            PROFILE_SELECTION_RECEIPT_INPUT: receipt.to_bytes().decode("utf-8"),
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)

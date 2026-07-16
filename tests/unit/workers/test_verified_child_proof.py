@@ -615,6 +615,7 @@ def test_sanitized_view_has_only_the_pinned_fields() -> None:
         "model",
         "prompt",
         "validations",
+        "execution_input_fingerprint",
     )
     rendered = repr(_proof()).lower()
     for forbidden in (
@@ -628,3 +629,18 @@ def test_sanitized_view_has_only_the_pinned_fields() -> None:
         "write_authority",
     ):
         assert forbidden not in rendered
+
+
+def test_execution_input_commitment_is_conditional_and_old_bytes_stay_stable() -> None:
+    ordinary = _proof()
+    assert "execution_input_fingerprint" not in ordinary.to_json()
+    assert VerifiedChildExecutionProof.from_bytes(ordinary.to_bytes()) == ordinary
+
+    profiled = replace(ordinary, execution_input_fingerprint=SHA_A)
+    assert profiled.to_json()["execution_input_fingerprint"] == SHA_A
+    assert VerifiedChildExecutionProof.from_bytes(profiled.to_bytes()) == profiled
+
+    redundant = json.loads(ordinary.to_bytes())
+    redundant["execution_input_fingerprint"] = ordinary.input_fingerprint
+    with pytest.raises(ValueError, match="canonical"):
+        VerifiedChildExecutionProof.from_bytes(canonical_json_bytes(redundant))

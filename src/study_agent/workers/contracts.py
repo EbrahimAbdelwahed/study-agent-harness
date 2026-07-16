@@ -45,6 +45,7 @@ _STATE_DOMAIN = "generation-worker-state@1"
 _PINS_DOMAIN = "generation-worker-pins@1"
 _VALIDATORS_DOMAIN = "generation-worker-validators@1"
 _RUN_DOMAIN = "generation-worker-run@1"
+_EXECUTION_INPUT_DOMAIN = "generation-worker-execution-input@1"
 
 
 class GenerationWorkerTaskKind(StrEnum):
@@ -392,6 +393,7 @@ class ChildCapabilityObservation:
     verified_run: VerifiedRunRecord | None = None
     output: JsonValue | None = None
     failure_code: str | None = None
+    execution_input_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {
@@ -422,6 +424,10 @@ class ChildCapabilityObservation:
             object.__setattr__(self, "output", frozen)
         if self.failure_code is not None:
             _require_failure_code(self.failure_code)
+        if self.execution_input_fingerprint is not None:
+            _require_sha256(
+                self.execution_input_fingerprint, "execution_input_fingerprint"
+            )
 
         suspended = self.status is GenerationWorkerStatus.SUSPENDED
         completed = self.status is GenerationWorkerStatus.COMPLETED
@@ -567,6 +573,10 @@ _RECEIPT_FIELDS = {
 
 def fingerprint_output_schema(value: JsonObject) -> str:
     return _fingerprint("generation-worker-output-schema@1", value)
+
+
+def fingerprint_execution_inputs(value: JsonObject) -> str:
+    return _fingerprint(_EXECUTION_INPUT_DOMAIN, freeze_object(value))
 
 
 def fingerprint_output(value: JsonValue | None) -> str:

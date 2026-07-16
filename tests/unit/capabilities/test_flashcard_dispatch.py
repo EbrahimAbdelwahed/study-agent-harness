@@ -28,6 +28,7 @@ from study_agent.capabilities import (
     StudyCapabilityGateway,
     SuspendedCapabilityOutcome,
 )
+from study_agent.capabilities.worker_adapter import ProfiledWorkerExecutionDescriptor
 from study_agent.domain import (
     CorrelationId,
     CourseId,
@@ -61,6 +62,7 @@ from study_agent.playbooks import (
     ToolStep,
     ValidateStep,
     VersionPins,
+    playbook_definition_fingerprint,
 )
 from study_agent.ports import (
     CancellationToken,
@@ -87,6 +89,13 @@ from study_agent.skills import (
 from study_agent.skills.builtin import (
     PROPOSE_FLASHCARDS_INPUT_SCHEMA,
     PROPOSE_FLASHCARDS_OUTPUT_SCHEMA,
+)
+from study_agent.workers import (
+    GenerationWorkerTask,
+    GenerationWorkerTaskKind,
+    ValidationExpectation,
+    ValidationReceiptSource,
+    fingerprint_output_schema,
 )
 
 V1 = SemanticVersion.parse("1.0.0")
@@ -743,3 +752,54 @@ def test_profiled_binding_accepts_fallback_only_validator_union_with_explicit_st
         lambda *, context, inputs: (),
     )
     assert binding.skill.validators == skill.validators
+
+
+def test_profiled_worker_descriptor_keeps_receipt_out_of_public_payload() -> None:
+    binding = _profiled_binding(HYBRID_MACRO_DETAIL_V1)
+    receipt = ProfileSelectionReceipt(
+        HYBRID_MACRO_DETAIL_V1,
+        ProfileSelectionMode.DEFAULT,
+        ProfileSelectorKind.HOST,
+        PrincipalKind.SERVICE,
+        ProfileSelectionBasis(),
+    )
+    expectation_fingerprint = "a" * 64
+    task = GenerationWorkerTask(
+        "lesson-1:page-0",
+        GenerationWorkerTaskKind.FLASHCARD_BUNDLE,
+        binding.manifest.id,
+        binding.manifest.version,
+        binding.manifest_fingerprint,
+        binding.manifest.required_authority,
+        binding.pins,
+        playbook_definition_fingerprint(binding.playbook),
+        "en",
+        {},
+        None,
+        (f"profile-sha256:{expectation_fingerprint}",),
+        ("evidence:page-0",),
+        PUBLIC_INPUTS,
+        binding.manifest.output_schema,
+        fingerprint_output_schema(binding.manifest.output_schema),
+        (
+            ValidationExpectation(
+                "validate",
+                ValidationReceiptSource.VALIDATE_STEP,
+                "fixture",
+                "1.0.0",
+            ),
+        ),
+    )
+    descriptor = ProfiledWorkerExecutionDescriptor(
+        binding, receipt, expectation_fingerprint
+    )
+
+    execution = descriptor.execution_inputs(task)
+    assert task.capability_inputs() == PUBLIC_INPUTS
+    assert PROFILE_SELECTION_RECEIPT_INPUT not in task.capability_inputs()
+    assert execution[PROFILE_SELECTION_RECEIPT_INPUT] == receipt.to_bytes().decode()
+
+    with pytest.raises(ValueError, match="profile expectation"):
+        descriptor.execution_inputs(
+            replace(task, index_references=("profile-sha256:" + "b" * 64,))
+        )

@@ -21,6 +21,7 @@ from study_agent.flashcards.planning import (
 )
 from study_agent.flashcards.scope import FlashcardScopeIndexEntry, PreparedFlashcardScope
 from study_agent.grounding import EvidenceEnvelope
+from study_agent.pedagogy import ProfileSelectionReceipt
 from study_agent.playbooks import VersionPins
 from study_agent.skills import SemanticVersion
 from study_agent.state import canonical_json_bytes
@@ -38,6 +39,7 @@ MAX_LESSON_WORKER_CHECKPOINT_BYTES = 8 * 1024 * 1024
 
 _REQUEST_DOMAIN = "lesson-worker-request@1"
 _PROFILE_DOMAIN = "lesson-worker-profile-expectation@1"
+_PROFILE_SELECTION_DOMAIN = b"lesson-worker-profile-selection@1\0"
 _RESOLUTION_DOMAIN = "lesson-worker-resolved-evidence@1"
 _RUN_DOMAIN = "lesson-worker-run@1"
 _CHILD_DOMAIN = "lesson-worker-child@1"
@@ -131,7 +133,7 @@ class RevisionContentCommitment:
 
 @dataclass(frozen=True, slots=True)
 class ProfileTaskExpectation:
-    profile_fingerprint: str
+    profile_selection_receipt: ProfileSelectionReceipt
     capability_id: TutorCapabilityId
     capability_version: SemanticVersion
     manifest_fingerprint: str
@@ -143,8 +145,9 @@ class ProfileTaskExpectation:
     validations: tuple[ValidationExpectation, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.profile_selection_receipt, ProfileSelectionReceipt):
+            raise TypeError("profile_selection_receipt must use ProfileSelectionReceipt")
         for value, name in (
-            (self.profile_fingerprint, "profile_fingerprint"),
             (self.manifest_fingerprint, "manifest_fingerprint"),
             (self.definition_fingerprint, "definition_fingerprint"),
             (self.output_schema_fingerprint, "output_schema_fingerprint"),
@@ -180,13 +183,19 @@ class ProfileTaskExpectation:
         object.__setattr__(self, "validations", validations)
 
     @property
+    def profile_fingerprint(self) -> str:
+        return sha256(
+            _PROFILE_SELECTION_DOMAIN + self.profile_selection_receipt.to_bytes()
+        ).hexdigest()
+
+    @property
     def fingerprint(self) -> str:
         return _fingerprint(_PROFILE_DOMAIN, self.to_json())
 
     def to_json(self) -> JsonObject:
         return freeze_object(
             {
-                "profile_fingerprint": self.profile_fingerprint,
+                "profile_selection_receipt": self.profile_selection_receipt.to_json(),
                 "capability_id": self.capability_id.value,
                 "capability_version": str(self.capability_version),
                 "manifest_fingerprint": self.manifest_fingerprint,
@@ -204,7 +213,7 @@ class ProfileTaskExpectation:
         _exact(
             value,
             {
-                "profile_fingerprint",
+                "profile_selection_receipt",
                 "capability_id",
                 "capability_version",
                 "manifest_fingerprint",
@@ -218,7 +227,11 @@ class ProfileTaskExpectation:
             "profile task expectation",
         )
         return cls(
-            _string(value, "profile_fingerprint"),
+            ProfileSelectionReceipt.from_bytes(
+                canonical_json_bytes(
+                    _mapping(value["profile_selection_receipt"], "profile_selection_receipt")
+                )
+            ),
             TutorCapabilityId(_string(value, "capability_id")),
             SemanticVersion.parse(_string(value, "capability_version")),
             _string(value, "manifest_fingerprint"),

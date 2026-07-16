@@ -102,7 +102,7 @@ class StudyCapabilityGateway:
             self._require_start_retry(binding, inspected, frozen_inputs)
             return self._observed(binding, inspected, authority, retry)
 
-        dependencies = _dependencies(binding, context, frozen_inputs)
+        dependencies = _dependencies(binding, context, frozen_public_inputs)
         try:
             await self._engine.execute(
                 run_id=run_id,
@@ -177,7 +177,11 @@ class StudyCapabilityGateway:
             or inspected.next_step_index != continuation.next_step_index
         ):
             self._conflict("continuation does not identify the suspended generation")
-        dependencies = _dependencies(binding, context, continuation.inputs)
+        dependencies = _dependencies(
+            binding,
+            context,
+            _public_input_projection(binding, continuation.inputs),
+        )
         try:
             await self._engine.resume(
                 run_id=continuation.run_id,
@@ -489,6 +493,26 @@ def _dependencies(
             "capability dependency resolver returned duplicate identities",
         )
     return dependencies
+
+
+def _public_input_projection(
+    binding: CapabilityBinding | ProfiledCapabilityBinding, inputs: JsonObject
+) -> JsonObject:
+    properties = binding.manifest.input_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+            "capability manifest has no public input projection",
+        )
+    try:
+        projected = freeze_object({key: inputs[key] for key in properties})
+        validate_json(projected, binding.manifest.input_schema)
+    except (KeyError, SchemaValidationError, TypeError, ValueError) as error:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.CONFLICT,
+            "persisted capability inputs lost their public projection",
+        ) from error
+    return projected
 
 
 def _run_id(

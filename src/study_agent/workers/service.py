@@ -23,6 +23,7 @@ from .contracts import (
     GenerationWorkerReceipt,
     GenerationWorkerStatus,
     GenerationWorkerTask,
+    fingerprint_execution_inputs,
     fingerprint_output,
     fingerprint_run,
     fingerprint_store_state,
@@ -73,7 +74,8 @@ class _StoredWorkerState:
             or self.continuation.manifest_fingerprint != task.manifest_fingerprint
             or self.continuation.pins != task.pins
             or self.continuation.definition_fingerprint != task.definition_fingerprint
-            or self.continuation.inputs != task.capability_inputs()
+            or _public_execution_projection(task, self.continuation.inputs)
+            != task.capability_inputs()
         ):
             raise ValueError("stored continuation does not match worker task")
         if claimed != (self.response_bytes is not None and self.response_fingerprint is not None):
@@ -435,7 +437,10 @@ def _observation_binding_failure(
             or continuation.manifest_fingerprint != task.manifest_fingerprint
             or continuation.pins != task.pins
             or continuation.definition_fingerprint != task.definition_fingerprint
-            or continuation.inputs != task.capability_inputs()
+            or _public_execution_projection(task, continuation.inputs)
+            != task.capability_inputs()
+            or _observed_execution_fingerprint(observation, continuation.inputs)
+            != fingerprint_execution_inputs(continuation.inputs)
         ):
             return "child_continuation_mismatch"
     if observation.status is GenerationWorkerStatus.COMPLETED:
@@ -453,7 +458,9 @@ def _observation_binding_failure(
             run is None
             or run.pins != task.pins
             or run.definition_fingerprint != task.definition_fingerprint
-            or run.inputs != task.capability_inputs()
+            or _public_execution_projection(task, run.inputs) != task.capability_inputs()
+            or _observed_execution_fingerprint(observation, run.inputs)
+            != fingerprint_execution_inputs(run.inputs)
             or not all(
                 item.passed and item.disposition.value == "continue"
                 for item in observation.validations
@@ -476,10 +483,33 @@ def _observation_binding_failure(
             run is None
             or run.pins != task.pins
             or run.definition_fingerprint != task.definition_fingerprint
-            or run.inputs != task.capability_inputs()
+            or _public_execution_projection(task, run.inputs) != task.capability_inputs()
+            or _observed_execution_fingerprint(observation, run.inputs)
+            != fingerprint_execution_inputs(run.inputs)
         ):
             return "child_verified_run_provenance_invalid"
     return None
+
+
+def _public_execution_projection(
+    task: GenerationWorkerTask, execution_inputs: JsonObject
+) -> JsonObject:
+    public = task.capability_inputs()
+    keys = set(execution_inputs)
+    public_keys = set(public)
+    if keys not in (public_keys, public_keys | {"profile_selection_receipt"}):
+        return freeze_object({})
+    return freeze_object({key: execution_inputs[key] for key in public})
+
+
+def _observed_execution_fingerprint(
+    observation: ChildCapabilityObservation, execution_inputs: JsonObject
+) -> str | None:
+    if observation.execution_input_fingerprint is not None:
+        return observation.execution_input_fingerprint
+    if "profile_selection_receipt" in execution_inputs:
+        return None
+    return fingerprint_execution_inputs(execution_inputs)
 
 
 def _terminal_state(

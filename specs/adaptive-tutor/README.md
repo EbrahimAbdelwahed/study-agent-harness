@@ -1,17 +1,25 @@
 # Adaptive Tutor
 
 Status: Approved — implementation in progress
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
-and the next dependency-ready slice. TUT-04A/B/C0 are complete; the current
-parallel pickups are TUT-04C1 hybrid macro-detail and TUT-04C2 morphology-first
-profile implementations under ADR-0008/0009. Preserve the per-course event
-stream as canonical, keep next-action and per-request profile selection in the
-external tutor host, and do not add Anki/product/provider behavior, arbitrary
-model memory, or a global learner aggregate.
+and ADR-0010. TUT-04A/B/C0 plus the shared scope foundation are complete. The
+TUT-04C0A lesson generation planning, TUT-04C0B1 isolated-worker primitive,
+TUT-04C0B1A/B1B gateway-worker proof and profiled-execution commitments,
+TUT-04C0B2 lesson fan-out, and TUT-04E2 export v2 are complete. The
+dependency-ready pickups are TUT-04C1, TUT-04C2, and TUT-04D. C1/C2 must
+consume the persisted profile receipt through `ProfiledWorkerExecutionDescriptor`;
+it never enters the five-field public task payload or dependency resolution.
+C0B2 adds the planned-scope wrapper and resumable lesson fan-out
+after B1; C1/C2 start after B2 so they consume that exact wrapper. Treat the existing
+partial C1 files as provisional because they assume the superseded one-call
+scope shape. Preserve the per-course event stream as canonical, keep next-action
+and per-request profile selection in the external tutor host, and do not add
+Anki/product/provider behavior, arbitrary model memory, or a global learner
+aggregate.
 
 Global TODO:
 
@@ -109,6 +117,9 @@ Channel / UI
    fingerprint because they change future tutor behavior.
 10. API-key and subscription experiences are separate tutor-host adapters over
     the same core contracts.
+11. Flashcard generation is lesson-scoped but worker-bundled: deterministic
+    global index, coherent non-overlapping paragraph/topic bundles, fresh
+    provider-neutral worker contexts, and parsimony without a lesson card quota.
 
 ## Compatibility
 
@@ -155,6 +166,8 @@ TUT-07 is present.
 - Offline scripted-model tests remain the default; network tests are opt-in.
 - Existing lifecycle, replay, export, CLI, and exact seven-tool contracts stay
   green.
+- Main tutor traces contain compact generation summaries rather than raw lesson
+  evidence, worker scratch output, or detailed candidate pages.
 
 ## Non-goals
 
@@ -202,4 +215,5 @@ provenance, export allowlist, and ADR-0002. Resolved decisions:
 TUT-01 through TUT-06 must ship. TUT-07 should ship with one deterministic
 review policy if time permits. TUT-08 contains only the thin conversation-first
 consumer, evidence panels, demo fixture, eval report, and submission-quality
-documentation.
+documentation. TUT-04F must prove the same lesson/exam flows headlessly before
+TUT-08 binds a UI to them.

@@ -53,6 +53,7 @@ __all__ = [
     "FlashcardCapabilityDispatcher",
     "GatewayIsolatedCapabilityRunAdapter",
     "ProfiledCapabilityBinding",
+    "ProfiledWorkerExecutionDescriptor",
     "StaleCapabilityOutcome",
     "StudyCapabilityGateway",
     "StudyCapabilityRegistry",
@@ -69,8 +70,17 @@ __all__ = [
 def __getattr__(name: str) -> object:
     """Load the worker adapter without making capability contracts depend on workers."""
 
-    if name == "GatewayIsolatedCapabilityRunAdapter":
-        from .worker_adapter import GatewayIsolatedCapabilityRunAdapter
+    if name in {
+        "GatewayIsolatedCapabilityRunAdapter",
+        "ProfiledWorkerExecutionDescriptor",
+    }:
+        from .worker_adapter import (
+            GatewayIsolatedCapabilityRunAdapter,
+            ProfiledWorkerExecutionDescriptor,
+        )
 
-        return GatewayIsolatedCapabilityRunAdapter
+        return {
+            "GatewayIsolatedCapabilityRunAdapter": GatewayIsolatedCapabilityRunAdapter,
+            "ProfiledWorkerExecutionDescriptor": ProfiledWorkerExecutionDescriptor,
+        }[name]
     raise AttributeError(name)

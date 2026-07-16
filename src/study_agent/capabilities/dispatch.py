@@ -25,7 +25,11 @@ from study_agent.playbooks import (
     playbook_definition_fingerprint,
 )
 
-from .bindings import PROFILE_SELECTION_RECEIPT_INPUT, ProfiledCapabilityBinding
+from .bindings import (
+    PROFILE_SELECTION_RECEIPT_INPUT,
+    ProfiledCapabilityBinding,
+    profiled_execution_inputs,
+)
 from .builtin import PROPOSE_FLASHCARDS_MANIFEST
 from .contracts import (
     CapabilityContinuation,
@@ -104,7 +108,7 @@ class FlashcardCapabilityDispatcher:
                 _incompatible("persisted profile receipt does not own its playbook")
             if persisted != requested:
                 _conflict("idempotency identity was reused with another profile selection")
-            execution_inputs = _execution_inputs(public_inputs, persisted)
+            execution_inputs = profiled_execution_inputs(public_inputs, persisted)
             outcome = await self._gateway._start_bound(
                 bound, public_inputs, execution_inputs, context
             )
@@ -114,7 +118,7 @@ class FlashcardCapabilityDispatcher:
         outcome = await self._gateway._start_bound(
             bound,
             public_inputs,
-            _execution_inputs(public_inputs, requested),
+            profiled_execution_inputs(public_inputs, requested),
             context,
         )
         return _verified_candidate_outcome(outcome)
@@ -243,17 +247,6 @@ def _validate_continuation_summary(value: JsonValue) -> None:
     )
     if canonical != value:
         raise ValueError("continuation summary must be canonical compact JSON")
-
-
-def _execution_inputs(
-    public_inputs: JsonObject, receipt: ProfileSelectionReceipt
-) -> JsonObject:
-    return freeze_object(
-        {
-            **public_inputs,
-            PROFILE_SELECTION_RECEIPT_INPUT: receipt.to_bytes().decode("utf-8"),
-        }
-    )
 
 
 def _persisted_receipt(inspected: InspectedRunRecord) -> ProfileSelectionReceipt:

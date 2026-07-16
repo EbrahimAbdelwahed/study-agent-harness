@@ -35,6 +35,7 @@ from .contracts import (
     ObservedValidationReceipt,
     ValidationReceiptSource,
     VerifiedPromptReceipt,
+    fingerprint_execution_inputs,
     fingerprint_output,
     fingerprint_run,
     fingerprint_validations,
@@ -135,6 +136,7 @@ class VerifiedChildExecutionProof:
     model: TechnicalModelReceipt
     prompt: VerifiedPromptReceipt
     validations: tuple[ObservedValidationReceipt, ...]
+    execution_input_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, RunId):
@@ -145,6 +147,9 @@ class VerifiedChildExecutionProof:
         if not isinstance(self.pins, VersionPins):
             raise TypeError("proof pins must use VersionPins")
         _sha(self.input_fingerprint, "input fingerprint")
+        execution_fingerprint = self.execution_input_fingerprint or self.input_fingerprint
+        _sha(execution_fingerprint, "execution input fingerprint")
+        object.__setattr__(self, "execution_input_fingerprint", execution_fingerprint)
         output = freeze_json(self.output)
         object.__setattr__(self, "output", output)
         if self.output_fingerprint != fingerprint_output(output):
@@ -179,8 +184,7 @@ class VerifiedChildExecutionProof:
         return _fingerprint(_PROOF_DOMAIN, self.to_json())
 
     def to_json(self) -> JsonObject:
-        return freeze_object(
-            {
+        value: dict[str, JsonValue] = {
                 "run_id": str(self.run_id),
                 "status": self.status.value,
                 "definition_fingerprint": self.definition_fingerprint,
@@ -197,7 +201,9 @@ class VerifiedChildExecutionProof:
                 "prompt": self.prompt.to_json(),
                 "validations": tuple(item.to_json() for item in self.validations),
             }
-        )
+        if self.execution_input_fingerprint != self.input_fingerprint:
+            value["execution_input_fingerprint"] = self.execution_input_fingerprint
+        return freeze_object(value)
 
     def to_bytes(self) -> bytes:
         return canonical_json_bytes(self.to_json())
@@ -207,15 +213,18 @@ class VerifiedChildExecutionProof:
         if len(data) > MAX_STORED_STATE_BYTES:
             raise ValueError("verified child proof exceeds 512 KiB")
         value = _object(data, "verified child proof")
-        _exact(
-            value,
-            {
+        base_fields = {
                 "run_id", "status", "definition_fingerprint", "pins",
                 "input_fingerprint", "output", "output_fingerprint",
                 "read_dependencies", "tool_outputs", "model", "prompt", "validations",
-            },
-            "verified child proof",
+            }
+        if set(value) not in (base_fields, {*base_fields, "execution_input_fingerprint"}):
+            raise ValueError("verified child proof fields are not exact")
+        execution_fingerprint = value.get(
+            "execution_input_fingerprint", value["input_fingerprint"]
         )
+        if not isinstance(execution_fingerprint, str):
+            raise ValueError("execution input fingerprint must be text")
         proof = cls(
             RunId(_string(value, "run_id")),
             GenerationWorkerStatus(_string(value, "status")),
@@ -229,6 +238,7 @@ class VerifiedChildExecutionProof:
             _model(_mapping(value, "model")),
             _prompt(_mapping(value, "prompt")),
             tuple(_validation(item) for item in _array(value, "validations")),
+            execution_fingerprint,
         )
         if proof.to_bytes() != data:
             raise ValueError("verified child proof bytes are not canonical")
@@ -319,10 +329,12 @@ class VerifiedChildProofOwner:
         definition: PlaybookDefinition,
         output: JsonValue,
         parent: ExecutionContext,
+        execution_inputs: JsonObject | None = None,
     ) -> VerifiedChildExecutionProofView:
-        proof = _proof_from_run(task, run, definition, output)
+        exact_inputs = execution_inputs or task.capability_inputs()
+        proof = _proof_from_run(task, run, definition, output, exact_inputs)
         _verify(task, receipt, proof)
-        _verify_against_run(task, receipt, proof, run, definition)
+        _verify_against_run(task, receipt, proof, run, definition, exact_inputs)
         slot = _ProofSlot(
             task.fingerprint,
             generation_worker_authority_fingerprint(task, parent),
@@ -346,6 +358,7 @@ class VerifiedChildProofOwner:
         run_id: RunId,
         receipt: GenerationWorkerReceipt,
         parent: ExecutionContext,
+        execution_inputs: JsonObject | None = None,
     ) -> VerifiedChildExecutionProofView:
         if receipt.status is not GenerationWorkerStatus.COMPLETED:
             raise GenerationWorkerConflictError("proof lookup requires completed receipt")
@@ -359,6 +372,10 @@ class VerifiedChildProofOwner:
         ):
             raise GenerationWorkerConflictError("proof lookup identity changed")
         _verify(task, receipt, slot.proof)
+        if slot.proof.execution_input_fingerprint != _execution_commitment(
+            task, execution_inputs or task.capability_inputs()
+        ):
+            raise GenerationWorkerConflictError("proof execution inputs changed")
         return slot.proof
 
 
@@ -367,12 +384,13 @@ def _proof_from_run(
     run: VerifiedRunRecord,
     definition: PlaybookDefinition,
     output: JsonValue,
+    execution_inputs: JsonObject,
 ) -> VerifiedChildExecutionProof:
     if (
         run.status is not PlaybookRunStatus.COMPLETED
         or run.definition_fingerprint != task.definition_fingerprint
         or run.pins != task.pins
-        or run.inputs != task.capability_inputs()
+        or run.inputs != execution_inputs
         or playbook_definition_fingerprint(definition) != task.definition_fingerprint
     ):
         raise GenerationWorkerConflictError("engine run differs from worker task")
@@ -390,7 +408,16 @@ def _proof_from_run(
         model,
         prompt,
         validations,
+        _execution_commitment(task, execution_inputs),
     )
+
+
+def _execution_commitment(
+    task: GenerationWorkerTask, execution_inputs: JsonObject
+) -> str:
+    if execution_inputs == task.capability_inputs():
+        return task.payload_fingerprint
+    return fingerprint_execution_inputs(execution_inputs)
 
 
 def _verify(
@@ -463,13 +490,15 @@ def _verify_against_run(
     proof: VerifiedChildExecutionProof,
     run: VerifiedRunRecord,
     definition: PlaybookDefinition,
+    execution_inputs: JsonObject,
 ) -> None:
     if (
         not isinstance(run, VerifiedRunRecord)
         or run.status is not PlaybookRunStatus.COMPLETED
         or run.run_id != proof.run_id
         or run.definition_fingerprint != task.definition_fingerprint
-        or run.inputs != task.capability_inputs()
+        or run.inputs != execution_inputs
+        or proof.execution_input_fingerprint != _execution_commitment(task, execution_inputs)
         or run.pins != task.pins
         or run.read_dependencies != proof.read_dependencies
         or definition.id != task.pins.playbook.id

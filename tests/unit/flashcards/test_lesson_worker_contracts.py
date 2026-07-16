@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from hashlib import sha256
 
@@ -11,6 +12,7 @@ from study_agent.capabilities import TutorCapabilityId
 from study_agent.domain import (
     ChunkId,
     Citation,
+    PrincipalKind,
     RevisionId,
     RunId,
     SourceChunk,
@@ -40,6 +42,13 @@ from study_agent.flashcards.planning import (
     plan_flashcard_lesson,
 )
 from study_agent.grounding import EvidenceEnvelope
+from study_agent.pedagogy import (
+    HYBRID_MACRO_DETAIL_V1,
+    ProfileSelectionBasis,
+    ProfileSelectionMode,
+    ProfileSelectionReceipt,
+    ProfileSelectorKind,
+)
 from study_agent.playbooks import ToolBehaviorPin, VersionPins
 from study_agent.ports import (
     EvidenceStatus,
@@ -140,7 +149,13 @@ def _pins() -> VersionPins:
 
 def _profile(**changes: object) -> ProfileTaskExpectation:
     values: dict[str, object] = {
-        "profile_fingerprint": SHA_A,
+        "profile_selection_receipt": ProfileSelectionReceipt(
+            HYBRID_MACRO_DETAIL_V1,
+            ProfileSelectionMode.DEFAULT,
+            ProfileSelectorKind.HOST,
+            PrincipalKind.HUMAN,
+            ProfileSelectionBasis(),
+        ),
         "capability_id": TutorCapabilityId.PROPOSE_FLASHCARDS,
         "capability_version": V1,
         "manifest_fingerprint": SHA_B,
@@ -250,6 +265,12 @@ def test_request_round_trips_exactly_and_has_one_public_payload_transformation()
     request = _request()
 
     assert LessonWorkerRequest.from_bytes(request.to_bytes()) == request
+    assert "profile_selection_receipt" not in request.to_public_inputs()
+    profile_json = request.to_json()["profile_expectation"]
+    assert isinstance(profile_json, Mapping)
+    assert profile_json["profile_selection_receipt"] == (
+        request.profile_expectation.profile_selection_receipt.to_json()
+    )
     assert request.to_public_inputs() == {
         "query": "Generate grounded cards",
         "scope": "the uploaded lesson",
@@ -323,7 +344,13 @@ def test_profile_expectation_fingerprint_commits_every_returned_task_contract() 
         "additionalProperties": False,
     }
     mutations = (
-        replace(expected, profile_fingerprint=SHA_B),
+        replace(
+            expected,
+            profile_selection_receipt=replace(
+                expected.profile_selection_receipt,
+                selector_authority=PrincipalKind.SERVICE,
+            ),
+        ),
         replace(expected, manifest_fingerprint=SHA_C),
         replace(expected, required_authority=("source.read", "study:read")),
         replace(expected, definition_fingerprint=SHA_A),

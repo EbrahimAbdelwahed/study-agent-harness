@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from study_agent.domain import ExecutionContext, RunId
-from study_agent.domain._validation import JsonValue
+from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.pedagogy import ProfileSelectionReceipt
 from study_agent.playbooks import (
     ModelStep,
     PlaybookRunStatus,
@@ -24,6 +26,7 @@ from study_agent.workers.contracts import (
     ObservedValidationReceipt,
     ValidationReceiptSource,
     VerifiedPromptReceipt,
+    fingerprint_execution_inputs,
     fingerprint_output,
     fingerprint_run,
     fingerprint_validations,
@@ -36,7 +39,11 @@ from study_agent.workers.proof import (
     verified_child_value_fingerprint,
 )
 
-from .bindings import CapabilityBinding, ProfiledCapabilityBinding
+from .bindings import (
+    CapabilityBinding,
+    ProfiledCapabilityBinding,
+    profiled_execution_inputs,
+)
 from .contracts import (
     CancelledCapabilityOutcome,
     CapabilityContinuation,
@@ -52,6 +59,32 @@ from .contracts import (
 from .gateway import StudyCapabilityGateway
 
 
+@dataclass(frozen=True, slots=True)
+class ProfiledWorkerExecutionDescriptor:
+    """Request-scoped trusted inputs for one profiled worker execution."""
+
+    binding: ProfiledCapabilityBinding
+    selection_receipt: ProfileSelectionReceipt
+    profile_expectation_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.binding, ProfiledCapabilityBinding):
+            raise TypeError("profiled worker binding is invalid")
+        if not isinstance(self.selection_receipt, ProfileSelectionReceipt):
+            raise TypeError("profiled worker selection receipt is invalid")
+        if self.selection_receipt.profile != self.binding.profile:
+            raise ValueError("profiled worker receipt differs from binding profile")
+        value = self.profile_expectation_fingerprint
+        if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            raise ValueError("profile expectation fingerprint must be lowercase sha256")
+
+    def execution_inputs(self, task: GenerationWorkerTask) -> JsonObject:
+        reference = f"profile-sha256:{self.profile_expectation_fingerprint}"
+        if reference not in task.index_references:
+            raise ValueError("worker task does not commit the profile expectation")
+        return profiled_execution_inputs(task.capability_inputs(), self.selection_receipt)
+
+
 class GatewayIsolatedCapabilityRunAdapter:
     """Drive one trusted capability binding and preserve its sanitized proof."""
 
@@ -59,23 +92,23 @@ class GatewayIsolatedCapabilityRunAdapter:
         self,
         *,
         gateway: StudyCapabilityGateway,
-        bindings: tuple[CapabilityBinding | ProfiledCapabilityBinding, ...],
+        bindings: tuple[CapabilityBinding | ProfiledWorkerExecutionDescriptor, ...],
         proof_owner: VerifiedChildProofOwner,
     ) -> None:
         if not isinstance(gateway, StudyCapabilityGateway):
             raise TypeError("worker adapter gateway must be StudyCapabilityGateway")
         values = tuple(bindings)
         if not values or not all(
-            isinstance(item, (CapabilityBinding, ProfiledCapabilityBinding))
+            isinstance(item, (CapabilityBinding, ProfiledWorkerExecutionDescriptor))
             for item in values
         ):
             raise ValueError("worker adapter requires trusted capability bindings")
         identities = tuple(
             (
-                item.manifest.id,
-                item.manifest.version,
-                item.manifest_fingerprint,
-                playbook_definition_fingerprint(item.playbook),
+                _descriptor_binding(item).manifest.id,
+                _descriptor_binding(item).manifest.version,
+                _descriptor_binding(item).manifest_fingerprint,
+                playbook_definition_fingerprint(_descriptor_binding(item).playbook),
             )
             for item in values
         )
@@ -90,17 +123,17 @@ class GatewayIsolatedCapabilityRunAdapter:
     async def start(
         self, task: GenerationWorkerTask, context: ExecutionContext
     ) -> ChildCapabilityObservation:
-        binding = self._binding(task)
+        binding, execution_inputs = self._selection(task)
         try:
             outcome = await self._gateway._start_bound(
                 binding,
                 task.capability_inputs(),
-                task.capability_inputs(),
+                execution_inputs,
                 context,
             )
         except CapabilityGatewayError as error:
-            return self._gateway_failure(task, None, error)
-        return self._observe(task, binding, outcome, context)
+            return self._gateway_failure(task, None, error, execution_inputs)
+        return self._observe(task, binding, outcome, context, execution_inputs)
 
     async def resume(
         self,
@@ -109,40 +142,51 @@ class GatewayIsolatedCapabilityRunAdapter:
         response: JsonValue,
         context: ExecutionContext,
     ) -> ChildCapabilityObservation:
-        binding = self._binding(task)
-        self._require_continuation(task, continuation)
+        binding, execution_inputs = self._selection(task)
+        self._require_continuation(task, continuation, execution_inputs)
         try:
             outcome = await self._gateway._resume_bound(
                 binding, continuation, response, context
             )
         except CapabilityGatewayError as error:
-            return self._gateway_failure(task, continuation.run_id, error)
-        return self._observe(task, binding, outcome, context)
+            return self._gateway_failure(
+                task, continuation.run_id, error, execution_inputs
+            )
+        return self._observe(task, binding, outcome, context, execution_inputs)
 
-    def _binding(
+    def _selection(
         self, task: GenerationWorkerTask
-    ) -> CapabilityBinding | ProfiledCapabilityBinding:
+    ) -> tuple[CapabilityBinding | ProfiledCapabilityBinding, JsonObject]:
         if not isinstance(task, GenerationWorkerTask):
             raise TypeError("worker task must be GenerationWorkerTask")
         matches = tuple(
             item
             for item in self._bindings
-            if item.manifest.id is task.capability_id
-            and item.manifest.version == task.capability_version
-            and item.manifest_fingerprint == task.manifest_fingerprint
-            and item.pins == task.pins
-            and playbook_definition_fingerprint(item.playbook)
+            if _descriptor_binding(item).manifest.id is task.capability_id
+            and _descriptor_binding(item).manifest.version == task.capability_version
+            and _descriptor_binding(item).manifest_fingerprint == task.manifest_fingerprint
+            and _descriptor_binding(item).pins == task.pins
+            and playbook_definition_fingerprint(_descriptor_binding(item).playbook)
             == task.definition_fingerprint
-            and item.manifest.output_schema == task.output_schema
-            and item.manifest.required_authority == task.required_authority
+            and _descriptor_binding(item).manifest.output_schema == task.output_schema
+            and _descriptor_binding(item).manifest.required_authority == task.required_authority
         )
         if len(matches) != 1:
             raise ValueError("worker task does not select one exact trusted binding")
-        return matches[0]
+        selected = matches[0]
+        binding = _descriptor_binding(selected)
+        execution_inputs = (
+            selected.execution_inputs(task)
+            if isinstance(selected, ProfiledWorkerExecutionDescriptor)
+            else task.capability_inputs()
+        )
+        return binding, execution_inputs
 
     @staticmethod
     def _require_continuation(
-        task: GenerationWorkerTask, continuation: CapabilityContinuation
+        task: GenerationWorkerTask,
+        continuation: CapabilityContinuation,
+        execution_inputs: JsonObject,
     ) -> None:
         if not isinstance(continuation, CapabilityContinuation):
             raise TypeError("worker continuation is invalid")
@@ -152,7 +196,7 @@ class GatewayIsolatedCapabilityRunAdapter:
             or continuation.manifest_fingerprint != task.manifest_fingerprint
             or continuation.definition_fingerprint != task.definition_fingerprint
             or continuation.pins != task.pins
-            or continuation.inputs != task.capability_inputs()
+            or continuation.inputs != execution_inputs
         ):
             raise ValueError("worker task and continuation bindings differ")
 
@@ -162,6 +206,7 @@ class GatewayIsolatedCapabilityRunAdapter:
         binding: CapabilityBinding | ProfiledCapabilityBinding,
         outcome: CapabilityOutcome,
         context: ExecutionContext,
+        execution_inputs: JsonObject,
     ) -> ChildCapabilityObservation:
         if isinstance(outcome, SuspendedCapabilityOutcome):
             return _base(
@@ -169,6 +214,7 @@ class GatewayIsolatedCapabilityRunAdapter:
                 GenerationWorkerStatus.SUSPENDED,
                 outcome.run_id,
                 continuation=outcome.continuation,
+                execution_inputs=execution_inputs,
             )
         if isinstance(outcome, CancelledCapabilityOutcome):
             return _base(
@@ -176,6 +222,7 @@ class GatewayIsolatedCapabilityRunAdapter:
                 GenerationWorkerStatus.CANCELLED,
                 outcome.run_id,
                 failure_code="gateway_cancelled",
+                execution_inputs=execution_inputs,
             )
         if isinstance(outcome, StaleCapabilityOutcome):
             return _base(
@@ -183,6 +230,7 @@ class GatewayIsolatedCapabilityRunAdapter:
                 GenerationWorkerStatus.STALE,
                 outcome.run_id,
                 failure_code="gateway_stale",
+                execution_inputs=execution_inputs,
             )
         if isinstance(outcome, FailedCapabilityOutcome):
             return _base(
@@ -190,6 +238,7 @@ class GatewayIsolatedCapabilityRunAdapter:
                 GenerationWorkerStatus.FAILED,
                 outcome.run_id,
                 failure_code="gateway_failed",
+                execution_inputs=execution_inputs,
             )
         if isinstance(outcome, TerminatedCapabilityOutcome):
             return _base(
@@ -198,11 +247,14 @@ class GatewayIsolatedCapabilityRunAdapter:
                 outcome.run.run_id,
                 verified_run=outcome.run,
                 failure_code="gateway_terminated",
+                execution_inputs=execution_inputs,
             )
         if not isinstance(outcome, CompletedCapabilityOutcome):
             raise TypeError("gateway returned an unknown capability outcome")
         try:
-            observation, _ = _completed_observation(task, binding, outcome)
+            observation, _ = _completed_observation(
+                task, binding, outcome, execution_inputs
+            )
             receipt = _expected_completed_receipt(task, observation)
             self._proof_owner.create(
                 task,
@@ -211,6 +263,7 @@ class GatewayIsolatedCapabilityRunAdapter:
                 binding.playbook,
                 outcome.output,
                 context,
+                execution_inputs,
             )
             return observation
         except Exception:
@@ -219,6 +272,7 @@ class GatewayIsolatedCapabilityRunAdapter:
                 GenerationWorkerStatus.FAILED,
                 outcome.run.run_id,
                 failure_code="child_proof_invalid",
+                execution_inputs=execution_inputs,
             )
 
     @staticmethod
@@ -226,15 +280,22 @@ class GatewayIsolatedCapabilityRunAdapter:
         task: GenerationWorkerTask,
         run_id: RunId | None,
         error: CapabilityGatewayError,
+        execution_inputs: JsonObject,
     ) -> ChildCapabilityObservation:
         selected = run_id or _failed_run_id(task)
         if error.code is CapabilityGatewayErrorCode.IN_PROGRESS and error.retryable:
-            return _base(task, GenerationWorkerStatus.RUNNING, selected)
+            return _base(
+                task,
+                GenerationWorkerStatus.RUNNING,
+                selected,
+                execution_inputs=execution_inputs,
+            )
         return _base(
             task,
             GenerationWorkerStatus.FAILED,
             selected,
             failure_code=f"gateway_{error.code.value}",
+            execution_inputs=execution_inputs,
         )
 
 
@@ -242,6 +303,7 @@ def _completed_observation(
     task: GenerationWorkerTask,
     binding: CapabilityBinding | ProfiledCapabilityBinding,
     outcome: CompletedCapabilityOutcome,
+    execution_inputs: JsonObject,
 ) -> tuple[ChildCapabilityObservation, VerifiedChildExecutionProof]:
     run = outcome.run
     if (
@@ -249,7 +311,7 @@ def _completed_observation(
         or run.run_id != outcome.run.run_id
         or run.definition_fingerprint != task.definition_fingerprint
         or run.pins != task.pins
-        or run.inputs != task.capability_inputs()
+        or run.inputs != execution_inputs
     ):
         raise ValueError("verified gateway run differs from worker task")
     steps = {step.id: step for step in binding.playbook.steps}
@@ -313,6 +375,7 @@ def _completed_observation(
         prompt,
         verified_run=run,
         output=outcome.output,
+        execution_input_fingerprint=fingerprint_execution_inputs(execution_inputs),
     )
     proof = VerifiedChildExecutionProof(
         run.run_id,
@@ -327,6 +390,11 @@ def _completed_observation(
         models[0],
         prompt,
         observed,
+        (
+            task.payload_fingerprint
+            if execution_inputs == task.capability_inputs()
+            else fingerprint_execution_inputs(execution_inputs)
+        ),
     )
     return observation, proof
 
@@ -464,6 +532,7 @@ def _base(
     continuation: CapabilityContinuation | None = None,
     verified_run: VerifiedRunRecord | None = None,
     failure_code: str | None = None,
+    execution_inputs: JsonObject | None = None,
 ) -> ChildCapabilityObservation:
     return ChildCapabilityObservation(
         status,
@@ -477,7 +546,16 @@ def _base(
         continuation=continuation,
         verified_run=verified_run,
         failure_code=failure_code,
+        execution_input_fingerprint=fingerprint_execution_inputs(
+            execution_inputs if execution_inputs is not None else task.capability_inputs()
+        ),
     )
+
+
+def _descriptor_binding(
+    value: CapabilityBinding | ProfiledWorkerExecutionDescriptor,
+) -> CapabilityBinding | ProfiledCapabilityBinding:
+    return value.binding if isinstance(value, ProfiledWorkerExecutionDescriptor) else value
 
 
 def _failed_run_id(task: GenerationWorkerTask) -> RunId:

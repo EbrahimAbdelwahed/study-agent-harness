@@ -16,6 +16,7 @@ from .contracts import (
     ValidationExpectation,
     ValidationReceiptSource,
     VerifiedPromptReceipt,
+    fingerprint_execution_inputs,
     fingerprint_output_schema,
 )
 from .proof import (
@@ -59,6 +60,7 @@ __all__ = [
     "VerifiedToolOutput",
     "WorkerCompactView",
     "WorkerDetailView",
+    "fingerprint_execution_inputs",
     "fingerprint_output_schema",
     "generation_worker_authority_fingerprint",
     "generation_worker_child_context",
