@@ -28,6 +28,11 @@ verified-child execution-proof path for trusted downstream owners.
 - Export `generation_worker_authority_fingerprint(task, parent) -> str` from the
   worker package by renaming the current B1 algorithm without changing bytes.
   B1 and proof call this exact helper.
+- Export the existing pure B1 derivation as
+  `generation_worker_child_context(task, parent) -> ExecutionContext` from the
+  worker package without changing correlation/idempotency domains or bytes. B1
+  itself calls this public helper. Downstream proof consumers use it instead of
+  duplicating child-context derivation.
 - Widen the inward port only to
   `resume(task, continuation, response, context)`. B1 passes the exact task
   decoded from durable state on initial resume and every claimed-response retry.
@@ -79,9 +84,10 @@ verified-child execution-proof path for trusted downstream owners.
   creates/observes the slot. Codec/oversize/store/conflict failure
   returns sanitized FAILED, so B1 cannot persist completion without proof. Crash
   after create recovers by identical gateway/owner retry.
-- `VerifiedChildProofPort.load(task, run_id, receipt, parent)` requires the exact
+- `VerifiedChildProofOwner.load(task, run_id, receipt, context)` requires the exact
   `GenerationWorkerTask`, verifies its fingerprint against the owner slot, and
-  recomputes authority with the shared helper. It then verifies receipt plus
+  recomputes authority with the shared helper using the supplied exact child
+  context. It then verifies receipt plus
   every task/pin/input/output/validator/run/prompt commitment against the slot.
   Only exact task plus completed receipt returns a sanitized view. Never recover
   task/raw inputs from proof storage. Proof is operational, read-only,

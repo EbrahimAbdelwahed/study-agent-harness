@@ -27,6 +27,8 @@ proof required by TUT-04D and TUT-04E1.
 - [ ] Engine, gateway, dispatch, and worker task factories use one public pure
   playbook-definition fingerprint helper; B1 and proof use one public pure
   worker-authority fingerprint helper. Existing bytes remain unchanged.
+- [ ] B1 and downstream proof consumers use one public pure child-context helper;
+  correlation/idempotency/context derivation is not duplicated.
 - [ ] Durable `VerifiedChildExecutionProof` contains only run/status/definition/
   pins, input fingerprint, exact public output, ordered dependencies,
   allowlisted completed tool outputs, bounded technical model receipt, prompt

@@ -1,33 +1,26 @@
 # Adaptive Tutor
 
 Status: Approved — implementation in progress
-Last updated: 2026-07-16
+Last updated: 2026-07-18
 
 ## Next Agent Prompt
 
 Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
-and ADR-0010. TUT-04A/B/C0 plus the shared scope foundation are complete. The
-TUT-04C0A lesson generation planning, TUT-04C0B1 isolated-worker primitive,
-TUT-04C0B1A/B1B gateway-worker proof and profiled-execution commitments,
-TUT-04C0B2 lesson fan-out, and TUT-04E2 export v2 are complete. The
-dependency-ready pickups are TUT-04C1, TUT-04C2, and TUT-04D. C1/C2 must
-consume the persisted profile receipt through `ProfiledWorkerExecutionDescriptor`;
-it never enters the five-field public task payload or dependency resolution.
-C0B2 adds the planned-scope wrapper and resumable lesson fan-out
-after B1; C1/C2 start after B2 so they consume that exact wrapper. Treat the existing
-partial C1 files as provisional because they assume the superseded one-call
-scope shape. Preserve the per-course event stream as canonical, keep next-action
-and per-request profile selection in the external tutor host, and do not add
-Anki/product/provider behavior, arbitrary model memory, or a global learner
-aggregate.
+ADR-0010, and the TUT-04F headless closure bead. TUT-04 and TUT-05 are complete.
+The next adaptive-tutor lanes are TUT-06B/TUT-06C for the reference host and
+TUT-07A for recall; decide their order before implementation. The separate
+capability-gap feedback lane has GAP-01 and optional GAP-04A dependency-ready.
+Preserve the per-course event stream as canonical, keep next-action selection
+in the external tutor host, and do not add Anki/product/provider behavior,
+arbitrary model memory, or a global learner aggregate.
 
 Global TODO:
 
 - [x] [TUT-01 — progressive study context](slices/01-progressive-study-context.md)
 - [x] [TUT-02 — tutor turns and snapshot](slices/02-tutor-turns-and-snapshot.md)
 - [x] [TUT-03 — capability gateway](slices/03-capability-gateway.md)
-- [ ] [TUT-04 — study artifact proposals](slices/04-study-artifact-proposals.md)
-- [ ] [TUT-05 — assessment and learner evidence](slices/05-assessment-and-learner-evidence.md)
+- [x] [TUT-04 — study artifact proposals](slices/04-study-artifact-proposals.md)
+- [x] [TUT-05 — assessment and learner evidence](slices/05-assessment-and-learner-evidence.md)
 - [ ] [TUT-06 — OpenAI reference tutor host](slices/06-openai-reference-tutor-host.md)
 - [ ] [TUT-07 — recall and scheduling](slices/07-recall-and-scheduling.md)
 - [ ] [TUT-08 — Build Week product shell](slices/08-build-week-product-shell.md)

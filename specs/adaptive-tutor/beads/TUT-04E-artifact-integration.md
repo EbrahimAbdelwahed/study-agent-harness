@@ -1,6 +1,6 @@
 # Task Bead: TUT-04E verified commit and export integration
 
-Status: Blocked on TUT-04A and TUT-04B
+Status: Done
 Priority: P0
 Type: contract
 Depends On: TUT-04A, TUT-04B
@@ -19,6 +19,10 @@ survives repository replay plus explicit credential-free export v2.
 
 - [ ] Generated commits retrieve verified run output and resolve temporary graph
   keys to canonical identities without exposing a raw bypass.
+- [ ] Lesson proposals may span multiple verified child pages; each committed
+  page proves membership in the same plan/profile/coordinator receipt and exact
+  same-page parent linkage. Lesson-overview-to-bundle associations remain
+  verified coordinator metadata; v1 has no artifact parent across pages.
 - [ ] Runtime composition roots replay artifact events and old repositories.
 - [ ] Existing export v1 golden bytes/file set remain unchanged; explicit v2
   retains artifact history and public provenance with required redaction.

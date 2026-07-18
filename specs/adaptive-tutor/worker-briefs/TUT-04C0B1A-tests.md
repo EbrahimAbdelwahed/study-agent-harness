@@ -24,6 +24,8 @@ atomic proof ownership under retry/restart/race.
 - Public definition helper preserves all golden values and engine/gateway/
   dispatch use it directly. Shared authority helper preserves B1 golden values
   and is used by B1/proof.
+- Public child-context helper preserves B1 correlation/idempotency/context
+  goldens, B1 uses it directly, and consumers cannot duplicate its derivation.
 - B1 passes the exact durable task on first resume, claimed-response retry, and
   crash recovery. Changed task/continuation conflicts; no task registry exists.
 - Recording gateway covers all outcomes/in-progress with one gateway call and
@@ -38,7 +40,7 @@ atomic proof ownership under retry/restart/race.
 - Even with an exact task/authority/B1 receipt, changing recovered dependencies,
   a declared tool output/step/tool/value, or model id/response id/usage fails
   before ownership; stored proof is derived from the exact recovered run.
-- Proof load requires exact task + run + completed receipt + parent, rejects a
+- Proof load requires exact task + run + completed receipt + child context, rejects a
   changed task before returning a view, and recomputes shared authority. Assert
   owner bytes contain only task fingerprint—not task bytes or raw inputs.
 - One child-run owner slot: identical retry/restart succeeds, competing receipt/
