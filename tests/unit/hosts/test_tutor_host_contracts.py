@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 import pytest
@@ -33,6 +34,7 @@ from study_agent.hosts import (
     TutorStopReason,
     decision_fingerprint,
     decision_from_bytes,
+    decision_schema,
     decision_to_bytes,
 )
 
@@ -109,6 +111,23 @@ def test_context_round_trip_is_canonical_and_every_binding_changes_fingerprint()
         noncanonical += b" "
     with pytest.raises(ValueError, match="canonical"):
         TutorHostContext.from_bytes(noncanonical)
+
+
+def test_decision_schema_is_closed_and_context_advertised() -> None:
+    schema = decision_schema(_context())
+    assert schema["type"] == "object"
+    assert schema["required"] == ("decision",)
+    assert schema["additionalProperties"] is False
+    properties = schema["properties"]
+    assert isinstance(properties, Mapping)
+    decision = properties["decision"]
+    assert isinstance(decision, Mapping)
+    branches = decision["anyOf"]
+    assert isinstance(branches, tuple)
+    assert len(branches) == 5
+    serialized = json.dumps(schema, sort_keys=True, default=list)
+    assert "grounding.ask" in serialized
+    assert "provider" not in serialized
 
 
 def test_context_rejects_sequence_owner_order_and_continuation_mismatches() -> None:

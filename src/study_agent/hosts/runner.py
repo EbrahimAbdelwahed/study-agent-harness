@@ -37,7 +37,11 @@ from study_agent.domain import (
 )
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_json, freeze_object
 from study_agent.playbooks import ReadDependency, ToolBehaviorPin, VersionPins
-from study_agent.ports.tutor_host import TutorDecisionPort, TutorInterruptionToken
+from study_agent.ports.tutor_host import (
+    RetryableTutorDecisionError,
+    TutorDecisionPort,
+    TutorInterruptionToken,
+)
 from study_agent.ports.tutor_runner import (
     TutorCapabilityGatewayPort,
     TutorContinuationStore,
@@ -84,10 +88,6 @@ class TutorHostRunStatus(StrEnum):
     STOPPED = "stopped"
     INTERRUPTED = "interrupted"
     BUDGET_EXHAUSTED = "budget_exhausted"
-
-
-class RetryableTutorDecisionError(RuntimeError):
-    """A provider interruption that is safe for the runner to retry."""
 
 
 class _DecisionBudgetExhausted(RuntimeError):

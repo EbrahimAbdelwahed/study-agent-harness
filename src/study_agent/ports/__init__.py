@@ -71,7 +71,11 @@ from .storage import (
 )
 from .study_context import StudyContextViewPort
 from .tools import StudyTool
-from .tutor_host import TutorDecisionPort, TutorInterruptionToken
+from .tutor_host import (
+    RetryableTutorDecisionError,
+    TutorDecisionPort,
+    TutorInterruptionToken,
+)
 from .tutor_runner import (
     TutorCapabilityGatewayPort,
     TutorContinuationStore,
@@ -120,6 +124,7 @@ __all__ = [
     "RetrievalEvidenceSet",
     "RetrievalPort",
     "RetrievalQuery",
+    "RetryableTutorDecisionError",
     "RunStore",
     "ServiceDecisionPolicyPort",
     "SessionNotFoundError",

@@ -414,6 +414,93 @@ def decision_to_json(decision: TutorDecision) -> JsonObject:
     raise TypeError("unsupported tutor decision")
 
 
+def decision_schema(context: TutorHostContext) -> JsonObject:
+    """Build the exact provider-neutral structured decision schema for ``context``.
+
+    Responses structured outputs require an object root.  Every branch is closed
+    and is derived solely from the already-redacted context; capability and
+    dialogue branches are emitted only when the context advertises them.
+    """
+
+    branches: list[JsonObject] = [
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": (TutorDecisionKind.ASK_LEARNER.value,)},
+                "question": {"type": "string", "minLength": 1, "maxLength": MAX_QUESTION_TEXT},
+            },
+            "required": ("kind", "question"),
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": (TutorDecisionKind.ASSISTANT_MESSAGE.value,),
+                },
+                "message": {"type": "string", "minLength": 1, "maxLength": MAX_HOST_TEXT},
+            },
+            "required": ("kind", "message"),
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": (TutorDecisionKind.STOP.value,)},
+                "reason": {
+                    "type": "string",
+                    "enum": tuple(reason.value for reason in TutorStopReason),
+                },
+            },
+            "required": ("kind", "reason"),
+            "additionalProperties": False,
+        },
+    ]
+    for capability in context.advertised_capabilities:
+        branches.append(
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": (TutorDecisionKind.START_CAPABILITY.value,),
+                    },
+                    "capability_id": {"type": "string", "enum": (capability.id,)},
+                    "inputs": capability.input_schema,
+                },
+                "required": ("kind", "capability_id", "inputs"),
+                "additionalProperties": False,
+            }
+        )
+    pending = context.pending_continuation
+    if pending is not None:
+        branches.append(
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": (TutorDecisionKind.ANSWER_DIALOGUE.value,),
+                    },
+                    "continuation_fingerprint": {
+                        "type": "string",
+                        "enum": (pending.fingerprint,),
+                    },
+                    "response": pending.response_schema,
+                },
+                "required": ("kind", "continuation_fingerprint", "response"),
+                "additionalProperties": False,
+            }
+        )
+    return {
+        "type": "object",
+        "properties": {"decision": {"anyOf": tuple(branches)}},
+        "required": ("decision",),
+        "additionalProperties": False,
+    }
+
+
 def decision_fingerprint(decision: TutorDecision) -> str:
     return _fingerprint("study-agent-tutor-decision-v1", decision_to_json(decision))
 
@@ -686,6 +773,7 @@ __all__ = [
     "TutorStopReason",
     "decision_fingerprint",
     "decision_from_bytes",
+    "decision_schema",
     "decision_to_bytes",
     "decision_to_json",
     "validate_decision",

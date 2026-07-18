@@ -128,6 +128,20 @@ generic adapters while the domain, skills, playbooks, and CLI remain unchanged.
 Use `study-agent init --help` for the adapter-setting syntax. Never put an API
 key in a model setting, committed file, command transcript, or export.
 
+### Reference tutor host
+
+The bounded host can be exercised offline, without an SDK, key, or network:
+
+```bash
+PYTHONPATH=src .venv/bin/python examples/reference_tutor_host.py
+```
+
+The [reference tutor host guide](docs/reference-tutor-host.md) documents the
+same runner seam used by scripted and recorded Responses fixtures, optional
+OpenAI API-key setup, `store=False` privacy behavior, configurable model ids,
+retry/stale/file duties, costs, and the explicit lack of ChatGPT subscription
+support.
+
 ## Recovery and interruption semantics
 
 Lifecycle recovery always starts from current evidence: run `manifest status`,

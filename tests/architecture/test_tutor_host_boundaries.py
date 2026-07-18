@@ -105,20 +105,27 @@ def test_existing_state_and_behavior_owners_do_not_depend_on_tutor_hosts() -> No
 
 def test_decision_port_exposes_only_effect_free_decision_and_interruption_methods() -> None:
     tree = ast.parse((ROOT / "ports" / "tutor_host.py").read_text(encoding="utf-8"))
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
     protocols = {
         node.name: {
             child.name
             for child in node.body
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        for node in tree.body
-        if isinstance(node, ast.ClassDef)
+        for node in classes
+        if any(isinstance(base, ast.Name) and base.id == "Protocol" for base in node.bases)
+    }
+    non_protocol_classes = {
+        node.name
+        for node in classes
+        if not any(isinstance(base, ast.Name) and base.id == "Protocol" for base in node.bases)
     }
 
     assert protocols == {
         "TutorInterruptionToken": {"is_interrupted"},
         "TutorDecisionPort": {"decide"},
     }
+    assert non_protocol_classes == {"RetryableTutorDecisionError"}
     source = (ROOT / "ports" / "tutor_host.py").read_text(encoding="utf-8").lower()
     for forbidden in ("event_store", "filesystem", "gateway", "persist", "write", "model"):
         assert forbidden not in source
@@ -132,3 +139,14 @@ def test_runner_ports_are_explicit_and_do_not_add_state_owners() -> None:
     assert "class TutorContinuationStore" in source
     for forbidden in ("event_store", "filesystem", "sqlite3", "requests", "openai"):
         assert forbidden not in source.lower()
+
+
+def test_reference_closure_reuses_one_runner_and_keeps_provider_optional() -> None:
+    example = (ROOT.parents[1] / "examples" / "reference_tutor_host.py").read_text(
+        encoding="utf-8"
+    )
+    assert "TutorHostRunner" in example
+    assert "ScriptedTutorDecisionPort" in example
+    assert "OpenAIResponsesTutorDecisionPort" in example
+    assert "subprocess" not in example
+    assert "import requests" not in example

@@ -1,6 +1,6 @@
 # Task Bead: GAP-01 capability-gap contracts and operational registry
 
-Status: Approved — dependency-ready
+Status: Essential tracer implemented — full bead remains open
 Priority: P0
 Type: tracer-bullet
 Depends On: GAP-00

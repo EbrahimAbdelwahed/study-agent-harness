@@ -12,6 +12,10 @@ class TutorInterruptionToken(Protocol):
     def is_interrupted(self) -> bool: ...
 
 
+class RetryableTutorDecisionError(RuntimeError):
+    """A provider failure that the bounded host runner may retry."""
+
+
 class TutorDecisionPort(Protocol):
     async def decide(
         self,
@@ -20,4 +24,8 @@ class TutorDecisionPort(Protocol):
     ) -> TutorDecision: ...
 
 
-__all__ = ["TutorDecisionPort", "TutorInterruptionToken"]
+__all__ = [
+    "RetryableTutorDecisionError",
+    "TutorDecisionPort",
+    "TutorInterruptionToken",
+]

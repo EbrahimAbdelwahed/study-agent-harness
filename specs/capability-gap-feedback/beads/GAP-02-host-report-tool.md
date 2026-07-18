@@ -1,6 +1,6 @@
 # Task Bead: GAP-02 agent-facing host report tool
 
-Status: Approved — blocked on GAP-01 implementation
+Status: Essential tracer implemented — full bead remains open
 Priority: P0
 Type: expand
 Depends On: GAP-01
