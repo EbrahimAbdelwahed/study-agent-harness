@@ -381,7 +381,15 @@ def test_suspended_terminated_and_retryable_in_progress_map_exactly() -> None:
     continuation = _continuation()
     suspended, calls = _adapter(
         SuspendedCapabilityOutcome(
-            continuation.run_id, "clarify", continuation
+            continuation.run_id,
+            "clarify",
+            continuation,
+            {
+                "type": "object",
+                "properties": {},
+                "required": (),
+                "additionalProperties": False,
+            },
         )
     )
     assert _run(suspended.start(_task(), _parent())).status is GenerationWorkerStatus.SUSPENDED

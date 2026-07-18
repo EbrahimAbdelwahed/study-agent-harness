@@ -17,6 +17,11 @@ from .assessment import (
 )
 from .clock import ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
+from .host_file import (
+    HostFileIdentityPort,
+    HostFileIngestionPort,
+    HostFileSnapshotStore,
+)
 from .model import (
     CancellationToken,
     MessageRole,
@@ -67,6 +72,12 @@ from .storage import (
 from .study_context import StudyContextViewPort
 from .tools import StudyTool
 from .tutor_host import TutorDecisionPort, TutorInterruptionToken
+from .tutor_runner import (
+    TutorCapabilityGatewayPort,
+    TutorContinuationStore,
+    TutorHostActionIdentityPort,
+    TutorHostAuthorityPort,
+)
 from .tutor_snapshot import TutorSnapshotPort
 
 __all__ = [
@@ -87,6 +98,9 @@ __all__ = [
     "EventSequenceConflictError",
     "EventStore",
     "EvidenceStatus",
+    "HostFileIdentityPort",
+    "HostFileIngestionPort",
+    "HostFileSnapshotStore",
     "IndexReceipt",
     "LearnerEvidenceViewPort",
     "MessageRole",
@@ -118,7 +132,11 @@ __all__ = [
     "StudyContextViewPort",
     "StudyTool",
     "ToolCall",
+    "TutorCapabilityGatewayPort",
+    "TutorContinuationStore",
     "TutorDecisionPort",
+    "TutorHostActionIdentityPort",
+    "TutorHostAuthorityPort",
     "TutorInterruptionToken",
     "TutorSnapshotPort",
     "VerifiedGeneratedBatchPort",

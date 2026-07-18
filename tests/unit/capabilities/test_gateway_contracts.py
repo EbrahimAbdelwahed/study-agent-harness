@@ -331,7 +331,15 @@ def test_continuation_and_outcomes_keep_success_proof_at_exact_boundary() -> Non
     continuation = _continuation()
     assert continuation.fingerprint == _continuation().fingerprint
     suspended = SuspendedCapabilityOutcome(
-        continuation.run_id, "Clarify the target.", continuation
+        continuation.run_id,
+        "Clarify the target.",
+        continuation,
+        {
+            "type": "object",
+            "properties": {},
+            "required": (),
+            "additionalProperties": False,
+        },
     )
     completed = CompletedCapabilityOutcome(
         _verified(PlaybookRunStatus.COMPLETED), {"answer": "Three cusps."}

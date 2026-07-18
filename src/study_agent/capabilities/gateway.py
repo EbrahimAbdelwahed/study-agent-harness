@@ -418,8 +418,14 @@ class StudyCapabilityGateway:
                 pins=inspected.pins,
                 read_dependencies=inspected.read_dependencies,
             )
+            dialogue = binding.playbook.steps[continuation.next_step_index - 1]
+            if not isinstance(dialogue, DialogueStep):
+                self._conflict("continuation dialogue identity differs from the playbook")
             return SuspendedCapabilityOutcome(
-                inspected.run_id, inspected.dialogue_request, continuation
+                inspected.run_id,
+                inspected.dialogue_request,
+                continuation,
+                dialogue.response_schema.value,
             )
         if inspected.status is RunStatus.CANCELLED:
             return CancelledCapabilityOutcome(

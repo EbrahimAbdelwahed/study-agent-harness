@@ -229,6 +229,7 @@ class SuspendedCapabilityOutcome:
     run_id: RunId
     dialogue_request: str
     continuation: CapabilityContinuation
+    response_schema: JsonObject
     status: CapabilityOutcomeStatus = field(
         default=CapabilityOutcomeStatus.SUSPENDED, init=False
     )
@@ -241,6 +242,10 @@ class SuspendedCapabilityOutcome:
         if self.run_id != self.continuation.run_id:
             raise ValueError("suspended outcome and continuation run ids differ")
         require_text(self.dialogue_request, "dialogue_request")
+        schema = freeze_object(self.response_schema)
+        validate_schema_definition(schema)
+        reject_provider_selectors(schema, "response_schema")
+        object.__setattr__(self, "response_schema", schema)
 
 
 @dataclass(frozen=True, slots=True)

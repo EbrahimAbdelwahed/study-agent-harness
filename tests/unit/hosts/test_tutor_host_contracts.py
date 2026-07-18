@@ -227,10 +227,28 @@ def test_action_and_retry_fingerprints_bind_every_trusted_field() -> None:
     assert action.fingerprint == HostActionIdentity("action-1").fingerprint
     assert action.fingerprint != HostActionIdentity("action-2").fingerprint
 
-    receipt = HostRetryReceipt(action.fingerprint, _context().fingerprint, SHA_A, 1)
+    receipt = HostRetryReceipt(
+        "turn-1", action.fingerprint, _context().fingerprint, SHA_A, 1, 1
+    )
     assert HostRetryReceipt.from_bytes(receipt.to_bytes()) == receipt
     assert receipt.fingerprint != replace(receipt, attempt=2).fingerprint
     assert receipt.fingerprint != replace(receipt, action_fingerprint=SHA_B).fingerprint
+
+
+def test_retry_receipt_codec_has_strict_v2_migration_boundary() -> None:
+    receipt = HostRetryReceipt(
+        "turn-1", SHA_A, _context().fingerprint, SHA_B, 1, 1
+    )
+    assert json.loads(receipt.to_bytes())["schema_version"] == 2
+    raw = json.loads(receipt.to_bytes())
+    raw.pop("schema_version")
+    legacy = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+    with pytest.raises(ValueError):
+        HostRetryReceipt.from_bytes(legacy)
+    raw["schema_version"] = 1
+    wrong_version = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+    with pytest.raises(ValueError, match="schema version"):
+        HostRetryReceipt.from_bytes(wrong_version)
 
 
 @dataclass(frozen=True)

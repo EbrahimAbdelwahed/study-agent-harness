@@ -324,32 +324,42 @@ class HostActionIdentity:
 
 @dataclass(frozen=True, slots=True)
 class HostRetryReceipt:
+    host_turn_id: str
     action_identity_fingerprint: str
     context_fingerprint: str
     action_fingerprint: str
+    decision_generation: int
     attempt: int
 
+    SCHEMA_VERSION = 2
+
     def __post_init__(self) -> None:
+        _require_opaque(self.host_turn_id, "host_turn_id")
         for value, name in (
             (self.action_identity_fingerprint, "action_identity_fingerprint"),
             (self.context_fingerprint, "context_fingerprint"),
             (self.action_fingerprint, "action_fingerprint"),
         ):
             _require_sha256(value, name)
+        if type(self.decision_generation) is not int or self.decision_generation < 1:
+            raise ValueError("decision_generation must be positive")
         if type(self.attempt) is not int or self.attempt < 1:
             raise ValueError("attempt must be positive")
 
     def to_json(self) -> JsonObject:
         return {
+            "schema_version": self.SCHEMA_VERSION,
+            "host_turn_id": self.host_turn_id,
             "action_identity_fingerprint": self.action_identity_fingerprint,
             "context_fingerprint": self.context_fingerprint,
             "action_fingerprint": self.action_fingerprint,
+            "decision_generation": self.decision_generation,
             "attempt": self.attempt,
         }
 
     @property
     def fingerprint(self) -> str:
-        return _fingerprint("study-agent-host-retry-receipt-v1", self.to_json())
+        return _fingerprint("study-agent-host-retry-receipt-v2", self.to_json())
 
     def to_bytes(self) -> bytes:
         return _canonical_bytes(self.to_json())
@@ -360,17 +370,24 @@ class HostRetryReceipt:
         _exact(
             raw,
             {
+                "schema_version",
+                "host_turn_id",
                 "action_identity_fingerprint",
                 "context_fingerprint",
                 "action_fingerprint",
+                "decision_generation",
                 "attempt",
             },
             "host retry receipt",
         )
+        if _integer(raw, "schema_version") != cls.SCHEMA_VERSION:
+            raise ValueError("unsupported host retry receipt schema version")
         return cls(
+            _string(raw, "host_turn_id"),
             _string(raw, "action_identity_fingerprint"),
             _string(raw, "context_fingerprint"),
             _string(raw, "action_fingerprint"),
+            _integer(raw, "decision_generation"),
             _integer(raw, "attempt"),
         )
 

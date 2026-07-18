@@ -21,12 +21,43 @@ def test_neutral_host_contracts_do_not_import_effect_or_provider_layers() -> Non
     paths = (
         ROOT / "hosts" / "contracts.py",
         ROOT / "hosts" / "context.py",
+        ROOT / "hosts" / "runner.py",
+        ROOT / "hosts" / "scripted.py",
         ROOT / "ports" / "tutor_host.py",
+        ROOT / "ports" / "tutor_runner.py",
     )
     forbidden = (
         "study_agent.adapters",
         "study_agent.application",
         "study_agent.models",
+        "study_agent.providers",
+        "openai",
+        "anthropic",
+        "deepseek",
+        "httpx",
+        "requests",
+        "sqlite3",
+        "pathlib",
+        "os",
+        "subprocess",
+    )
+    violations = {
+        f"{path.relative_to(ROOT)} imports {imported}"
+        for path in paths
+        for imported in _imports(path)
+        if any(imported == prefix or imported.startswith(prefix + ".") for prefix in forbidden)
+    }
+    assert violations == set()
+
+
+def test_host_file_contracts_do_not_import_filesystem_or_provider_layers() -> None:
+    paths = (
+        ROOT / "hosts" / "files.py",
+        ROOT / "ports" / "host_file.py",
+    )
+    forbidden = (
+        "study_agent.adapters.filesystem",
+        "study_agent.application",
         "study_agent.providers",
         "openai",
         "anthropic",
@@ -91,3 +122,13 @@ def test_decision_port_exposes_only_effect_free_decision_and_interruption_method
     source = (ROOT / "ports" / "tutor_host.py").read_text(encoding="utf-8").lower()
     for forbidden in ("event_store", "filesystem", "gateway", "persist", "write", "model"):
         assert forbidden not in source
+
+
+def test_runner_ports_are_explicit_and_do_not_add_state_owners() -> None:
+    source = (ROOT / "ports" / "tutor_runner.py").read_text(encoding="utf-8")
+    assert "class TutorCapabilityGatewayPort" in source
+    assert "class TutorHostAuthorityPort" in source
+    assert "class TutorHostActionIdentityPort" in source
+    assert "class TutorContinuationStore" in source
+    for forbidden in ("event_store", "filesystem", "sqlite3", "requests", "openai"):
+        assert forbidden not in source.lower()
