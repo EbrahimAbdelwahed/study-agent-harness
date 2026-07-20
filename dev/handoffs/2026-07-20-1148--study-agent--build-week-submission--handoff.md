@@ -23,6 +23,10 @@ submission has been authorized or performed.
 
 ## Remaining
 
+- Review and merge public PR
+  `https://github.com/EbrahimAbdelwahed/study-agent-harness/pull/3`; direct
+  fast-forward of the default branch was intentionally not performed without
+  the user's explicit approval because it publishes 71 commits to `main`.
 - Complete official HeyGen OAuth, inspect account/remaining credits through MCP,
   and present the exact render proposal before spending credits.
 - Record the six real project clips and obtain explicit approval before any paid
