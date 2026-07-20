@@ -41,6 +41,12 @@ from study_agent.application import (
     GroundingAskService,
     GroundingEngineFactory,
 )
+from study_agent.artifacts import register_artifact_events
+from study_agent.assessments import (
+    ProjectionAssessmentView,
+    ProjectionLearnerEvidenceView,
+    register_assessment_events,
+)
 from study_agent.courses import (
     CourseService,
     ProjectionCourseCatalog,
@@ -69,13 +75,21 @@ from study_agent.repository_config import LocalRepositoryConfig, ModelAdapterCon
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import (
     GroundedSessionFinalizer,
+    ProjectionAssistantTurnView,
     ProjectionSessionView,
     SessionService,
+    SessionTurnService,
     register_session_events,
 )
 from study_agent.skills import ArtifactReference, SemanticVersion
 from study_agent.skills.builtin import GROUNDED_ANSWER_SKILL
 from study_agent.state import EventRegistry
+from study_agent.study_context import (
+    ProjectionStudyContextView,
+    StudyContextService,
+    register_study_context_events,
+)
+from study_agent.tutor_snapshot import TutorSnapshotReader
 
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry
@@ -358,6 +372,9 @@ class LocalRepository:
         register_course_events(registry)
         register_source_revision_events(registry, self.blobs.get)
         register_session_events(registry)
+        register_study_context_events(registry)
+        register_artifact_events(registry)
+        register_assessment_events(registry)
         self.events = SQLiteEventStore(
             events_database, registry, connection_identity_guard=events_guard
         )
@@ -372,6 +389,17 @@ class LocalRepository:
         self.course_service = CourseService(self.events, self.clock, self.courses)
         self.sessions = ProjectionSessionView(self.events.projection)
         self.session_service = SessionService(self.events, self.clock, self.sessions, self.courses)
+        self.assistant_turns = ProjectionAssistantTurnView(self.events.projection)
+        self.session_turn_service = SessionTurnService(
+            self.events, self.clock, self.sessions, self.assistant_turns
+        )
+        self.study_context = ProjectionStudyContextView(self.events.projection)
+        self.assessments = ProjectionAssessmentView(self.events.projection)
+        self.learner_evidence = ProjectionLearnerEvidenceView(self.assessments)
+        self.study_context_service = StudyContextService(
+            self.events, self.clock, self.study_context, self.courses, self.sessions
+        )
+        self.tutor_snapshots = TutorSnapshotReader(self.events, registry)
         self._model_adapters = model_adapters or default_model_adapters()
         self._environment = environment
         if observation is not None:

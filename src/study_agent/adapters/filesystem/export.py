@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
-from study_agent.application.export import EXPORT_SCHEMA_VERSION, ExportBundle
+from study_agent.application.export import (
+    EXPORT_SCHEMA_VERSION,
+    EXPORT_V2_SCHEMA_VERSION,
+    ExportBundle,
+    ExportBundleV2,
+)
 from study_agent.domain._validation import JsonObject
 from study_agent.state.serialization import canonical_json_bytes
 
@@ -36,7 +41,7 @@ class ExportReceipt:
 class FilesystemExportWriter:
     """Write one immutable export through a sibling staging directory."""
 
-    def write(self, bundle: ExportBundle, destination: Path) -> ExportReceipt:
+    def write(self, bundle: ExportBundle | ExportBundleV2, destination: Path) -> ExportReceipt:
         target = destination.expanduser().absolute()
         parent = target.parent
         if target.exists() or target.is_symlink():
@@ -69,7 +74,9 @@ class FilesystemExportWriter:
         )
 
 
-def _export_files(bundle: ExportBundle) -> Mapping[str, bytes]:
+def _export_files(bundle: ExportBundle | ExportBundleV2) -> Mapping[str, bytes]:
+    if isinstance(bundle, ExportBundleV2):
+        return _export_files_v2(bundle)
     data_files = {
         "course.json": _json_file(bundle.course),
         "sources.json": _json_file(
@@ -81,6 +88,33 @@ def _export_files(bundle: ExportBundle) -> Mapping[str, bytes]:
     }
     manifest: JsonObject = {
         "schema_version": EXPORT_SCHEMA_VERSION,
+        "course_id": str(bundle.course_id),
+        "high_water_sequence": bundle.high_water_sequence,
+        "files": tuple(
+            {
+                "name": name,
+                "sha256": sha256(content).hexdigest(),
+                "byte_size": len(content),
+            }
+            for name, content in sorted(data_files.items())
+        ),
+    }
+    return {"manifest.json": _json_file(manifest), **data_files}
+
+
+def _export_files_v2(bundle: ExportBundleV2) -> Mapping[str, bytes]:
+    data_files = {
+        "course.json": _json_file(bundle.course),
+        "sources.json": _json_file(
+            {"schema_version": EXPORT_V2_SCHEMA_VERSION, "sources": bundle.sources}
+        ),
+        "sessions.jsonl": _json_lines(bundle.sessions),
+        "answers.jsonl": _json_lines(bundle.answers),
+        "events.jsonl": _json_lines(bundle.events),
+        "artifacts.jsonl": _json_lines(bundle.artifacts),
+    }
+    manifest: JsonObject = {
+        "schema_version": EXPORT_V2_SCHEMA_VERSION,
         "course_id": str(bundle.course_id),
         "high_water_sequence": bundle.high_water_sequence,
         "files": tuple(

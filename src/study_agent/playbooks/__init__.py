@@ -4,6 +4,7 @@ from .contracts import (
     DataBinding,
     DataReference,
     DataSourceKind,
+    DialogueGate,
     DialogueStep,
     ModelStep,
     PlaybookCheckpoint,
@@ -20,14 +21,16 @@ from .contracts import (
     ValidatorDisposition,
     VersionPins,
 )
-from .engine import PlaybookEngine
+from .engine import PlaybookEngine, playbook_definition_fingerprint
 from .runtime import (
     STRUCTURED_OUTPUT_JSON_FALLBACK,
     SUPPORTED_FALLBACK_STRATEGIES,
+    CancelledRunResult,
     CompletedRunResult,
     EngineErrorCode,
     EngineFailure,
     FailedRunResult,
+    InspectedRunRecord,
     PlaybookEngineError,
     PlaybookRunResult,
     PlaybookRunStatus,
@@ -43,14 +46,17 @@ from .runtime import (
 __all__ = [
     "STRUCTURED_OUTPUT_JSON_FALLBACK",
     "SUPPORTED_FALLBACK_STRATEGIES",
+    "CancelledRunResult",
     "CompletedRunResult",
     "DataBinding",
     "DataReference",
     "DataSourceKind",
+    "DialogueGate",
     "DialogueStep",
     "EngineErrorCode",
     "EngineFailure",
     "FailedRunResult",
+    "InspectedRunRecord",
     "ModelStep",
     "PlaybookCheckpoint",
     "PlaybookDefinition",
@@ -76,4 +82,5 @@ __all__ = [
     "ValidatorExecutor",
     "VerifiedRunRecord",
     "VersionPins",
+    "playbook_definition_fingerprint",
 ]

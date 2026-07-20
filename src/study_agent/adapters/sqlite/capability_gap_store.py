@@ -1,0 +1,369 @@
+"""Path-backed SQLite registry for strict capability-gap aggregates."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import stat
+from collections.abc import Callable
+from contextlib import closing
+from pathlib import Path
+from threading import Lock
+from typing import cast
+
+from study_agent.feedback.contracts import (
+    CapabilityGapAggregate,
+    CapabilityGapCollisionError,
+    CapabilityGapCorruptionError,
+    CapabilityGapValidationError,
+)
+
+from .event_store import (
+    SQLiteConnectionGuard,
+    SQLiteConnectionIdentityError,
+    SQLiteConnectionIdentityGuard,
+    _writable_nofollow_uri,
+)
+
+
+class UnsupportedSQLiteCapabilityGapDatabaseError(ValueError):
+    """The registry requires a durable path-backed SQLite database."""
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS capability_gap_aggregates (
+    gap_key TEXT PRIMARY KEY,
+    payload BLOB NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS capability_gap_reports (
+    report_id TEXT PRIMARY KEY,
+    gap_key TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS capability_gap_reports_gap_key_idx
+ON capability_gap_reports (gap_key);
+"""
+
+
+class SQLiteCapabilityGapStore:
+    """Atomic local registry; it never appends canonical study events."""
+
+    def __init__(
+        self,
+        database: str | Path,
+        *,
+        connection_identity_guard: SQLiteConnectionGuard | None = None,
+    ) -> None:
+        self._database = str(database)
+        normalized = self._database.strip().lower()
+        if not normalized or normalized == ":memory:" or normalized.startswith("file:"):
+            raise UnsupportedSQLiteCapabilityGapDatabaseError(
+                "path_backed_database_required"
+            )
+        self._connection_identity_guard = _SerializedConnectionGuard(
+            connection_identity_guard or _guard_for_database(Path(self._database))
+        )
+        with closing(self._connect()) as connection:
+            try:
+                connection.executescript(_SCHEMA)
+            except sqlite3.DatabaseError:
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            self._validate_schema(connection)
+
+    def _connect(self) -> sqlite3.Connection:
+        uri = _writable_nofollow_uri(self._database)
+        connection = self._connection_identity_guard.connect(
+            lambda: sqlite3.connect(uri, isolation_level=None, timeout=30, uri=True)
+        )
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return connection
+
+    @staticmethod
+    def _validate_schema(connection: sqlite3.Connection) -> None:
+        expected_tables = {"capability_gap_aggregates", "capability_gap_reports"}
+        try:
+            table_rows = connection.execute("PRAGMA table_list").fetchall()
+        except sqlite3.DatabaseError:
+            raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+        user_rows = [
+            row
+            for row in table_rows
+            if row[1] not in {"sqlite_schema", "sqlite_temp_schema"}
+        ]
+        if {row[1] for row in user_rows} != expected_tables or len(user_rows) != 2:
+            raise CapabilityGapCorruptionError("gap_store_schema_invalid")
+        for row in user_rows:
+            if row[2] != "table" or int(row[4]) != 0 or int(row[5]) != 1:
+                raise CapabilityGapCorruptionError("gap_store_schema_invalid")
+        expected_columns = {
+            "capability_gap_aggregates": (
+                (0, "gap_key", "TEXT", 1, None, 1, 0),
+                (1, "payload", "BLOB", 1, None, 0, 0),
+            ),
+            "capability_gap_reports": (
+                (0, "report_id", "TEXT", 1, None, 1, 0),
+                (1, "gap_key", "TEXT", 1, None, 0, 0),
+            ),
+        }
+        for table, expected in expected_columns.items():
+            columns = connection.execute(f"PRAGMA table_xinfo({table})").fetchall()
+            actual = tuple(
+                (
+                    int(row[0]),
+                    row[1],
+                    row[2],
+                    int(row[3]),
+                    row[4],
+                    int(row[5]),
+                    int(row[6]),
+                )
+                for row in columns
+            )
+            if actual != expected:
+                raise CapabilityGapCorruptionError("gap_store_schema_invalid")
+        try:
+            indexes = {
+                row[1]
+                for table in expected_tables
+                for row in connection.execute(f"PRAGMA index_list({table})").fetchall()
+            }
+            expected_indexes = {
+                "sqlite_autoindex_capability_gap_aggregates_1",
+                "sqlite_autoindex_capability_gap_reports_1",
+                "capability_gap_reports_gap_key_idx",
+            }
+            if indexes != expected_indexes:
+                raise CapabilityGapCorruptionError("gap_store_schema_invalid")
+            triggers = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+            ).fetchall()
+            if tuple(row[0] for row in triggers) != ():
+                raise CapabilityGapCorruptionError("gap_store_schema_invalid")
+        except sqlite3.DatabaseError:
+            raise CapabilityGapCorruptionError("gap_store_schema_invalid") from None
+
+    def create_or_increment(
+        self, gap_key: str, report_id: str, payload: bytes
+    ) -> tuple[bytes, bool]:
+        _validate_digest(gap_key, "gap_key")
+        _validate_digest(report_id, "report_id")
+        if not isinstance(payload, bytes):
+            raise CapabilityGapValidationError("invalid_payload")
+        try:
+            proposal = CapabilityGapAggregate.from_bytes(payload)
+        except (CapabilityGapCorruptionError, CapabilityGapCollisionError):
+            raise
+        if proposal.gap_key.value != gap_key or proposal.occurrence_count != 1:
+            raise CapabilityGapCollisionError("gap_key_collision")
+        if proposal.first_seen != proposal.last_seen:
+            raise CapabilityGapValidationError("invalid_proposal")
+
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._validate_schema(connection)
+                report = connection.execute(
+                    "SELECT gap_key FROM capability_gap_reports WHERE report_id = ?",
+                    (report_id,),
+                ).fetchone()
+                if report is not None:
+                    if report[0] != gap_key:
+                        raise CapabilityGapCollisionError("gap_key_collision")
+                    row = connection.execute(
+                        "SELECT payload, typeof(payload) "
+                        "FROM capability_gap_aggregates WHERE gap_key = ?",
+                        (gap_key,),
+                    ).fetchone()
+                    if row is None or row[1] != "blob" or not isinstance(row[0], bytes):
+                        raise CapabilityGapCorruptionError("gap_store_corrupt")
+                    current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
+                    _assert_aggregate_matches_proposal(current, proposal)
+                    connection.commit()
+                    return bytes(row[0]), False
+
+                row = connection.execute(
+                    "SELECT payload, typeof(payload) "
+                    "FROM capability_gap_aggregates WHERE gap_key = ?",
+                    (gap_key,),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        "INSERT INTO capability_gap_aggregates (gap_key, payload) VALUES (?, ?)",
+                        (gap_key, payload),
+                    )
+                    connection.execute(
+                        "INSERT INTO capability_gap_reports (report_id, gap_key) VALUES (?, ?)",
+                        (report_id, gap_key),
+                    )
+                    connection.commit()
+                    return payload, True
+                if row[1] != "blob" or not isinstance(row[0], bytes):
+                    raise CapabilityGapCorruptionError("gap_store_corrupt")
+                current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
+                _assert_aggregate_matches_proposal(current, proposal)
+                updated = CapabilityGapAggregate(
+                    gap_key=current.gap_key,
+                    dimensions=current.dimensions,
+                    verification_kind=current.verification_kind,
+                    impact_kind=current.impact_kind,
+                    first_seen=current.first_seen,
+                    last_seen=proposal.last_seen,
+                    occurrence_count=current.occurrence_count + 1,
+                )
+                encoded = updated.to_bytes()
+                connection.execute(
+                    "UPDATE capability_gap_aggregates SET payload = ? WHERE gap_key = ?",
+                    (encoded, gap_key),
+                )
+                connection.execute(
+                    "INSERT INTO capability_gap_reports (report_id, gap_key) VALUES (?, ?)",
+                    (report_id, gap_key),
+                )
+                connection.commit()
+                return encoded, True
+            except (
+                CapabilityGapValidationError,
+                CapabilityGapCollisionError,
+                CapabilityGapCorruptionError,
+            ):
+                connection.rollback()
+                raise
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                raise CapabilityGapCollisionError("gap_key_collision") from None
+            except sqlite3.DatabaseError:
+                connection.rollback()
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def load(self, gap_key: str) -> bytes:
+        _validate_digest(gap_key, "gap_key")
+        with closing(self._connect()) as connection:
+            try:
+                self._validate_schema(connection)
+                row = connection.execute(
+                    "SELECT payload, typeof(payload) "
+                    "FROM capability_gap_aggregates WHERE gap_key = ?",
+                    (gap_key,),
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+        if row is None:
+            from study_agent.feedback.contracts import CapabilityGapUnavailableError
+
+            raise CapabilityGapUnavailableError("gap_not_found")
+        if row[1] != "blob" or not isinstance(row[0], bytes):
+            raise CapabilityGapCorruptionError("gap_store_corrupt")
+        try:
+            aggregate = CapabilityGapAggregate.from_bytes(bytes(row[0]))
+        except (CapabilityGapCorruptionError, CapabilityGapCollisionError):
+            raise
+        if aggregate.gap_key.value != gap_key:
+            raise CapabilityGapCollisionError("gap_key_collision")
+        return bytes(row[0])
+
+
+def _validate_digest(value: object, field: str) -> None:
+    import re
+
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise CapabilityGapValidationError(f"invalid_{field}")
+
+
+def _assert_aggregate_matches_proposal(
+    current: CapabilityGapAggregate, proposal: CapabilityGapAggregate
+) -> None:
+    """Reject cross-key, cross-dimension, and variant reuse of a report."""
+
+    if current.gap_key != proposal.gap_key or current.dimensions != proposal.dimensions:
+        raise CapabilityGapCollisionError("gap_key_collision")
+    if (
+        current.verification_kind != proposal.verification_kind
+        or current.impact_kind != proposal.impact_kind
+    ):
+        raise CapabilityGapValidationError("aggregate_variant_unsupported")
+
+
+def _guard_for_database(path: Path) -> SQLiteConnectionGuard:
+    """Create the mandatory no-follow identity guard for the default adapter."""
+
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise UnsupportedSQLiteCapabilityGapDatabaseError("nofollow_unavailable")
+    absolute = path.absolute()
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    try:
+        try:
+            descriptor = os.open(absolute, flags)
+        except FileNotFoundError:
+            descriptor = os.open(
+                absolute,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise UnsupportedSQLiteCapabilityGapDatabaseError("regular_file_required")
+            identity = (metadata.st_dev, metadata.st_ino)
+        finally:
+            os.close(descriptor)
+    except (FileExistsError, OSError) as error:
+        raise UnsupportedSQLiteCapabilityGapDatabaseError("safe_database_binding_failed") from error
+
+    def verify_owner() -> None:
+        try:
+            current = os.open(absolute, flags)
+            try:
+                metadata = os.fstat(current)
+            finally:
+                os.close(current)
+        except OSError as error:
+            raise SQLiteConnectionIdentityError("database binding changed") from error
+        if not stat.S_ISREG(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != identity:
+            raise SQLiteConnectionIdentityError("database binding changed")
+
+    return SQLiteConnectionIdentityGuard(identity, verify_owner)
+
+
+class _SerializedConnectionGuard:
+    """Serialize descriptor snapshots so concurrent opens cannot cross-bind."""
+
+    def __init__(self, delegate: SQLiteConnectionGuard) -> None:
+        self._delegate = delegate
+        self._lock = Lock()
+
+    def connect(self, opener: Callable[[], sqlite3.Connection]) -> sqlite3.Connection:
+        self._lock.acquire()
+        try:
+            connection = self._delegate.connect(opener)
+        except BaseException:
+            self._lock.release()
+            raise
+        return cast(sqlite3.Connection, _LockedConnection(connection, self._lock))
+
+
+class _LockedConnection:
+    """Hold the connection gate until the guarded SQLite handle is closed."""
+
+    def __init__(self, connection: sqlite3.Connection, lock: Lock) -> None:
+        self._connection = connection
+        self._lock = lock
+        self._closed = False
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            self._connection.close()
+        finally:
+            self._closed = True
+            self._lock.release()
+
+
+__all__ = ["SQLiteCapabilityGapStore", "UnsupportedSQLiteCapabilityGapDatabaseError"]

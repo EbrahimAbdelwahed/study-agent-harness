@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
@@ -24,6 +25,8 @@ from study_agent.domain.identifiers import (
     RunId,
     SessionId,
     SourceId,
+    assistant_interaction_id_for,
+    session_turn_event_id_for,
 )
 from study_agent.domain.provenance import (
     AnswerProvenance,
@@ -38,16 +41,21 @@ from study_agent.domain.provenance import (
 )
 from study_agent.domain.session import (
     AnswerRecord,
+    AssistantTurnRecord,
+    AssistantTurnStatus,
     ContinuationSummaryV1,
     InteractionKind,
     SummaryExchange,
+    VerifiedRunOutputRef,
 )
 from study_agent.domain.source import Citation
+from study_agent.state import canonical_json_bytes
 
 SESSION_SCHEMA_VERSION = 1
 SESSION_STARTED = "session.started"
 SESSION_INTERACTION_RECORDED = "session.interaction_recorded"
 SESSION_ANSWER_RECORDED = "session.answer_recorded"
+SESSION_ASSISTANT_TURN_RECORDED = "session.assistant_turn_recorded"
 SESSION_CONTINUATION_SUMMARY_UPDATED = "session.continuation_summary_updated"
 SESSION_SUSPENDED = "session.suspended"
 SESSION_RESUMED = "session.resumed"
@@ -57,6 +65,7 @@ SESSION_EVENT_TYPES = frozenset(
         SESSION_STARTED,
         SESSION_INTERACTION_RECORDED,
         SESSION_ANSWER_RECORDED,
+        SESSION_ASSISTANT_TURN_RECORDED,
         SESSION_CONTINUATION_SUMMARY_UPDATED,
         SESSION_SUSPENDED,
         SESSION_RESUMED,
@@ -80,6 +89,11 @@ class SessionInteractionRecorded:
 @dataclass(frozen=True, slots=True)
 class SessionAnswerRecorded:
     record: AnswerRecord
+
+
+@dataclass(frozen=True, slots=True)
+class SessionAssistantTurnRecorded:
+    record: AssistantTurnRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,6 +641,73 @@ def answer_recorded_payload(record: AnswerRecord) -> JsonObject:
     }
 
 
+def assistant_turn_recorded_payload(record: AssistantTurnRecord) -> JsonObject:
+    return {
+        "turn_id": str(record.id),
+        "status": record.status.value,
+        "content": record.content,
+        "in_reply_to_interaction_id": (
+            str(record.in_reply_to_interaction_id)
+            if record.in_reply_to_interaction_id is not None
+            else None
+        ),
+        "output": {
+            "run_id": str(record.output.run_id),
+            "output_key": record.output.output_key,
+            "output_fingerprint": record.output.output_fingerprint,
+        },
+        "idempotency_key": record.idempotency_key,
+        "command_fingerprint": record.command_fingerprint,
+    }
+
+
+def tutor_message_output_fingerprint(
+    status: AssistantTurnStatus,
+    content: str,
+    in_reply_to_interaction_id: InteractionId | None,
+) -> str:
+    return sha256(
+        canonical_json_bytes(
+            {
+                "schema_version": 1,
+                "status": status.value,
+                "content": content,
+                "in_reply_to_interaction_id": (
+                    str(in_reply_to_interaction_id)
+                    if in_reply_to_interaction_id is not None
+                    else None
+                ),
+            }
+        )
+    ).hexdigest()
+
+
+def assistant_turn_command_fingerprint(
+    status: AssistantTurnStatus,
+    content: str,
+    in_reply_to_interaction_id: InteractionId | None,
+    output: VerifiedRunOutputRef,
+) -> str:
+    return sha256(
+        canonical_json_bytes(
+            {
+                "status": status.value,
+                "content": content,
+                "in_reply_to_interaction_id": (
+                    str(in_reply_to_interaction_id)
+                    if in_reply_to_interaction_id is not None
+                    else None
+                ),
+                "output": {
+                    "run_id": str(output.run_id),
+                    "output_key": output.output_key,
+                    "output_fingerprint": output.output_fingerprint,
+                },
+            }
+        )
+    ).hexdigest()
+
+
 def lifecycle_payload() -> JsonObject:
     return {}
 
@@ -692,6 +773,86 @@ def decode_answer_recorded(event: DomainEvent) -> SessionAnswerRecorded:
         answer,
     )
     return SessionAnswerRecorded(record)
+
+
+def decode_assistant_turn_recorded(event: DomainEvent) -> SessionAssistantTurnRecorded:
+    session_id = _envelope(event, SESSION_ASSISTANT_TURN_RECORDED)
+    if event.actor.kind is not PrincipalKind.SERVICE:
+        raise ValueError("assistant turns require service authority")
+    payload = _object(
+        event.payload,
+        "payload",
+        frozenset(
+            {
+                "turn_id",
+                "status",
+                "content",
+                "in_reply_to_interaction_id",
+                "output",
+                "idempotency_key",
+                "command_fingerprint",
+            }
+        ),
+    )
+    output = _object(
+        payload.get("output"),
+        "payload.output",
+        frozenset({"run_id", "output_key", "output_fingerprint"}),
+    )
+    try:
+        status = AssistantTurnStatus(_text(payload.get("status"), "payload.status"))
+    except ValueError as error:
+        raise ValueError("payload.status is unsupported") from error
+    reply_raw = payload.get("in_reply_to_interaction_id")
+    reply = (
+        None
+        if reply_raw is None
+        else InteractionId(_text(reply_raw, "payload.in_reply_to_interaction_id"))
+    )
+    record = AssistantTurnRecord(
+        id=InteractionId(_text(payload.get("turn_id"), "payload.turn_id")),
+        session_id=session_id,
+        occurred_at=event.occurred_at,
+        status=status,
+        content=_text(payload.get("content"), "payload.content"),
+        in_reply_to_interaction_id=reply,
+        output=VerifiedRunOutputRef(
+            run_id=RunId(_text(output.get("run_id"), "payload.output.run_id")),
+            output_key=_text(output.get("output_key"), "payload.output.output_key"),
+            output_fingerprint=_text(
+                output.get("output_fingerprint"), "payload.output.output_fingerprint"
+            ),
+        ),
+        idempotency_key=_text(payload.get("idempotency_key"), "payload.idempotency_key"),
+        command_fingerprint=_text(
+            payload.get("command_fingerprint"), "payload.command_fingerprint"
+        ),
+        event_id=event.event_id,
+        course_sequence=event.course_sequence,
+    )
+    if record.id != assistant_interaction_id_for(
+        event.course_id, session_id, record.output.run_id, record.idempotency_key
+    ):
+        raise ValueError("assistant turn id does not match command identity")
+    if event.event_id != session_turn_event_id_for(
+        event.course_id,
+        session_id,
+        record.idempotency_key,
+        SESSION_ASSISTANT_TURN_RECORDED,
+    ):
+        raise ValueError("assistant turn event id does not match command identity")
+    if record.output.output_fingerprint != tutor_message_output_fingerprint(
+        record.status, record.content, record.in_reply_to_interaction_id
+    ):
+        raise ValueError("assistant turn output fingerprint mismatch")
+    if record.command_fingerprint != assistant_turn_command_fingerprint(
+        record.status,
+        record.content,
+        record.in_reply_to_interaction_id,
+        record.output,
+    ):
+        raise ValueError("assistant turn command fingerprint mismatch")
+    return SessionAssistantTurnRecorded(record)
 
 
 def decode_summary_updated(event: DomainEvent) -> SessionSummaryUpdated:

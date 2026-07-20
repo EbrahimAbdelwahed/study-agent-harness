@@ -36,6 +36,9 @@ from study_agent.grounding import (
 )
 from study_agent.ingestion import TextIngestionService, register_source_revision_events
 from study_agent.playbooks import (
+    CancelledRunResult,
+    EngineErrorCode,
+    EngineFailure,
     ModelStep,
     PlaybookEngine,
     PromptComposerRegistration,
@@ -563,4 +566,39 @@ def test_malformed_or_missing_model_output_never_writes_session_events(tmp_path:
     assert retrieval.search_calls == 1
     assert len(events.read(COURSE)) == before
     assert len(factory.store.values) == 1
+    blobs.close()
+
+
+def test_cancelled_playbook_result_is_existing_safe_failure_not_runtime_mismatch(
+    tmp_path: Path,
+) -> None:
+    service, events, retrieval, factory, _, blobs = composition(tmp_path)
+    before = len(events.read(COURSE))
+
+    class CancelledEngine:
+        async def execute(self, **kwargs: object) -> CancelledRunResult:
+            assert kwargs["run_id"]
+            return CancelledRunResult(
+                {},
+                (),
+                EngineFailure(
+                    EngineErrorCode.CANCELLED,
+                    "model execution was cancelled",
+                    "draft_answer",
+                ),
+            )
+
+    class CancelledFactory:
+        def create(self, *, tools: tuple[ToolExecutor, ...]) -> CancelledEngine:
+            assert tools
+            return CancelledEngine()
+
+    service._engine_factory = cast(Factory, CancelledFactory())
+    with pytest.raises(GroundingAskError) as caught:
+        asyncio.run(service.ask("What is absent from these notes?", context()))
+
+    assert caught.value.code is GroundingAskErrorCode.FAILED
+    assert len(events.read(COURSE)) == before
+    assert retrieval.search_calls == 0
+    assert factory.created == 0
     blobs.close()

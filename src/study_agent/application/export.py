@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
-from study_agent.courses.events import decode_course_created
+from study_agent.artifacts import (
+    ARTIFACT_EVENT_TYPES,
+    ProjectionArtifactView,
+    register_artifact_events,
+)
+from study_agent.assessments import ASSESSMENT_EVENT_TYPES, register_assessment_events
+from study_agent.courses import register_course_events
+from study_agent.courses.events import COURSE_CREATED, decode_course_created
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.course import CourseProfile
 from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
@@ -14,10 +22,18 @@ from study_agent.domain.identifiers import CorrelationId, CourseId, EventId
 from study_agent.domain.session import (
     AnswerRecord,
     ContinuationSummaryV1,
+    InteractionKind,
     InteractionRecord,
     StudySessionRecord,
 )
 from study_agent.domain.source import Citation, SourceChunk
+from study_agent.ingestion import (
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+    decode_source_revision_selected_event,
+    reduce_source_revision,
+    reduce_source_revision_selected,
+)
 from study_agent.ingestion.events import (
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
@@ -26,9 +42,14 @@ from study_agent.ingestion.events import (
 )
 from study_agent.ingestion.identity import source_event_id_for
 from study_agent.ports import EventStore
-from study_agent.sessions import ProjectionSessionView, register_session_events
+from study_agent.sessions import (
+    SESSION_EVENT_TYPES,
+    ProjectionSessionView,
+    register_session_events,
+)
 from study_agent.sessions.events import (
     SESSION_ANSWER_RECORDED,
+    SESSION_ASSISTANT_TURN_RECORDED,
     SESSION_CONTINUATION_SUMMARY_UPDATED,
     SESSION_ENDED,
     SESSION_INTERACTION_RECORDED,
@@ -36,14 +57,32 @@ from study_agent.sessions.events import (
     SESSION_STARTED,
     SESSION_SUSPENDED,
     decode_answer_recorded,
+    decode_assistant_turn_recorded,
     decode_interaction_recorded,
     decode_lifecycle,
     decode_session_started,
     decode_summary_updated,
 )
 from study_agent.state import EventRegistry, Projection
+from study_agent.study_context import (
+    CONFLICT_RESOLVED,
+    STATEMENT_RECORDED,
+    STATEMENT_RETRACTED,
+    STUDY_CONTEXT_EVENT_TYPES,
+    ProjectionStudyContextView,
+    decode_conflict_resolved,
+    decode_statement_recorded,
+    decode_statement_retracted,
+    register_study_context_events,
+)
 
 EXPORT_SCHEMA_VERSION = 1
+EXPORT_V2_SCHEMA_VERSION = 2
+
+
+class ExportVersion(StrEnum):
+    V1 = "1"
+    V2 = "2"
 
 
 class ExportStateError(ValueError):
@@ -75,6 +114,32 @@ class ExportBundle:
             object.__setattr__(self, name, tuple(freeze_object(item) for item in values))
 
 
+@dataclass(frozen=True, slots=True)
+class ExportBundleV2:
+    """Immutable allowlisted records for explicit export v2."""
+
+    course_id: CourseId
+    high_water_sequence: int
+    course: JsonObject
+    sources: tuple[JsonObject, ...]
+    sessions: tuple[JsonObject, ...]
+    answers: tuple[JsonObject, ...]
+    events: tuple[JsonObject, ...]
+    artifacts: tuple[JsonObject, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.course_id) is not CourseId:
+            raise TypeError("course_id must be a CourseId")
+        if type(self.high_water_sequence) is not int or self.high_water_sequence < 1:
+            raise ValueError("high_water_sequence must be a positive integer")
+        object.__setattr__(self, "course", freeze_object(self.course))
+        for name in ("sources", "sessions", "answers", "events", "artifacts"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple):
+                raise TypeError(f"{name} must be a tuple")
+            object.__setattr__(self, name, tuple(freeze_object(item) for item in values))
+
+
 class ExportService:
     """Build an export solely from canonical events and projection read ports."""
 
@@ -84,8 +149,15 @@ class ExportService:
     ) -> None:
         self._events = events
 
-    def assemble(self, course_id: CourseId) -> ExportBundle:
+    def assemble(
+        self, course_id: CourseId, *, version: ExportVersion = ExportVersion.V1
+    ) -> ExportBundle | ExportBundleV2:
+        if not isinstance(version, ExportVersion):
+            raise TypeError("version must be an ExportVersion")
         stream = tuple(self._events.read(course_id))
+        if version is ExportVersion.V2:
+            return self._assemble_v2(course_id, stream)
+        _reject_v1_artifact_stream(stream)
         _validate_stream(course_id, stream)
 
         created = decode_course_created(stream[0])
@@ -101,7 +173,13 @@ class ExportService:
         if len(set(revision_keys)) != len(revision_keys):
             raise ExportStateError("event stream contains duplicate source revisions")
 
-        session_view = _replay_sessions(course_id, stream)
+        contextual_projection = _replay_contextual_state(course_id, stream)
+        ProjectionStudyContextView(
+            lambda requested: _owned_projection(requested, contextual_projection)
+        ).get(course_id)
+        session_view = ProjectionSessionView(
+            lambda requested: _owned_projection(requested, contextual_projection)
+        )
         session_records = session_view.list_sessions(course_id)
 
         answers: list[JsonObject] = []
@@ -136,21 +214,97 @@ class ExportService:
             events=tuple(_event_record(event) for event in stream),
         )
 
+    def _assemble_v2(self, course_id: CourseId, stream: tuple[DomainEvent, ...]) -> ExportBundleV2:
+        projection = _replay_v2(course_id, stream)
+        created = decode_course_created(stream[0])
+        revisions = tuple(
+            _decode_source_event(event)
+            for event in stream
+            if event.event_type == SOURCE_REVISION_INGESTED
+        )
+        revision_keys = tuple(
+            (item.source.source_id, item.source.revision_id) for item in revisions
+        )
+        if len(set(revision_keys)) != len(revision_keys):
+            raise ExportStateError("event stream contains duplicate source revisions")
+
+        def context_loader(requested: CourseId) -> Projection:
+            return _owned_projection(requested, projection)
+
+        ProjectionStudyContextView(context_loader).get(course_id)
+        session_view = ProjectionSessionView(context_loader)
+        session_records = session_view.list_sessions(course_id)
+        answers: list[JsonObject] = []
+        sessions: list[JsonObject] = []
+        domain_answers: list[AnswerRecord] = []
+        for record in session_records:
+            interactions = session_view.interactions(course_id, record.id)
+            session_answers = session_view.answers(course_id, record.id)
+            sessions.append(_session_record_v2(record, interactions))
+            answers.extend(
+                _with_schema(_answer_record(record, item), 2) for item in session_answers
+            )
+            domain_answers.extend(session_answers)
+        _validate_source_references(revisions, domain_answers)
+        try:
+            snapshot = ProjectionArtifactView(
+                lambda requested: _owned_projection(requested, projection)
+            ).get(course_id)
+            from .artifact_export import artifact_rows
+
+            artifacts = artifact_rows(stream, snapshot, revisions)
+        except (TypeError, ValueError, LookupError) as error:
+            raise ExportStateError("artifact events cannot be exported canonically") from error
+        return ExportBundleV2(
+            course_id,
+            stream[-1].course_sequence,
+            _with_schema(_course_record(created.profile), 2),
+            tuple(
+                _with_schema(_source_record(item), 2)
+                for item in sorted(
+                    revisions,
+                    key=lambda item: (str(item.source.source_id), str(item.source.revision_id)),
+                )
+            ),
+            tuple(sessions),
+            tuple(
+                sorted(
+                    answers,
+                    key=lambda item: (str(item["session_id"]), str(item["answer_id"])),
+                )
+            ),
+            tuple(_event_record(event) for event in stream),
+            artifacts,
+        )
+
 
 type _EventDecoder = Callable[[DomainEvent], object]
 
 
+def _reject_v1_artifact_stream(stream: Sequence[DomainEvent]) -> None:
+    if any(
+        event.event_type in ARTIFACT_EVENT_TYPES | ASSESSMENT_EVENT_TYPES for event in stream
+    ):
+        raise ExportStateError("artifact export requires v2")
+
+
 def _decode_allowlisted_event(event: DomainEvent) -> object:
+    if event.event_type in ARTIFACT_EVENT_TYPES:
+        raise ExportStateError("artifact export requires v2")
     decoders: Mapping[str, _EventDecoder] = {
         "course.created": decode_course_created,
         SOURCE_REVISION_INGESTED: _decode_source_event,
         SESSION_STARTED: decode_session_started,
         SESSION_INTERACTION_RECORDED: decode_interaction_recorded,
         SESSION_ANSWER_RECORDED: decode_answer_recorded,
+        SESSION_ASSISTANT_TURN_RECORDED: decode_assistant_turn_recorded,
         SESSION_CONTINUATION_SUMMARY_UPDATED: decode_summary_updated,
         SESSION_SUSPENDED: lambda value: decode_lifecycle(value, SESSION_SUSPENDED),
         SESSION_RESUMED: lambda value: decode_lifecycle(value, SESSION_RESUMED),
         SESSION_ENDED: lambda value: decode_lifecycle(value, SESSION_ENDED),
+        STATEMENT_RECORDED: decode_statement_recorded,
+        STATEMENT_RETRACTED: decode_statement_retracted,
+        CONFLICT_RESOLVED: decode_conflict_resolved,
     }
     try:
         decoder = decoders[event.event_type]
@@ -203,28 +357,58 @@ def _validate_stream(course_id: CourseId, stream: Sequence[DomainEvent]) -> None
         _decode_allowlisted_event(event)
 
 
-def _replay_sessions(
-    course_id: CourseId, stream: Sequence[DomainEvent]
-) -> ProjectionSessionView:
+def _replay_contextual_state(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection:
     registry = EventRegistry()
+    register_course_events(registry)
     register_session_events(registry)
+    register_study_context_events(registry)
     state: JsonObject = {}
+    contextual_types = frozenset({COURSE_CREATED}) | SESSION_EVENT_TYPES | STUDY_CONTEXT_EVENT_TYPES
     try:
         for event in stream:
-            if event.event_type in {
-                SESSION_STARTED,
-                SESSION_INTERACTION_RECORDED,
-                SESSION_ANSWER_RECORDED,
-                SESSION_CONTINUATION_SUMMARY_UPDATED,
-                SESSION_SUSPENDED,
-                SESSION_RESUMED,
-                SESSION_ENDED,
-            }:
+            if event.event_type in contextual_types:
                 state = registry.reduce(state, event)
     except (TypeError, ValueError) as error:
-        raise ExportStateError("session events cannot be replayed canonically") from error
-    projection = Projection(course_id, stream[-1].course_sequence, state)
-    return ProjectionSessionView(lambda requested: _owned_projection(requested, projection))
+        raise ExportStateError("contextual events cannot be replayed canonically") from error
+    return Projection(course_id, stream[-1].course_sequence, state)
+
+
+def _replay_v2(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection:
+    if type(course_id) is not CourseId:
+        raise TypeError("course_id must be a CourseId")
+    if not stream:
+        raise ExportStateError("course event stream is empty")
+    registry = EventRegistry()
+    register_course_events(registry)
+    registry.register_event(
+        SOURCE_REVISION_INGESTED,
+        SOURCE_REVISION_SCHEMA_VERSION,
+        _decode_source_event,
+        reduce_source_revision,
+    )
+    registry.register_event(
+        SOURCE_REVISION_SELECTED,
+        SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+        decode_source_revision_selected_event,
+        reduce_source_revision_selected,
+    )
+    register_session_events(registry)
+    register_study_context_events(registry)
+    register_artifact_events(registry)
+    register_assessment_events(registry)
+    state: JsonObject = {}
+    try:
+        for expected_sequence, event in enumerate(stream, start=1):
+            if event.course_id != course_id:
+                raise ExportStateError("event stream contains another course")
+            if event.course_sequence != expected_sequence:
+                raise ExportStateError("event stream sequence is not contiguous")
+            state = registry.reduce(state, event)
+    except ExportStateError:
+        raise
+    except (TypeError, ValueError, LookupError) as error:
+        raise ExportStateError("event stream cannot be replayed for export v2") from error
+    return Projection(course_id, stream[-1].course_sequence, state)
 
 
 def _owned_projection(requested: CourseId, projection: Projection) -> Projection:
@@ -361,11 +545,43 @@ def _session_record(
     }
 
 
+def _session_record_v2(
+    session: StudySessionRecord, interactions: tuple[InteractionRecord, ...]
+) -> JsonObject:
+    """Render session linkage without exporting learner or model transcript text."""
+    if tuple(item.id for item in interactions) != session.interaction_ids:
+        raise ExportStateError("session interaction view does not match canonical order")
+    return {
+        "schema_version": EXPORT_V2_SCHEMA_VERSION,
+        "course_id": str(session.course_id),
+        "session_id": str(session.id),
+        "status": session.status.value,
+        "run_ids": tuple(str(item) for item in session.run_ids),
+        "interactions": tuple(_interaction_record_v2(item) for item in interactions),
+        "continuation_summary": (
+            None
+            if session.continuation_summary is None
+            else _summary_record_v2(session.continuation_summary)
+        ),
+    }
+
+
 def _interaction_record(interaction: InteractionRecord) -> JsonObject:
     return {
         "interaction_id": str(interaction.id),
         "kind": interaction.kind.value,
         "content": interaction.content,
+        "answer_id": str(interaction.answer_id) if interaction.answer_id is not None else None,
+        "run_id": str(interaction.run_id) if interaction.run_id is not None else None,
+    }
+
+
+def _interaction_record_v2(interaction: InteractionRecord) -> JsonObject:
+    if not isinstance(interaction.kind, InteractionKind):
+        raise ExportStateError("session interaction kind is not typed")
+    return {
+        "interaction_id": str(interaction.id),
+        "kind": interaction.kind.value,
         "answer_id": str(interaction.answer_id) if interaction.answer_id is not None else None,
         "run_id": str(interaction.run_id) if interaction.run_id is not None else None,
     }
@@ -390,6 +606,15 @@ def _summary_record(summary: ContinuationSummaryV1) -> JsonObject:
         "grounded_points": summary.grounded_points,
         "unresolved_notes": summary.unresolved_notes,
         "character_count": summary.character_count,
+    }
+
+
+def _summary_record_v2(summary: ContinuationSummaryV1) -> JsonObject:
+    """Expose only the typed continuation boundary, never transcript excerpts."""
+    return {
+        "schema_version": summary.schema_version,
+        "through_interaction_id": str(summary.through_interaction_id),
+        "interaction_count": summary.interaction_count,
     }
 
 
@@ -495,3 +720,7 @@ def _event_record(event: DomainEvent) -> JsonObject:
         "session_id": str(event.session_id) if event.session_id is not None else None,
         "causation_id": str(event.causation_id) if event.causation_id is not None else None,
     }
+
+
+def _with_schema(value: JsonObject, version: int) -> JsonObject:
+    return {**value, "schema_version": version}

@@ -127,6 +127,64 @@ generic adapters while the domain, skills, playbooks, and CLI remain unchanged.
 Use `study-agent init --help` for the adapter-setting syntax. Never put an API
 key in a model setting, committed file, command transcript, or export.
 
+### Reference tutor host
+
+The bounded host can be exercised offline, without an SDK, key, or network:
+
+```bash
+study-agent-demo "I have ten minutes. Help me understand heart valves."
+```
+
+The [reference tutor host guide](docs/reference-tutor-host.md) documents the
+same runner seam used by scripted and recorded Responses fixtures, optional
+OpenAI API-key setup, `store=False` privacy behavior, configurable model ids,
+retry/stale/file duties, costs, and the explicit lack of ChatGPT subscription
+support.
+
+## OpenAI Build Week — Education
+
+Medical study workflows often scatter source files, tutoring, correction, and
+learner evidence across disconnected tools. Study Agent Harness `0.2.0` alpha
+turns the reliable parts of those workflows into an open-source execution layer
+for durable, source-grounded AI tutors—not another generic chat interface.
+
+In plain language, the model proposes a bounded action while the harness owns
+authority, learner state, source snapshots, execution, and replay. Append-only
+events remain canonical; skills describe capabilities, playbooks compose their
+behavior, and technical adapters keep the model/provider replaceable.
+
+After installing the wheel or checkout, run the judge-ready anatomy trace with
+one command:
+
+```bash
+study-agent-demo "I have ten minutes. Help me understand heart valves."
+```
+
+The demo is deterministic and offline. It uses a bundled sanitized Markdown
+fixture and the real host runner/gateway contracts to show source evidence,
+clarification, evidence refresh, resumption, and replay as
+`completed → suspended → completed`. Add `--json` for the inspectable machine
+view. No credential, network call, model SDK, or provider account is required.
+
+Supported platform: Python 3.12 or 3.13. CI targets Ubuntu; the Build Week
+release was also verified on macOS arm64. To reproduce the verified runtime and
+distributed-source gate:
+
+```bash
+python3.12 -m pip install -e '.[dev]'
+python3.12 -m pytest
+python3.12 -m ruff check .
+python3.12 -m mypy src
+```
+
+The public repository, source, test suite, and judge instructions are at
+[github.com/EbrahimAbdelwahed/study-agent-harness](https://github.com/EbrahimAbdelwahed/study-agent-harness).
+GPT-5.6 through Codex was the primary implementation environment during Build
+Week. Codex supported a spec-driven workflow: specification, clarification,
+beads, bounded implementation, offline tests, and review. An adapted agent
+flywheel maintained small tasks, explicit success/stop criteria, and durable
+technical memory.
+
 ## Recovery and interruption semantics
 
 Lifecycle recovery always starts from current evidence: run `manifest status`,
