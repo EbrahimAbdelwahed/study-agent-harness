@@ -5,8 +5,8 @@ Area: adaptive-tutor / capability-gap
 
 ## Current State
 
-TUT-06A through TUT-06E are implemented; TUT-06E still needs its clean-wheel
-build/install gate before Done. The reference host runs offline and
+TUT-06A through TUT-06E are Done, including the clean-wheel matrix. The
+reference host runs offline and
 the optional Responses adapter is ready for an explicitly configured API-key
 smoke. The capability-gap plane has a robust local-only observation tracer but
 GAP-01/02 full policy remains open.
@@ -22,7 +22,6 @@ GAP-01/02 full policy remains open.
 
 ## Remaining
 
-- Rerun `uv build` when cache access/usage permits.
 - Choose whether the next GAP slice completes retention/rate/workaround policy
   or proceeds to another product/demo milestone; do not mark GAP-01/02 Done
   until their original acceptance criteria are satisfied.
@@ -37,4 +36,9 @@ GAP-01/02 full policy remains open.
 ## Verification
 
 - 1664 tests passed, 3 expected skips; Ruff, strict mypy and diff check passed.
+- `uv build` passed; clean Python 3.12 base and `[openai]` wheel environments
+  passed the scripted demo and offline adapter conformance respectively.
+- Closure rerun: 1664 passed, 3 expected skips; Ruff and strict mypy over the
+  distributed `src/` tree passed. Local mypy 2.3.0 exposes unrelated existing
+  typing debt in test fixtures when the configured all-files gate is used.
 - Final semantic/security re-review: APPROVE.

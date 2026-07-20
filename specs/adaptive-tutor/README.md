@@ -1,18 +1,16 @@
 # Adaptive Tutor
 
 Status: Approved — implementation in progress
-Last updated: 2026-07-18
+Last updated: 2026-07-20
 
 ## Next Agent Prompt
 
-Read this README, `docs/decisions/ADR-0004--adaptive-tutor-host-boundary.md`,
-ADR-0010, and the TUT-04F headless closure bead. TUT-04 and TUT-05 are complete.
-The next adaptive-tutor lanes are TUT-06B/TUT-06C for the reference host and
-TUT-07A for recall; decide their order before implementation. The separate
-capability-gap feedback lane has GAP-01 and optional GAP-04A dependency-ready.
-Preserve the per-course event stream as canonical, keep next-action selection
-in the external tutor host, and do not add Anki/product/provider behavior,
-arbitrary model memory, or a global learner aggregate.
+Read this README and the TUT-07 recall beads. TUT-04 through TUT-06 are
+complete. The next adaptive-tutor core pickup is TUT-07A; the Build Week product
+shell in TUT-08 is independently dependency-ready after TUT-06. Preserve the
+per-course event stream as canonical, keep next-action selection in the
+external tutor host, and do not add Anki behavior, arbitrary model memory, or a
+global learner aggregate.
 
 Global TODO:
 
@@ -21,7 +19,7 @@ Global TODO:
 - [x] [TUT-03 — capability gateway](slices/03-capability-gateway.md)
 - [x] [TUT-04 — study artifact proposals](slices/04-study-artifact-proposals.md)
 - [x] [TUT-05 — assessment and learner evidence](slices/05-assessment-and-learner-evidence.md)
-- [ ] [TUT-06 — OpenAI reference tutor host](slices/06-openai-reference-tutor-host.md)
+- [x] [TUT-06 — OpenAI reference tutor host](slices/06-openai-reference-tutor-host.md)
 - [ ] [TUT-07 — recall and scheduling](slices/07-recall-and-scheduling.md)
 - [ ] [TUT-08 — Build Week product shell](slices/08-build-week-product-shell.md)
 

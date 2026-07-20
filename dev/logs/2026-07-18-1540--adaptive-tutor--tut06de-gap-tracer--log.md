@@ -5,8 +5,8 @@ Area: adaptive-tutor / capability-gap
 
 ## Summary
 
-Completed TUT-06D and the TUT-06E implementation. TUT-06E retains one pending
-clean-wheel build/install gate. Added an optional direct OpenAI Responses
+Completed TUT-06D and TUT-06E, including the clean-wheel build/install matrix.
+Added an optional direct OpenAI Responses
 decision adapter and a deterministic offline reference-host demo using the same
 provider-neutral runner/gateway path as recorded Responses fixtures.
 
@@ -42,8 +42,17 @@ the harness.
 - Ruff: clean across repository.
 - Strict mypy: clean.
 - `git diff --check`: clean.
-- `uv build`: not rerun because sandbox escalation was rejected after the usage
-  limit was reached; previous TUT-06B/C build was green before this batch.
+- `uv build`: source distribution and universal wheel built successfully.
+- Clean base-wheel Python 3.12 venv: public core contracts imported with no
+  OpenAI SDK installed; the full offline reference-host demo completed with
+  scripted/recorded parity.
+- Clean `[openai]` wheel Python 3.12 venv: OpenAI 2.46.0 installed and the
+  offline adapter import/configuration conformance contract passed without an
+  API key or provider request.
+- Closure rerun: 1664 tests passed, 3 expected skips; repository-wide Ruff and
+  strict mypy over all 231 distributed source files passed. The broader
+  test-typing invocation now reports pre-existing test-fixture errors under
+  local mypy 2.3.0; no production module or TUT-06E closure file is implicated.
 
 ## Deferred GAP Scope
 

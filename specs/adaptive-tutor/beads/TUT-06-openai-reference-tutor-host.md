@@ -1,6 +1,6 @@
 # Task Bead: TUT-06 OpenAI reference tutor host
 
-Status: Blocked on TUT-05
+Status: Done
 Priority: P0
 Type: tracer-bullet
 Depends On: TUT-03, TUT-05
@@ -19,14 +19,14 @@ authority, retries, or canonical state.
 
 ## Acceptance Criteria
 
-- [ ] OpenAI imports are confined to optional host/technical adapter packages.
-- [ ] Scripted and live hosts exercise the same gateway contract.
-- [ ] Step budget, interruption, stale continuation, retry, and redaction are explicit.
-- [ ] File uploads become host-bound snapshots before agent visibility.
-- [ ] API-key mode is complete; subscription mode is not falsely emulated.
-- [ ] The base distribution remains dependency-free; the OpenAI SDK is one
+- [x] OpenAI imports are confined to optional host/technical adapter packages.
+- [x] Scripted and live hosts exercise the same gateway contract.
+- [x] Step budget, interruption, stale continuation, retry, and redaction are explicit.
+- [x] File uploads become host-bound snapshots before agent visibility.
+- [x] API-key mode is complete; subscription mode is not falsely emulated.
+- [x] The base distribution remains dependency-free; the OpenAI SDK is one
   optional extra and its absence does not break core or scripted-host imports.
-- [ ] The OpenAI model id is explicit configuration, never a core capability or
+- [x] The OpenAI model id is explicit configuration, never a core capability or
   hard-coded provider branch.
 
 ## Decomposition

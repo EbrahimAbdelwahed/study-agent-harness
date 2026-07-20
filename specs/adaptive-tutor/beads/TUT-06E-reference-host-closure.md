@@ -1,6 +1,6 @@
 # Task Bead: TUT-06E reference tutor-host closure
 
-Status: Implementation complete — clean-wheel build gate pending
+Status: Done
 Priority: P0
 Type: closure
 Depends On: TUT-06B, TUT-06C, TUT-06D
@@ -25,7 +25,7 @@ privacy, API-key, subscription, and file-handling documentation.
 - [x] Failed, interrupted, stale, terminated, cancelled, malformed, or
   budget-exhausted host work cannot be presented as a completed capability or
   append an unauthorized canonical event.
-- [ ] Clean install without optional extras runs the full scripted demo and
+- [x] Clean install without optional extras runs the full scripted demo and
   imports all public core contracts. Clean install with the OpenAI extra runs
   adapter conformance without requiring network access.
 - [x] Opt-in live smoke is environment-gated, names the explicit model id used,
