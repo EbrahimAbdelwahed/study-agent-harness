@@ -7,6 +7,7 @@ from typing import Protocol
 from study_agent.domain.identifiers import AnswerId, CourseId, SessionId
 from study_agent.domain.session import (
     AnswerRecord,
+    AssistantTurnRecord,
     ContinuationSummaryV1,
     InteractionRecord,
     StudySessionRecord,
@@ -47,3 +48,9 @@ class SessionViewPort(Protocol):
     def get_context(
         self, course_id: CourseId, session_id: SessionId
     ) -> ContinuationSummaryV1 | None: ...
+
+
+class AssistantTurnViewPort(Protocol):
+    def turns(
+        self, course_id: CourseId, session_id: SessionId
+    ) -> tuple[AssistantTurnRecord, ...]: ...

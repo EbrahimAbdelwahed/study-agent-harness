@@ -6,7 +6,14 @@ from enum import StrEnum
 
 from ._validation import require_aware, require_text
 from .grounding import AnswerStatus, GroundedAnswer
-from .identifiers import AnswerId, CourseId, InteractionId, RunId, SessionId
+from .identifiers import (
+    AnswerId,
+    CourseId,
+    EventId,
+    InteractionId,
+    RunId,
+    SessionId,
+)
 
 
 class InteractionKind(StrEnum):
@@ -19,6 +26,46 @@ class SessionStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
     ENDED = "ended"
+
+
+class AssistantTurnStatus(StrEnum):
+    COMPLETED = "completed"
+    TERMINATED = "terminated"
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRunOutputRef:
+    run_id: RunId
+    output_fingerprint: str
+    output_key: str = "tutor_message"
+
+    def __post_init__(self) -> None:
+        if self.output_key != "tutor_message":
+            raise ValueError("assistant turns require the tutor_message output")
+        _require_fingerprint(self.output_fingerprint, "output_fingerprint")
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantTurnRecord:
+    id: InteractionId
+    session_id: SessionId
+    occurred_at: datetime
+    status: AssistantTurnStatus
+    content: str
+    in_reply_to_interaction_id: InteractionId | None
+    output: VerifiedRunOutputRef
+    idempotency_key: str
+    command_fingerprint: str
+    event_id: EventId
+    course_sequence: int
+
+    def __post_init__(self) -> None:
+        require_aware(self.occurred_at, "occurred_at")
+        require_text(self.content, "content")
+        require_text(self.idempotency_key, "idempotency_key")
+        _require_fingerprint(self.command_fingerprint, "command_fingerprint")
+        if self.course_sequence < 1:
+            raise ValueError("course_sequence must be positive")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,14 @@
 """Application use cases and transaction boundaries."""
 
-from .export import EXPORT_SCHEMA_VERSION, ExportBundle, ExportService, ExportStateError
+from .export import (
+    EXPORT_SCHEMA_VERSION,
+    EXPORT_V2_SCHEMA_VERSION,
+    ExportBundle,
+    ExportBundleV2,
+    ExportService,
+    ExportStateError,
+    ExportVersion,
+)
 from .grounding_ask import (
     GroundingAskConfiguration,
     GroundingAskError,
@@ -15,9 +23,12 @@ from .harness import StudyHarness
 
 __all__ = [
     "EXPORT_SCHEMA_VERSION",
+    "EXPORT_V2_SCHEMA_VERSION",
     "ExportBundle",
+    "ExportBundleV2",
     "ExportService",
     "ExportStateError",
+    "ExportVersion",
     "GroundingAskConfiguration",
     "GroundingAskError",
     "GroundingAskErrorCode",

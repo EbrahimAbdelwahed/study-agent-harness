@@ -27,6 +27,7 @@ jobs:
       - run: python -m venv clean-install
       - run: clean-install/bin/python -m pip install --disable-pip-version-check dist/*.whl
       - run: clean-install/bin/study-agent --help
+      - run: clean-install/bin/study-agent-demo
       - run: clean-install/bin/study-agent --json describe
       - run: >-
           clean-install/bin/study-agent --json operator skill

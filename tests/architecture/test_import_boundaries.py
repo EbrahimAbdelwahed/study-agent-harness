@@ -16,6 +16,7 @@ CORE_PACKAGES = tuple(
         "skills",
         "playbooks",
         "sessions",
+        "study_context",
     )
 )
 FORBIDDEN_TOP_LEVEL_IMPORTS = {

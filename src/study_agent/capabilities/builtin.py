@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+from study_agent.playbooks import ToolBehaviorPin, VersionPins
+from study_agent.playbooks.builtin import (
+    ASSESS_UNDERSTANDING_FLOW,
+    EXPLAIN_CONCEPT_FLOW,
+)
+from study_agent.prompts import (
+    ASSESS_UNDERSTANDING_PROMPT,
+    EXPLAIN_CONCEPT_PROMPT,
+)
+from study_agent.skills import ArtifactReference
+from study_agent.skills.builtin import (
+    ASSESS_UNDERSTANDING_INPUT_SCHEMA,
+    ASSESS_UNDERSTANDING_OUTPUT_SCHEMA,
+    ASSESS_UNDERSTANDING_SKILL,
+    EXPLAIN_CONCEPT_INPUT_SCHEMA,
+    EXPLAIN_CONCEPT_OUTPUT_SCHEMA,
+    EXPLAIN_CONCEPT_SKILL,
+    PROPOSE_FLASHCARDS_INPUT_SCHEMA,
+    PROPOSE_FLASHCARDS_OUTPUT_SCHEMA,
+)
+from study_agent.skills.builtin.analyze_exam_sample import (
+    EXAM_ANALYSIS_INPUT_SCHEMA,
+    EXAM_ANALYSIS_OUTPUT_SCHEMA,
+)
+from study_agent.skills.builtin.grade_response import (
+    GRADE_RESPONSE_INPUT_SCHEMA,
+    GRADE_RESPONSE_OUTPUT_SCHEMA,
+)
+
+from .bindings import CapabilityBinding, CapabilityDependencyResolver
+from .contracts import CapabilityManifest, TutorCapabilityId
+
+VERSION = EXPLAIN_CONCEPT_SKILL.version
+
+EXPLAIN_CONCEPT_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.EXPLAIN_CONCEPT,
+    VERSION,
+    EXPLAIN_CONCEPT_INPUT_SCHEMA.value,
+    EXPLAIN_CONCEPT_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    True,
+)
+
+ASSESS_UNDERSTANDING_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.ASSESS_UNDERSTANDING,
+    VERSION,
+    ASSESS_UNDERSTANDING_INPUT_SCHEMA.value,
+    ASSESS_UNDERSTANDING_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    True,
+)
+
+PROPOSE_FLASHCARDS_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.PROPOSE_FLASHCARDS,
+    VERSION,
+    PROPOSE_FLASHCARDS_INPUT_SCHEMA.value,
+    PROPOSE_FLASHCARDS_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    True,
+)
+
+ANALYZE_EXAM_SAMPLE_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.ANALYZE_EXAM_SAMPLE,
+    VERSION,
+    EXAM_ANALYSIS_INPUT_SCHEMA.value,
+    EXAM_ANALYSIS_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    False,
+)
+
+GRADE_RESPONSE_MANIFEST = CapabilityManifest(
+    TutorCapabilityId.GRADE_RESPONSE,
+    VERSION,
+    GRADE_RESPONSE_INPUT_SCHEMA.value,
+    GRADE_RESPONSE_OUTPUT_SCHEMA.value,
+    ("course:read",),
+    False,
+)
+
+
+def explain_concept_binding(
+    *,
+    dependency_resolver: CapabilityDependencyResolver,
+    model_adapter: ArtifactReference,
+    state_contract: ArtifactReference,
+) -> CapabilityBinding:
+    pins = VersionPins(
+        ArtifactReference(EXPLAIN_CONCEPT_SKILL.id, EXPLAIN_CONCEPT_SKILL.version),
+        ArtifactReference(EXPLAIN_CONCEPT_FLOW.id, EXPLAIN_CONCEPT_FLOW.version),
+        EXPLAIN_CONCEPT_PROMPT,
+        (ToolBehaviorPin("source.search", VERSION),),
+        model_adapter,
+        state_contract,
+    )
+    return CapabilityBinding(
+        EXPLAIN_CONCEPT_MANIFEST,
+        EXPLAIN_CONCEPT_MANIFEST.fingerprint,
+        EXPLAIN_CONCEPT_SKILL,
+        EXPLAIN_CONCEPT_FLOW,
+        pins,
+        "explanation",
+        dependency_resolver,
+    )
+
+
+def assess_understanding_binding(
+    *,
+    dependency_resolver: CapabilityDependencyResolver,
+    model_adapter: ArtifactReference,
+    state_contract: ArtifactReference,
+) -> CapabilityBinding:
+    pins = VersionPins(
+        ArtifactReference(
+            ASSESS_UNDERSTANDING_SKILL.id,
+            ASSESS_UNDERSTANDING_SKILL.version,
+        ),
+        ArtifactReference(
+            ASSESS_UNDERSTANDING_FLOW.id,
+            ASSESS_UNDERSTANDING_FLOW.version,
+        ),
+        ASSESS_UNDERSTANDING_PROMPT,
+        (ToolBehaviorPin("source.search", VERSION),),
+        model_adapter,
+        state_contract,
+    )
+    return CapabilityBinding(
+        ASSESS_UNDERSTANDING_MANIFEST,
+        ASSESS_UNDERSTANDING_MANIFEST.fingerprint,
+        ASSESS_UNDERSTANDING_SKILL,
+        ASSESS_UNDERSTANDING_FLOW,
+        pins,
+        "assessment",
+        dependency_resolver,
+    )
+
+
+def builtin_capability_bindings(
+    *,
+    explain_dependency_resolver: CapabilityDependencyResolver,
+    assess_dependency_resolver: CapabilityDependencyResolver,
+    model_adapter: ArtifactReference,
+    state_contract: ArtifactReference,
+) -> tuple[CapabilityBinding, CapabilityBinding]:
+    return (
+        explain_concept_binding(
+            dependency_resolver=explain_dependency_resolver,
+            model_adapter=model_adapter,
+            state_contract=state_contract,
+        ),
+        assess_understanding_binding(
+            dependency_resolver=assess_dependency_resolver,
+            model_adapter=model_adapter,
+            state_contract=state_contract,
+        ),
+    )

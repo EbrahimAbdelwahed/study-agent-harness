@@ -62,7 +62,7 @@ class ModelProvenance:
     adapter_id: str
     adapter_version: str
     model_id: str
-    response_id: str
+    response_id: str | None
     run_id: RunId
     usage: ModelUsageProvenance | None = None
 
@@ -71,9 +71,10 @@ class ModelProvenance:
             "adapter_id",
             "adapter_version",
             "model_id",
-            "response_id",
         ):
             require_text(getattr(self, name), name)
+        if self.response_id is not None:
+            require_text(self.response_id, "response_id")
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,6 +11,7 @@ from study_agent.skills import ArtifactReference, SemanticVersion
 
 from .contracts import (
     ReadDependency,
+    RunStatus,
     StepTrace,
     ValidationOutcome,
     ValidatorDisposition,
@@ -51,6 +52,7 @@ class PlaybookRunStatus(StrEnum):
     COMPLETED = "completed"
     SUSPENDED = "suspended"
     TERMINATED = "terminated"
+    CANCELLED = "cancelled"
     FAILED = "failed"
 
 
@@ -67,6 +69,7 @@ class EngineErrorCode(StrEnum):
     BINDING_ERROR = "binding_error"
     TOOL_ERROR = "tool_error"
     MODEL_ERROR = "model_error"
+    CANCELLED = "cancelled"
     VALIDATOR_ERROR = "validator_error"
     RUN_STORE_ERROR = "run_store_error"
     DUPLICATE_RUN = "duplicate_run"
@@ -140,9 +143,79 @@ class FailedRunResult:
         object.__setattr__(self, "traces", tuple(self.traces))
 
 
+@dataclass(frozen=True, slots=True)
+class CancelledRunResult:
+    outputs: JsonObject
+    traces: tuple[StepTrace, ...]
+    failure: EngineFailure
+    status: PlaybookRunStatus = field(default=PlaybookRunStatus.CANCELLED, init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "outputs", freeze_object(self.outputs))
+        object.__setattr__(self, "traces", tuple(self.traces))
+        if self.failure.code is not EngineErrorCode.CANCELLED:
+            raise ValueError("cancelled results require a cancelled engine failure")
+
+
 type PlaybookRunResult = (
-    CompletedRunResult | SuspendedRunResult | TerminatedRunResult | FailedRunResult
+    CompletedRunResult
+    | SuspendedRunResult
+    | TerminatedRunResult
+    | CancelledRunResult
+    | FailedRunResult
 )
+
+
+@dataclass(frozen=True, slots=True)
+class InspectedRunRecord:
+    """Validated operational checkpoint state that does not confer success."""
+
+    run_id: RunId
+    status: RunStatus
+    definition_fingerprint: str
+    checkpoint_fingerprint: str
+    inputs: JsonObject
+    pins: VersionPins
+    read_dependencies: tuple[ReadDependency, ...]
+    outputs: JsonObject
+    traces: tuple[StepTrace, ...]
+    next_step_index: int
+    dialogue_step_id: str | None = None
+    dialogue_request: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_id, RunId):
+            raise TypeError("inspected run_id must be a RunId")
+        if not isinstance(self.status, RunStatus):
+            raise TypeError("inspected run status must use RunStatus")
+        if not isinstance(self.pins, VersionPins):
+            raise TypeError("inspected run pins must be VersionPins")
+        for value, name in (
+            (self.definition_fingerprint, "definition_fingerprint"),
+            (self.checkpoint_fingerprint, "checkpoint_fingerprint"),
+        ):
+            require_text(value, name)
+            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+                raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+        object.__setattr__(self, "inputs", freeze_object(self.inputs))
+        object.__setattr__(self, "read_dependencies", tuple(self.read_dependencies))
+        object.__setattr__(self, "outputs", freeze_object(self.outputs))
+        object.__setattr__(self, "traces", tuple(self.traces))
+        if not all(isinstance(item, ReadDependency) for item in self.read_dependencies):
+            raise TypeError("inspected read dependencies must use ReadDependency")
+        if not all(isinstance(item, StepTrace) for item in self.traces):
+            raise TypeError("inspected traces must use StepTrace")
+        if type(self.next_step_index) is not int or self.next_step_index < 0:
+            raise ValueError("next_step_index must be non-negative")
+        suspended = self.status is RunStatus.SUSPENDED
+        if suspended != (
+            self.dialogue_step_id is not None and self.dialogue_request is not None
+        ):
+            raise ValueError("only suspended inspections carry dialogue identity and request")
+        if self.dialogue_step_id is not None:
+            require_text(self.dialogue_step_id, "dialogue_step_id")
+        if self.dialogue_request is not None:
+            require_text(self.dialogue_request, "dialogue_request")
 
 
 @dataclass(frozen=True, slots=True)
