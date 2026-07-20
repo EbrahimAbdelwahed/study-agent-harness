@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
 from datetime import UTC, datetime
@@ -172,7 +173,10 @@ def _prompt() -> VerifiedPromptReceipt:
 
 
 def _proof(**changes: object) -> VerifiedChildExecutionProof:
-    tool_value = {"scope_id": "scope:lesson-1", "paragraphs": ("evidence:chunk-1",)}
+    tool_value: JsonObject = {
+        "scope_id": "scope:lesson-1",
+        "paragraphs": ("evidence:chunk-1",),
+    }
     values: dict[str, object] = {
         "run_id": RunId("child-run-1"),
         "status": GenerationWorkerStatus.COMPLETED,
@@ -319,7 +323,7 @@ def _create(
     run: VerifiedRunRecord | None = None,
     definition: PlaybookDefinition | None = None,
     output: JsonObject = OUTPUT,
-):
+) -> VerifiedChildExecutionProofView:
     return owner.create(
         task,
         receipt,
@@ -423,22 +427,22 @@ def test_owner_slot_is_exact_retry_and_contains_no_task_or_raw_input_bytes() -> 
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    "changed",
     (
-        ("pins_fingerprint", SHA_D),
-        ("input_fingerprint", SHA_D),
-        ("output_fingerprint", SHA_D),
-        ("validator_fingerprint", SHA_D),
-        ("run_fingerprint", SHA_D),
-        ("prompt_fingerprint", SHA_D),
+        lambda receipt: replace(receipt, pins_fingerprint=SHA_D),
+        lambda receipt: replace(receipt, input_fingerprint=SHA_D),
+        lambda receipt: replace(receipt, output_fingerprint=SHA_D),
+        lambda receipt: replace(receipt, validator_fingerprint=SHA_D),
+        lambda receipt: replace(receipt, run_fingerprint=SHA_D),
+        lambda receipt: replace(receipt, prompt_fingerprint=SHA_D),
     ),
 )
 def test_owner_rejects_every_changed_completed_receipt_commitment(
-    field: str, value: str
+    changed: Callable[[GenerationWorkerReceipt], GenerationWorkerReceipt],
 ) -> None:
     task = _task()
     owner = VerifiedChildProofOwner(MemoryProofStore())
-    receipt = replace(_receipt(task), **{field: value})
+    receipt = changed(_receipt(task))
     with pytest.raises(GenerationWorkerConflictError):
         _create(owner, task, receipt)
 
@@ -497,7 +501,7 @@ def test_owner_rejects_changed_task_authority_proof_and_competing_owner() -> Non
     ),
 )
 def test_exact_owner_slot_rejects_competing_operational_provenance(
-    changed,
+    changed: Callable[[VerifiedChildExecutionProof], VerifiedChildExecutionProof],
 ) -> None:
     store = MemoryProofStore()
     owner = VerifiedChildProofOwner(store)

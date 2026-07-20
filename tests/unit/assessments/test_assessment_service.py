@@ -13,7 +13,9 @@ from study_agent.artifacts.contracts import (
     ArtifactSnapshot,
 )
 from study_agent.assessments import (
+    AttemptRecord,
     MultipleChoiceResponse,
+    PresentationRecord,
     ProjectionAssessmentView,
     RationalScore,
     SingleChoiceResponse,
@@ -33,6 +35,7 @@ from study_agent.assessments.service import (
 )
 from study_agent.domain import (
     Actor,
+    AnswerId,
     ArtifactBatchId,
     ArtifactId,
     ArtifactRevisionId,
@@ -48,7 +51,13 @@ from study_agent.domain import (
     SessionId,
     StudyArtifactKind,
 )
-from study_agent.domain.session import SessionStatus, StudySessionRecord
+from study_agent.domain.session import (
+    AnswerRecord,
+    ContinuationSummaryV1,
+    InteractionRecord,
+    SessionStatus,
+    StudySessionRecord,
+)
 from study_agent.ports import EventSequenceConflictError
 from study_agent.state import EventRegistry, Projection, apply_event
 from tests.unit.artifacts.test_lifecycle_events import generated_provenance
@@ -161,10 +170,37 @@ class Artifacts:
         assert course_id == COURSE
         return self.snapshot
 
+    def command_fingerprint(self, course_id: CourseId, event_id: EventId) -> str | None:
+        assert course_id == COURSE
+        return None
+
 
 class Sessions:
+    def list_sessions(self, course_id: CourseId) -> tuple[StudySessionRecord, ...]:
+        return (self.get_session(course_id, SESSION),)
+
     def get_session(self, course_id: CourseId, session_id: SessionId) -> StudySessionRecord:
         return StudySessionRecord(session_id, course_id, SessionStatus.ACTIVE, NOW)
+
+    def interactions(
+        self, course_id: CourseId, session_id: SessionId
+    ) -> tuple[InteractionRecord, ...]:
+        return ()
+
+    def answers(
+        self, course_id: CourseId, session_id: SessionId
+    ) -> tuple[AnswerRecord, ...]:
+        return ()
+
+    def get_answer(
+        self, course_id: CourseId, session_id: SessionId, answer_id: AnswerId
+    ) -> AnswerRecord:
+        raise AssertionError("assessment tests do not read session answers")
+
+    def get_context(
+        self, course_id: CourseId, session_id: SessionId
+    ) -> ContinuationSummaryV1 | None:
+        return None
 
 
 def _content(
@@ -206,7 +242,7 @@ def _through_attempt(
     service: AssessmentService,
     *,
     response: MultipleChoiceResponse | SingleChoiceResponse,
-) -> tuple[object, object]:
+) -> tuple[PresentationRecord, AttemptRecord]:
     presentation = service.present_item(REVISION, _context(PrincipalKind.SERVICE, "present"), 1)
     attempt = service.record_attempt(
         presentation.id,
@@ -224,7 +260,7 @@ def test_service_commits_one_ordered_event_per_stage_and_exact_grade_provenance(
         service, response=MultipleChoiceResponse(("Alpha", "Gamma"))
     )
     grade = service.grade_closed(
-        attempt.id,  # type: ignore[union-attr]
+        attempt.id,
         _context(PrincipalKind.SERVICE, "grade"),
         3,
     )
@@ -264,7 +300,7 @@ def test_exact_retries_return_committed_records_and_drift_fails_closed() -> None
     count = len(events.values)
 
     assert service.record_attempt(
-        presentation.id,  # type: ignore[union-attr]
+        presentation.id,
         SingleChoiceResponse("Alpha"),
         25,
         _context(PrincipalKind.HUMAN, "attempt"),
@@ -273,7 +309,7 @@ def test_exact_retries_return_committed_records_and_drift_fails_closed() -> None
     assert len(events.values) == count
     with pytest.raises(AssessmentConflictError, match="different command"):
         service.record_attempt(
-            presentation.id,  # type: ignore[union-attr]
+            presentation.id,
             SingleChoiceResponse("Beta"),
             25,
             _context(PrincipalKind.HUMAN, "attempt"),
@@ -281,7 +317,7 @@ def test_exact_retries_return_committed_records_and_drift_fails_closed() -> None
         )
     with pytest.raises(AssessmentConflictError, match="already has"):
         service.record_attempt(
-            presentation.id,  # type: ignore[union-attr]
+            presentation.id,
             SingleChoiceResponse("Alpha"),
             25,
             _context(PrincipalKind.HUMAN, "attempt-again"),
@@ -298,7 +334,7 @@ def test_authority_free_text_cross_session_and_stale_sequence_fail_closed() -> N
     )
     with pytest.raises(AssessmentCommandError, match="HUMAN"):
         service.record_attempt(
-            presentation.id,  # type: ignore[union-attr]
+            presentation.id,
             SingleChoiceResponse("Alpha"),
             None,
             _context(PrincipalKind.SERVICE, "wrong-authority"),
@@ -306,13 +342,13 @@ def test_authority_free_text_cross_session_and_stale_sequence_fail_closed() -> N
         )
     with pytest.raises(AssessmentCommandError, match="another session"):
         service.grade_closed(
-            attempt.id,  # type: ignore[union-attr]
+            attempt.id,
             _context(PrincipalKind.SERVICE, "cross-scope", SessionId("other")),
             3,
         )
     with pytest.raises(RetryableAssessmentConflictError):
         service.grade_closed(
-            attempt.id,  # type: ignore[union-attr]
+            attempt.id,
             _context(PrincipalKind.SERVICE, "stale"),
             2,
         )
@@ -361,7 +397,7 @@ def test_policy_port_can_be_injected_without_importing_a_model_runtime() -> None
     service = AssessmentService(events, Clock(), view, Artifacts(content), Sessions(), policy)
     _, attempt = _through_attempt(service, response=SingleChoiceResponse("Beta"))
     grade = service.grade_closed(
-        attempt.id,  # type: ignore[union-attr]
+        attempt.id,
         _context(PrincipalKind.SERVICE, "grade"),
         3,
     )

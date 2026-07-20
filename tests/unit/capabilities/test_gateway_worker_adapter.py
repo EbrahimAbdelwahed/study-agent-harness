@@ -14,13 +14,15 @@ from study_agent.capabilities import (
     CapabilityGatewayErrorCode,
     CompletedCapabilityOutcome,
     FailedCapabilityOutcome,
-    GatewayIsolatedCapabilityRunAdapter,
     StaleCapabilityOutcome,
     StudyCapabilityGateway,
     SuspendedCapabilityOutcome,
     TerminatedCapabilityOutcome,
     explain_concept_binding,
 )
+from study_agent.capabilities.bindings import CapabilityBinding, ProfiledCapabilityBinding
+from study_agent.capabilities.contracts import CapabilityOutcome
+from study_agent.capabilities.worker_adapter import GatewayIsolatedCapabilityRunAdapter
 from study_agent.domain import (
     CorrelationId,
     CourseId,
@@ -29,7 +31,7 @@ from study_agent.domain import (
     RunId,
     SessionId,
 )
-from study_agent.domain._validation import JsonObject
+from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.playbooks import (
     PlaybookRunStatus,
     ReadDependency,
@@ -86,24 +88,36 @@ class MemoryProofStore:
 
 
 class RecordingGateway(StudyCapabilityGateway):
-    def __init__(self, result: object) -> None:
+    def __init__(self, result: CapabilityOutcome | BaseException) -> None:
         self.result = result
         self.calls: list[tuple[str, tuple[object, ...]]] = []
 
-    async def _start_bound(self, *args: object) -> object:
-        self.calls.append(("start", args))
+    async def _start_bound(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        public_inputs: JsonObject,
+        execution_inputs: JsonObject,
+        context: ExecutionContext,
+    ) -> CapabilityOutcome:
+        self.calls.append(("start", (binding, public_inputs, execution_inputs, context)))
         if isinstance(self.result, BaseException):
             raise self.result
         return self.result
 
-    async def _resume_bound(self, *args: object) -> object:
-        self.calls.append(("resume", args))
+    async def _resume_bound(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        continuation: CapabilityContinuation,
+        response: JsonValue,
+        context: ExecutionContext,
+    ) -> CapabilityOutcome:
+        self.calls.append(("resume", (binding, continuation, response, context)))
         if isinstance(self.result, BaseException):
             raise self.result
         return self.result
 
 
-def _binding():
+def _binding() -> CapabilityBinding:
     return explain_concept_binding(
         dependency_resolver=lambda *, context, inputs: (
             ReadDependency("course", str(context.course_id), "sequence-1"),
@@ -294,12 +308,14 @@ def _continuation() -> CapabilityContinuation:
     )
 
 
-def _adapter(result: object) -> tuple[GatewayIsolatedCapabilityRunAdapter, RecordingGateway]:
+def _adapter(
+    result: CapabilityOutcome | BaseException,
+) -> tuple[GatewayIsolatedCapabilityRunAdapter, RecordingGateway]:
     return _adapter_with_store(result, MemoryProofStore())
 
 
 def _adapter_with_store(
-    result: object, store: MemoryProofStore
+    result: CapabilityOutcome | BaseException, store: MemoryProofStore
 ) -> tuple[GatewayIsolatedCapabilityRunAdapter, RecordingGateway]:
     gateway = RecordingGateway(result)
     adapter = GatewayIsolatedCapabilityRunAdapter(
@@ -369,7 +385,7 @@ def test_resume_passes_the_exact_task_and_continuation_to_one_gateway_call() -> 
     ),
 )
 def test_closed_non_success_gateway_outcomes_map_without_direct_effect(
-    outcome: object, status: GenerationWorkerStatus
+    outcome: CapabilityOutcome, status: GenerationWorkerStatus
 ) -> None:
     adapter, gateway = _adapter(outcome)
     observed = _run(adapter.start(_task(), _parent()))

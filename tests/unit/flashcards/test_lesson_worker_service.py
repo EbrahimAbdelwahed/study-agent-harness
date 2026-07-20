@@ -171,12 +171,18 @@ class _Resolver:
 
 
 class _Binding:
-    def __init__(self, request) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, request: LessonWorkerRequest) -> None:
         self.expectation = request.profile_expectation
         self.request = request
         self.calls = 0
 
-    def build(self, task_id, public_inputs, prepared_scope, context):  # type: ignore[no-untyped-def]
+    def build(
+        self,
+        task_id: str,
+        public_inputs: JsonObject,
+        prepared_scope: PreparedPlannedFlashcardScope,
+        context: ExecutionContext,
+    ) -> GenerationWorkerTask:
         self.calls += 1
         bundle = next(
             item for item in self.request.plan.bundles if item.bundle_id == prepared_scope.bundle_id
@@ -219,7 +225,12 @@ class _RunningWorker:
     def __init__(self) -> None:
         self.starts: list[tuple[GenerationWorkerTask, PreparedPlannedFlashcardScope]] = []
 
-    async def start(self, task, prepared_scope, context):  # type: ignore[no-untyped-def]
+    async def start(
+        self,
+        task: GenerationWorkerTask,
+        prepared_scope: PreparedPlannedFlashcardScope,
+        context: ExecutionContext,
+    ) -> WorkerCompactView:
         self.starts.append((task, prepared_scope))
         return WorkerCompactView(
             task.task_id,
@@ -273,7 +284,12 @@ class _ScriptedWorker:
         self.results: dict[str, VerifiedFlashcardPageResult] = {}
         self.starts: list[str] = []
 
-    async def start(self, task, prepared_scope, context):  # type: ignore[no-untyped-def]
+    async def start(
+        self,
+        task: GenerationWorkerTask,
+        prepared_scope: PreparedPlannedFlashcardScope,
+        context: ExecutionContext,
+    ) -> WorkerCompactView:
         self.starts.append(task.task_id)
         position = self.positions.get(task.task_id, len(set(self.positions.values())))
         self.tasks[task.task_id] = task
@@ -361,7 +377,7 @@ class _BatchWorker(_ScriptedWorker):
         handle = prepared_scope.prepared_scope.evidence.items[0].handle
         if self.foreign_evidence:
             handle = "foreign-evidence"
-        candidates = ()
+        candidates: tuple[FlashcardCandidate, ...] = ()
         if position not in self.empty_positions:
             candidates = (
                 FlashcardCandidate(
@@ -441,10 +457,14 @@ class _MutatingBinding(_Binding):
         super().__init__(request)
         self.mutation = mutation
 
-    def build(self, task_id, public_inputs, prepared_scope, context):  # type: ignore[no-untyped-def]
-        task = super().build(  # type: ignore[no-untyped-call]
-            task_id, public_inputs, prepared_scope, context
-        )
+    def build(
+        self,
+        task_id: str,
+        public_inputs: JsonObject,
+        prepared_scope: PreparedPlannedFlashcardScope,
+        context: ExecutionContext,
+    ) -> GenerationWorkerTask:
+        task = super().build(task_id, public_inputs, prepared_scope, context)
         return self.mutation(task)
 
 

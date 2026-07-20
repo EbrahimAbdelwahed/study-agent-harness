@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -116,7 +117,7 @@ def _event(
         Actor(authority, "actor"),
         NOW + timedelta(seconds=sequence),
         CorrelationId("correlation"),
-        payload,  # type: ignore[arg-type]
+        payload,
         session_id,
     )
 
@@ -141,15 +142,32 @@ def _present(projection: Projection, *, content: AssessmentItemContent | None = 
     )
 
 
+def _assessment_records(projection: Projection, kind: str) -> Mapping[str, object]:
+    assessments = projection.state["assessments"]
+    assert isinstance(assessments, Mapping)
+    records = assessments[kind]
+    assert isinstance(records, Mapping)
+    return records
+
+
+def _assessment_history(projection: Projection, kind: str) -> Sequence[object]:
+    assessments = projection.state["assessments"]
+    assert isinstance(assessments, Mapping)
+    records = assessments[kind]
+    assert isinstance(records, Sequence)
+    return records
+
+
 def test_presentation_accepts_exact_artifact_and_preserves_prior_projection() -> None:
     before = _seed()
     prior_bytes = before.canonical_bytes()
     after = _present(before)
 
     assert before.canonical_bytes() == prior_bytes
-    records = after.state["assessments"]["presentations"]  # type: ignore[index]
-    assert len(records) == 1  # type: ignore[arg-type]
-    record = next(iter(records.values()))  # type: ignore[union-attr]
+    records = _assessment_records(after, "presentations")
+    assert len(records) == 1
+    record = next(iter(records.values()))
+    assert isinstance(record, Mapping)
     assert "expected_response" not in record
     assert "evaluation_criteria" not in record
 
@@ -295,8 +313,8 @@ def test_grade_and_contest_require_strict_order_and_preserve_history() -> None:
         state, _event(4, GRADE_CONTESTED, contest_payload, PrincipalKind.HUMAN), registry
     )
     assert state.sequence == 4
-    assert len(state.state["assessments"]["grades"]) == 1  # type: ignore[index,arg-type]
-    assert len(state.state["assessments"]["contests"]) == 1  # type: ignore[index,arg-type]
+    assert len(_assessment_records(state, "grades")) == 1
+    assert len(_assessment_history(state, "contests")) == 1
 
 
 def test_duplicate_command_and_cross_session_reference_fail_closed() -> None:
@@ -386,6 +404,8 @@ def test_grade_supersession_requires_active_same_attempt_predecessor() -> None:
         )
     second = grade("grade-2", first_id)
     state = apply_event(state, _event(4, GRADE_RECORDED, second, PrincipalKind.SERVICE), registry)
-    grades = state.state["assessments"]["grades"]  # type: ignore[index]
-    assert len(grades) == 2  # type: ignore[arg-type]
-    assert grades[str(first_id)]["lifecycle"] == "superseded"  # type: ignore[index]
+    grades = _assessment_records(state, "grades")
+    assert len(grades) == 2
+    first_grade = grades[str(first_id)]
+    assert isinstance(first_grade, Mapping)
+    assert first_grade["lifecycle"] == "superseded"

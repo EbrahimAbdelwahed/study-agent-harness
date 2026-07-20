@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import NoReturn
 
 import pytest
 
-from study_agent.domain import PrincipalKind, RevisionId
+from study_agent.domain import ExecutionContext, PrincipalKind, RevisionId
+from study_agent.flashcards.lesson_worker_contracts import LessonWorkerRequest
+from study_agent.flashcards.planning import PreparedPlannedFlashcardScope
 from study_agent.flashcards.worker_router import (
     ClosedHistoricalPlannedBundleWorkerRouter,
 )
@@ -16,6 +19,8 @@ from study_agent.pedagogy import (
     ProfileSelectionReceipt,
     ProfileSelectorKind,
 )
+from study_agent.workers import GenerationWorkerTask
+from study_agent.workers.view import WorkerCompactView
 from tests.unit.flashcards.test_lesson_worker_contracts import _request
 
 
@@ -24,8 +29,24 @@ class _Worker:
         self.expectation = expectation
         self.label = label
 
+    async def start(
+        self,
+        task: GenerationWorkerTask,
+        prepared_scope: PreparedPlannedFlashcardScope,
+        context: ExecutionContext,
+    ) -> WorkerCompactView:
+        raise AssertionError("routing test does not execute workers")
 
-def _morphology_request():  # type: ignore[no-untyped-def]
+    def detail(
+        self,
+        task_id: str,
+        prepared_scope_fingerprint: str,
+        context: ExecutionContext,
+    ) -> NoReturn:
+        raise AssertionError("routing test does not inspect worker details")
+
+
+def _morphology_request() -> LessonWorkerRequest:
     request = _request()
     receipt = ProfileSelectionReceipt(
         MORPHOLOGY_FIRST_ANATOMY_V1,
@@ -46,11 +67,11 @@ def _morphology_request():  # type: ignore[no-untyped-def]
 def test_router_rebuilds_hybrid_and_morphology_workers_from_persisted_request() -> None:
     calls: list[tuple[str, object]] = []
 
-    def hybrid(request):  # type: ignore[no-untyped-def]
+    def hybrid(request: LessonWorkerRequest) -> _Worker:
         calls.append(("hybrid", request))
         return _Worker(request.profile_expectation, "hybrid")
 
-    def morphology(request):  # type: ignore[no-untyped-def]
+    def morphology(request: LessonWorkerRequest) -> _Worker:
         calls.append(("morphology", request))
         return _Worker(request.profile_expectation, "morphology")
 

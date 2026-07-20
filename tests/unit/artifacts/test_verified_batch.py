@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from hashlib import sha256
+from typing import cast
 
 import pytest
 
@@ -11,11 +12,14 @@ from study_agent.artifacts.candidates import (
     FlashcardCandidateBatch,
     FlashcardPedagogicalRole,
 )
+from study_agent.artifacts.content import ExamBlueprintContent, HybridFlashcardContent
 from study_agent.artifacts.generated_owner import (
     ExamGeneratedBatchOwnerReceipt,
+    GeneratedBatchOwnerReceipt,
     GeneratedBatchOwnerRegistry,
     LessonGeneratedBatchOwnerReceipt,
 )
+from study_agent.artifacts.identity import GeneratedArtifactProvenance
 from study_agent.artifacts.verified_batch import (
     UnsupportedVerifiedMediaError,
     VerifiedBatchRecoveryError,
@@ -36,7 +40,7 @@ from study_agent.domain import (
     RunId,
     SessionId,
 )
-from study_agent.domain._validation import freeze_object
+from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.exams.analysis import ExamAnalysisTaskFactory, analyze_exam_sample_binding
 from study_agent.exams.contracts import (
     ExamAnalysisRequest,
@@ -69,7 +73,9 @@ from study_agent.skills import ArtifactReference, SemanticVersion
 from study_agent.state import canonical_json_bytes
 from study_agent.workers import (
     GenerationWorkerReceipt,
+    GenerationWorkerService,
     GenerationWorkerStatus,
+    GenerationWorkerTask,
     ObservedValidationReceipt,
     TechnicalModelReceipt,
     VerifiedChildExecutionProof,
@@ -102,7 +108,11 @@ def _context(*, authority: str = "source.read") -> ExecutionContext:
     )
 
 
-def _worker_proof(task, output, dependencies):  # type: ignore[no-untyped-def]
+def _worker_proof(
+    task: GenerationWorkerTask,
+    output: JsonObject,
+    dependencies: tuple[ReadDependency, ...],
+) -> tuple[VerifiedChildExecutionProof, GenerationWorkerReceipt]:
     validations = tuple(
         ObservedValidationReceipt(
             item.step_id,
@@ -156,7 +166,14 @@ def _worker_proof(task, output, dependencies):  # type: ignore[no-untyped-def]
     return proof, receipt
 
 
-def _flashcard_fixture(*, media: bool = False):  # type: ignore[no-untyped-def]
+def _flashcard_fixture(
+    *, media: bool = False
+) -> tuple[
+    LessonGeneratedBatchOwnerReceipt,
+    VerifiedLessonOwnerMaterial,
+    VerifiedChildExecutionProof,
+    ExecutionContext,
+]:
     context = _context()
     request = _request()
     wrapper = _wrapper(request)
@@ -299,7 +316,12 @@ def _mapping_fingerprint(mappings: tuple[ExamEvidenceMapping, ...]) -> str:
     ).hexdigest()
 
 
-def _exam_fixture():  # type: ignore[no-untyped-def]
+def _exam_fixture() -> tuple[
+    ExamGeneratedBatchOwnerReceipt,
+    VerifiedExamOwnerMaterial,
+    VerifiedChildExecutionProof,
+    ExecutionContext,
+]:
     context = _context(authority="course:read")
     version = SemanticVersion.parse("1.0.0")
     binding = analyze_exam_sample_binding(
@@ -324,7 +346,7 @@ def _exam_fixture():  # type: ignore[no-untyped-def]
             citation.end_offset,
         ),
     )
-    output = {
+    output: JsonObject = {
         "sample_size": 1,
         "observed_topics": ({"value": "Brachial plexus", "evidence_ids": (evidence.handle,)},),
         "observed_formats": ({"value": "Open response", "evidence_ids": (evidence.handle,)},),
@@ -339,7 +361,7 @@ def _exam_fixture():  # type: ignore[no-untyped-def]
         output,
         (ReadDependency("source_revision", str(citation.source_id), str(citation.revision_id)),),
     )
-    prepared_value = {
+    prepared_value: JsonObject = {
         "prepared_scope": scope.to_json(),
         "prompt_projection": projection.to_json(),
     }
@@ -394,35 +416,58 @@ def _exam_fixture():  # type: ignore[no-untyped-def]
 
 
 class _Owners:
-    def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, owner: GeneratedBatchOwnerReceipt) -> None:
         self.owner = owner
 
-    def load(self, child_run_id):  # type: ignore[no-untyped-def]
+    def load(self, child_run_id: RunId) -> GeneratedBatchOwnerReceipt:
+        assert child_run_id == self.owner.child_run_id
         return self.owner
 
 
 class _Resolver:
-    def __init__(self, material) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self, material: VerifiedLessonOwnerMaterial | VerifiedExamOwnerMaterial
+    ) -> None:
         self.material = material
 
-    def resolve_lesson(self, owner, context):  # type: ignore[no-untyped-def]
+    def resolve_lesson(
+        self,
+        owner: LessonGeneratedBatchOwnerReceipt,
+        context: ExecutionContext,
+    ) -> VerifiedLessonOwnerMaterial:
+        assert isinstance(self.material, VerifiedLessonOwnerMaterial)
         return self.material
 
-    def resolve_exam(self, owner, context):  # type: ignore[no-untyped-def]
+    def resolve_exam(
+        self,
+        owner: ExamGeneratedBatchOwnerReceipt,
+        context: ExecutionContext,
+    ) -> VerifiedExamOwnerMaterial:
+        assert isinstance(self.material, VerifiedExamOwnerMaterial)
         return self.material
 
 
 class _Proofs:
-    def __init__(self, proof) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, proof: VerifiedChildExecutionProof) -> None:
         self.proof = proof
         self.contexts: list[ExecutionContext] = []
 
-    def load(self, task, run_id, receipt, context):  # type: ignore[no-untyped-def]
+    def load(
+        self,
+        task: GenerationWorkerTask,
+        run_id: RunId,
+        receipt: GenerationWorkerReceipt,
+        context: ExecutionContext,
+    ) -> VerifiedChildExecutionProof:
         self.contexts.append(context)
         return self.proof
 
 
-def _adapter(owner, material, proof):  # type: ignore[no-untyped-def]
+def _adapter(
+    owner: GeneratedBatchOwnerReceipt,
+    material: VerifiedLessonOwnerMaterial | VerifiedExamOwnerMaterial,
+    proof: VerifiedChildExecutionProof,
+) -> tuple[VerifiedGeneratedBatchAdapter, _Proofs]:
     proofs = _Proofs(proof)
     return (
         VerifiedGeneratedBatchAdapter(
@@ -439,11 +484,16 @@ def test_lesson_proof_converts_candidates_parents_and_nullable_model_receipt() -
     batch = adapter.recover(owner.child_run_id, context)
 
     assert len(batch.proposals) == 2
-    assert batch.proposals[0].content.content.parent_ordinal is None  # type: ignore[union-attr]
-    assert batch.proposals[1].content.content.parent_ordinal == 0  # type: ignore[union-attr]
+    first_content = batch.proposals[0].content.content
+    second_content = batch.proposals[1].content.content
+    assert isinstance(first_content, HybridFlashcardContent)
+    assert isinstance(second_content, HybridFlashcardContent)
+    assert first_content.parent_ordinal is None
+    assert second_content.parent_ordinal == 0
     provenance = batch.proposals[0].provenance
-    assert provenance.model is not None  # type: ignore[union-attr]
-    assert provenance.model.response_id is None  # type: ignore[union-attr]
+    assert isinstance(provenance, GeneratedArtifactProvenance)
+    assert provenance.model is not None
+    assert provenance.model.response_id is None
     assert proofs.contexts == [generation_worker_child_context(material.task, context)]
 
 
@@ -455,9 +505,12 @@ def test_exam_proof_converts_observations_to_one_blueprint() -> None:
 
     assert len(batch.proposals) == 1
     content = batch.proposals[0].content.content
-    assert content.sample_size == 1  # type: ignore[union-attr]
-    assert content.observed_topics[0].source_commitment_indices == (0,)  # type: ignore[union-attr]
-    assert batch.proposals[0].provenance.profile_selection is None  # type: ignore[union-attr]
+    assert isinstance(content, ExamBlueprintContent)
+    assert content.sample_size == 1
+    assert content.observed_topics[0].source_commitment_indices == (0,)
+    provenance = batch.proposals[0].provenance
+    assert isinstance(provenance, GeneratedArtifactProvenance)
+    assert provenance.profile_selection is None
 
 
 def test_adapter_rejects_owner_proof_tamper_and_media_without_receipt() -> None:
@@ -566,10 +619,22 @@ def test_exam_writer_persists_exact_task_and_receipt_without_raw_key() -> None:
 
 class _LessonStore:
     def __init__(self, material: VerifiedLessonOwnerMaterial) -> None:
-        self.payload = material.checkpoint.to_bytes()
+        self.values = {str(material.checkpoint.run_id): material.checkpoint.to_bytes()}
 
     def load(self, key: str) -> bytes:
-        return self.payload
+        return self.values[key]
+
+    def create(self, key: str, payload: bytes) -> bool:
+        if key in self.values:
+            return False
+        self.values[key] = payload
+        return True
+
+    def compare_and_set(self, key: str, expected: bytes, replacement: bytes) -> bool:
+        if self.values[key] != expected:
+            return False
+        self.values[key] = replacement
+        return True
 
 
 class _LessonDetail:
@@ -612,8 +677,8 @@ def test_concrete_resolver_rebuilds_lesson_and_exam_material() -> None:
     exam_owner, exam_material, _, exam_context = _exam_fixture()
     resolver = VerifiedGeneratedOwnerResolverAdapter(
         lesson_store=_LessonStore(lesson_material),
-        lesson_worker=_LessonDetail(lesson_material, lesson_proof),  # type: ignore[arg-type]
-        exam_scope=_ExamScope(exam_material),  # type: ignore[arg-type]
+        lesson_worker=_LessonDetail(lesson_material, lesson_proof),
+        exam_scope=_ExamScope(exam_material),
         source_content=_Content(),
     )
 
@@ -646,8 +711,8 @@ def test_exam_facade_publishes_owner_only_after_verified_mapping() -> None:
     _, material, proof, context = _exam_fixture()
     registry = GeneratedBatchOwnerRegistry(_OwnerStore())
     facade = ExamAnalysisFacade(
-        _Factory(material),  # type: ignore[arg-type]
-        _ExamWorker(material, proof),  # type: ignore[arg-type]
+        cast(ExamAnalysisTaskFactory, _Factory(material)),
+        cast(GenerationWorkerService, _ExamWorker(material, proof)),
         _Proofs(proof),
         VerifiedExamOwnerWriterAdapter(registry),
     )
@@ -655,6 +720,7 @@ def test_exam_facade_publishes_owner_only_after_verified_mapping() -> None:
     detail = facade.detail(material.request, "opaque-key-1", context)
 
     stored = registry.load(proof.run_id)
+    assert isinstance(stored, ExamGeneratedBatchOwnerReceipt)
     assert detail.owner_publication.owner_receipt_fingerprint == stored.fingerprint
     assert stored.opaque_request_key_fingerprint == exam_opaque_request_key_fingerprint(
         "opaque-key-1"

@@ -37,6 +37,7 @@ from study_agent.assessments.verified_grading import (
     VerifiedGradeOwnerRegistry,
     VerifiedGradeOwnerWriter,
 )
+from study_agent.capabilities.bindings import CapabilityBinding
 from study_agent.domain import (
     ArtifactRevisionId,
     AssessmentFormat,
@@ -135,7 +136,7 @@ def _parent() -> ExecutionContext:
     )
 
 
-def _binding():  # type: ignore[no-untyped-def]
+def _binding() -> CapabilityBinding:
     version = SemanticVersion.parse("1.0.0")
     return grade_response_binding(
         dependency_resolver=lambda **_kwargs: (),
@@ -403,7 +404,9 @@ class _VerifiedPort:
         return self.outcome
 
 
-def _verified_service():  # type: ignore[no-untyped-def]
+def _verified_service() -> tuple[
+    AssessmentService, MemoryEvents, VerifiedGradeOutcome, _VerifiedPort
+]:
     content = _content(AssessmentFormat.FREE_RESPONSE)
     events = MemoryEvents(content)
     view = ProjectionAssessmentView(lambda _course_id: events.projection)

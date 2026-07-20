@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -69,7 +70,7 @@ def _fixture() -> tuple[Projection, tuple[DomainEvent, ...], EventRegistry]:
             },
         },
     )
-    presentation_payload = dict(
+    presentation_payload: dict[str, object] = dict(
         item_presented_payload(
             REVISION,
             sha256(encoded).hexdigest(),
@@ -82,7 +83,7 @@ def _fixture() -> tuple[Projection, tuple[DomainEvent, ...], EventRegistry]:
         )
     )
     presentation_id = presentation_id_for(COURSE, SESSION, REVISION, "present")
-    attempt_payload = dict(
+    attempt_payload: dict[str, object] = dict(
         attempt_recorded_payload(
             presentation_id,
             SingleChoiceResponse("Alpha"),
@@ -94,7 +95,7 @@ def _fixture() -> tuple[Projection, tuple[DomainEvent, ...], EventRegistry]:
     )
     attempt_id = attempt_id_for(COURSE, SESSION, presentation_id, "attempt")
     rubric = sha256(canonical_json_bytes({"evaluation_criteria": ("correct",)})).hexdigest()
-    grade_payload = dict(
+    grade_payload: dict[str, object] = dict(
         grade_recorded_payload(
             attempt_id,
             GradeStatus.GRADED,
@@ -148,6 +149,14 @@ def _replay(
     return result
 
 
+def _assessment_records(projection: Projection, kind: str) -> Mapping[str, object]:
+    assessments = projection.state["assessments"]
+    assert isinstance(assessments, Mapping)
+    records = assessments[kind]
+    assert isinstance(records, Mapping)
+    return records
+
+
 def test_same_event_sequence_replays_to_byte_identical_projection_and_typed_snapshot() -> None:
     seed, events, registry = _fixture()
     first = _replay(seed, events, registry)
@@ -173,7 +182,7 @@ def test_replay_preserves_every_prior_projection_and_strictly_increases_sequence
         assert previous.canonical_bytes() == previous_bytes
 
     assert tuple(item.sequence for item in snapshots) == (0, 1, 2, 3)
-    assert len(snapshots[1].state["assessments"]["presentations"]) == 1  # type: ignore[index,arg-type]
-    assert len(snapshots[1].state["assessments"]["attempts"]) == 0  # type: ignore[index,arg-type]
-    assert len(snapshots[2].state["assessments"]["attempts"]) == 1  # type: ignore[index,arg-type]
-    assert len(snapshots[2].state["assessments"]["grades"]) == 0  # type: ignore[index,arg-type]
+    assert len(_assessment_records(snapshots[1], "presentations")) == 1
+    assert len(_assessment_records(snapshots[1], "attempts")) == 0
+    assert len(_assessment_records(snapshots[2], "attempts")) == 1
+    assert len(_assessment_records(snapshots[2], "grades")) == 0

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 import pytest
@@ -86,7 +87,7 @@ def _presentation_payload() -> dict[str, object]:
 def test_all_event_payloads_decode_and_reencode_byte_identically() -> None:
     presented = _presentation_payload()
     presentation_id = presentation_id_for(COURSE, SESSION, REVISION, "present-1")
-    attempted = dict(
+    attempted: dict[str, object] = dict(
         attempt_recorded_payload(
             presentation_id,
             MultipleChoiceResponse(("A", "B")),
@@ -97,7 +98,7 @@ def test_all_event_payloads_decode_and_reencode_byte_identically() -> None:
         )
     )
     attempt_id = attempt_id_for(COURSE, SESSION, presentation_id, "attempt-1")
-    graded = dict(
+    graded: dict[str, object] = dict(
         grade_recorded_payload(
             attempt_id,
             GradeStatus.GRADED,
@@ -111,7 +112,9 @@ def test_all_event_payloads_decode_and_reencode_byte_identically() -> None:
         )
     )
     grade_id = GradeId(str(graded["grade_id"]))
-    contested = dict(grade_contested_payload(grade_id, "Please review", "contest-1"))
+    contested: dict[str, object] = dict(
+        grade_contested_payload(grade_id, "Please review", "contest-1")
+    )
 
     cases = (
         (ITEM_PRESENTED, presented, PrincipalKind.SERVICE, decode_item_presented),
@@ -162,7 +165,7 @@ def test_attempt_codec_rejects_ambiguous_or_malformed_response_unions(
     response: dict[str, object],
 ) -> None:
     presentation_id = presentation_id_for(COURSE, SESSION, REVISION, "present-1")
-    payload = dict(
+    payload: dict[str, object] = dict(
         attempt_recorded_payload(
             presentation_id,
             SingleChoiceResponse("A"),
@@ -180,7 +183,7 @@ def test_attempt_codec_rejects_ambiguous_or_malformed_response_unions(
 def test_grade_provenance_codec_forbids_cross_union_and_failed_validator_fields() -> None:
     presentation_id = presentation_id_for(COURSE, SESSION, REVISION, "present-1")
     attempt_id = attempt_id_for(COURSE, SESSION, presentation_id, "attempt-1")
-    payload = dict(
+    payload: dict[str, object] = dict(
         grade_recorded_payload(
             attempt_id,
             GradeStatus.GRADED,
@@ -193,7 +196,9 @@ def test_grade_provenance_codec_forbids_cross_union_and_failed_validator_fields(
             session_id=SESSION,
         )
     )
-    provenance = dict(payload["provenance"])  # type: ignore[arg-type]
+    encoded_provenance = payload["provenance"]
+    assert isinstance(encoded_provenance, Mapping)
+    provenance = dict(encoded_provenance)
     provenance["model_fingerprint"] = "c" * 64
     payload["provenance"] = provenance
     with pytest.raises(ValueError, match="exact schema"):

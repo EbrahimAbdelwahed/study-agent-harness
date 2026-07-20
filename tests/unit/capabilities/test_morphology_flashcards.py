@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from study_agent.capabilities import PROFILE_SELECTION_RECEIPT_INPUT
+from study_agent.capabilities.bindings import ProfiledCapabilityBinding
 from study_agent.capabilities.morphology_flashcards import (
     MorphologyFlashcardTaskBinding,
     morphology_flashcards_binding,
@@ -33,7 +34,7 @@ from tests.unit.flashcards.test_lesson_worker_service import _parent
 V1 = SemanticVersion.parse("1.0.0")
 
 
-def _binding():  # type: ignore[no-untyped-def]
+def _binding() -> ProfiledCapabilityBinding:
     return morphology_flashcards_binding(
         dependency_resolver=lambda *, context, inputs: (),
         model_adapter=ArtifactReference("model-adapter", V1),

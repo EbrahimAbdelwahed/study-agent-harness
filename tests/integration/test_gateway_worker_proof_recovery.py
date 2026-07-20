@@ -8,9 +8,10 @@ import pytest
 
 from study_agent.capabilities import (
     CompletedCapabilityOutcome,
-    GatewayIsolatedCapabilityRunAdapter,
 )
+from study_agent.capabilities.worker_adapter import GatewayIsolatedCapabilityRunAdapter
 from study_agent.domain import RunId
+from study_agent.playbooks import VerifiedRunRecord
 from study_agent.workers import GenerationWorkerService, GenerationWorkerStatus
 from study_agent.workers.proof import VerifiedChildProofOwner
 from tests.unit.capabilities.test_gateway_worker_adapter import (
@@ -65,7 +66,7 @@ class FailingProofStore(MemoryProofStore):
 def _service(
     worker_store: MemoryWorkerStore,
     proof_store: MemoryProofStore,
-    run,
+    run: VerifiedRunRecord,
 ) -> tuple[GenerationWorkerService, RecordingGateway]:
     gateway = RecordingGateway(CompletedCapabilityOutcome(run, OUTPUT))
     adapter = GatewayIsolatedCapabilityRunAdapter(

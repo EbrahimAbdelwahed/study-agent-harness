@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from study_agent.capabilities import PROFILE_SELECTION_RECEIPT_INPUT
+from study_agent.capabilities.bindings import ProfiledCapabilityBinding
 from study_agent.capabilities.hybrid_flashcards import (
     HybridFlashcardTaskBinding,
     hybrid_flashcards_binding,
@@ -22,7 +23,7 @@ from tests.unit.flashcards.test_lesson_worker_service import _parent
 V1 = SemanticVersion.parse("1.0.0")
 
 
-def _binding():  # type: ignore[no-untyped-def]
+def _binding() -> ProfiledCapabilityBinding:
     return hybrid_flashcards_binding(
         dependency_resolver=lambda *, context, inputs: (),
         model_adapter=ArtifactReference("model-adapter", V1),
