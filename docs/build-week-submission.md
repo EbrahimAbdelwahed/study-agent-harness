@@ -120,7 +120,7 @@ For the complete quality gate:
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
-.venv/bin/python -m mypy
+.venv/bin/python -m mypy src
 ```
 
 ### Required-field answers

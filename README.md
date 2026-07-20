@@ -167,14 +167,15 @@ clarification, evidence refresh, resumption, and replay as
 `completed → suspended → completed`. Add `--json` for the inspectable machine
 view. No credential, network call, model SDK, or provider account is required.
 
-Supported platform: Python 3.12 or 3.13. CI verifies Ubuntu; the Build Week
-release was also verified on macOS arm64. To reproduce the complete local gate:
+Supported platform: Python 3.12 or 3.13. CI targets Ubuntu; the Build Week
+release was also verified on macOS arm64. To reproduce the verified runtime and
+distributed-source gate:
 
 ```bash
 python3.12 -m pip install -e '.[dev]'
 python3.12 -m pytest
 python3.12 -m ruff check .
-python3.12 -m mypy
+python3.12 -m mypy src
 ```
 
 The public repository, source, test suite, and judge instructions are at
