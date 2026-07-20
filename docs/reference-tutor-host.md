@@ -8,10 +8,11 @@ capability gateway remains the only canonical study-effect owner.
 Run it from a checkout with no provider setup:
 
 ```bash
-PYTHONPATH=src .venv/bin/python examples/reference_tutor_host.py
+study-agent-demo "I have ten minutes. Help me understand heart valves."
 ```
 
-The example accepts free-form learner context, discovers the public capability
+Add `--json` for the machine-readable trace. The example accepts free-form learner
+context, discovers the public capability
 manifest, executes a direct completion, suspends for one clarification, resumes
 from the exact persisted continuation descriptor after an evidence refresh,
 and captures one trusted Markdown snapshot. The scripted adapter and the
