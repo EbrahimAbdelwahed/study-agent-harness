@@ -7,11 +7,15 @@ import signal
 
 from study_agent.cli.main import build_parser, color_enabled, main
 from study_agent.cli.output import CommandOutcome
+from study_agent.sessions import RetryableSessionConflictError
 
 
 def test_parser_exposes_only_approved_top_level_commands() -> None:
     help_text = build_parser().format_help()
-    assert "{init,course,source,ask,session,export,doctor}" in help_text
+    assert (
+        "{init,course,source,ask,session,export,doctor,operator,manifest,describe,tool}"
+        in help_text
+    )
 
 
 def test_no_color_disables_color(monkeypatch: object) -> None:
@@ -79,3 +83,23 @@ def test_auto_session_sigint_during_emit_still_emits_one_success(
     assert captured.err == ""
     assert captured.out.count("\n") == 1
     assert json.loads(captured.out)["ok"] is True
+
+
+def test_retryable_session_conflict_has_machine_clean_cli_error(
+    capsys: object, monkeypatch: object
+) -> None:
+    module = importlib.import_module("study_agent.cli.main")
+
+    async def raced(_request: object) -> CommandOutcome:
+        raise RetryableSessionConflictError("sensitive internal conflict detail")
+
+    monkeypatch.setattr(module, "execute", raced)  # type: ignore[attr-defined]
+    assert main(("--json", "session", "start", "course-1", "--session-id", "s-1")) == 4
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert captured.err == ""
+    assert captured.out == (
+        '{"error":{"code":"retryable_conflict","message":'
+        '"session state changed concurrently; retry with the same host-supplied identity"},'
+        '"ok":false}\n'
+    )
+    assert "Traceback" not in captured.out

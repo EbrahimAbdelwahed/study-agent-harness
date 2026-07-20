@@ -33,6 +33,9 @@ FORBIDDEN_INTERNAL_PREFIXES = {
     "study_agent.cli",
     "study_agent.retrieval",
 }
+CLI_INDEPENDENT_PACKAGES = tuple(
+    SOURCE_ROOT / name for name in ("application", "domain", "ports", "tools")
+)
 
 
 def imported_modules(path: Path) -> set[str]:
@@ -60,6 +63,17 @@ class ImportBoundaryTests(unittest.TestCase):
                         violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {module}")
 
         message = "Core import-boundary violations:\n" + "\n".join(violations)
+        self.assertEqual([], violations, message)
+
+    def test_application_and_tool_layers_do_not_import_cli_composition(self) -> None:
+        violations: list[str] = []
+        for package in CLI_INDEPENDENT_PACKAGES:
+            for path in sorted(package.rglob("*.py")):
+                for module in sorted(imported_modules(path)):
+                    if module == "study_agent.cli" or module.startswith("study_agent.cli."):
+                        violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {module}")
+
+        message = "CLI reverse-import violations:\n" + "\n".join(violations)
         self.assertEqual([], violations, message)
 
 

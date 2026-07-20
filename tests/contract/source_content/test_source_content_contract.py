@@ -139,6 +139,48 @@ def test_source_content_port_catalog_text_documents_and_resolution_contract() ->
     assert content.resolve(sub).text == document.text[:6]
 
 
+def test_historical_selection_becomes_the_only_current_index_input() -> None:
+    blobs = MemoryBlobs()
+    events = MemoryEvents()
+    service = TextIngestionService(
+        blobs=blobs, events=events, clock=Clock(), courses=ExistingCourseView()
+    )
+    context = ExecutionContext(
+        PrincipalKind.SERVICE,
+        "ingestion",
+        CourseId("course-1"),
+        CorrelationId("correlation-1"),
+    )
+
+    def ingest_revision(content: bytes) -> TextIngestionResult:
+        return service.ingest(
+            filename="heart.md",
+            content=content,
+            source_id=SourceId("source-1"),
+            title="Heart notes",
+            trust_level=90,
+            source_role="primary",
+            context=context,
+        )
+
+    first = ingest_revision(b"Revision A")
+    second = ingest_revision(b"Revision B")
+    selected = ingest_revision(b"Revision A")
+    content = CourseSourceContent(context.course_id, events, blobs)
+
+    assert selected.source.revision_id == first.source.revision_id
+    catalog = content.catalog()
+    assert [record.is_current_revision for record in catalog] == [True, False]
+    documents = content.documents()
+    assert documents
+    assert {document.revision_id for document in documents} == {
+        first.source.revision_id
+    }
+    assert second.source.revision_id not in {
+        document.revision_id for document in documents
+    }
+
+
 def test_resolution_rejects_missing_ownership_bounds_and_wrong_quote() -> None:
     content, _, revision_id = make_content()
     document = content.documents()[0]

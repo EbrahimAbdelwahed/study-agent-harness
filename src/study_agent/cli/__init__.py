@@ -1,6 +1,6 @@
 """Reference command-line composition layer."""
 
-from .config import (
+from study_agent.repository_config import (
     CONFIG_FILENAME,
     CONFIG_SCHEMA_VERSION,
     EMPTY_CONFIG,
@@ -8,6 +8,7 @@ from .config import (
     LocalRepositoryConfig,
     ModelAdapterConfig,
 )
+
 from .repository import (
     CourseRepository,
     LocalRepository,

@@ -15,6 +15,7 @@ from study_agent.domain import (
     CourseId,
     DomainEvent,
     PrincipalKind,
+    RevisionId,
     SourceDocument,
     SourceId,
     SourceKind,
@@ -26,6 +27,8 @@ from study_agent.ingestion import (
     NORMALIZATION_POLICY_VERSION,
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     ChunkingConfig,
     chunk_text,
     normalize_utf8,
@@ -33,6 +36,8 @@ from study_agent.ingestion import (
     revision_id_for,
     source_event_id_for,
     source_revision_payload,
+    source_revision_selected_event_id_for,
+    source_revision_selected_payload,
 )
 from study_agent.state import EventRegistry, PayloadValidationError
 
@@ -106,6 +111,28 @@ def make_event(
     )
 
 
+def select_event(revision_event: DomainEvent, sequence: int) -> DomainEvent:
+    source = revision_event.payload["source"]
+    assert isinstance(source, Mapping)
+    source_id = SourceId(str(source["source_id"]))
+    raw_revision_id = source["revision_id"]
+    assert isinstance(raw_revision_id, str)
+    revision_id = RevisionId(raw_revision_id)
+    return DomainEvent(
+        source_revision_selected_event_id_for(
+            revision_event.course_id, source_id, revision_id, sequence
+        ),
+        revision_event.course_id,
+        sequence,
+        SOURCE_REVISION_SELECTED,
+        SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+        revision_event.actor,
+        datetime(2026, 7, 11, 10, sequence, tzinfo=UTC),
+        revision_event.correlation_id,
+        source_revision_selected_payload(source_id, revision_id),
+    )
+
+
 def test_sqlite_replay_reloads_content_and_preserves_byte_identical_revisions(
     tmp_path: Path,
 ) -> None:
@@ -130,6 +157,35 @@ def test_sqlite_replay_reloads_content_and_preserves_byte_identical_revisions(
     assert isinstance(source_state, Mapping)
     revision_ids = source_state["revision_ids"]
     assert isinstance(revision_ids, tuple) and len(revision_ids) == 2
+    blobs.close()
+
+
+def test_selection_replay_tracks_current_without_reordering_immutable_history(
+    tmp_path: Path,
+) -> None:
+    blobs = FilesystemBlobStore(tmp_path / "blobs")
+    registry = EventRegistry()
+    register_source_revision_events(registry, blobs.get)
+    store = SQLiteEventStore(tmp_path / "events.sqlite3", registry)
+    course_id = CourseId("course-1")
+    first = make_event(blobs, b"Revision A", 1)
+    second = make_event(blobs, b"Revision B", 2)
+    selected = select_event(first, 3)
+
+    store.append(course_id, 0, (first, second, selected))
+    before = store.projection_bytes(course_id)
+    sources = store.projection(course_id).state["sources"]
+    assert isinstance(sources, Mapping)
+    source_state = sources["source-1"]
+    assert isinstance(source_state, Mapping)
+    source = first.payload["source"]
+    assert isinstance(source, Mapping)
+    assert source_state["current_revision_id"] == source["revision_id"]
+    revision_ids = source_state["revision_ids"]
+    assert isinstance(revision_ids, tuple)
+    assert len(revision_ids) == 2
+    assert store.rebuild_projection(course_id) == before
+    assert store.verify_projection(course_id)
     blobs.close()
 
 

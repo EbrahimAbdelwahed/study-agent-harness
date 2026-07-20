@@ -12,6 +12,18 @@ from .export import (
     ExportWriteError,
     FilesystemExportWriter,
 )
+from .repository_target import (
+    LocalRepositoryError,
+    LocalRepositoryPaths,
+    RepositoryTargetError,
+    ResolvedRepositoryTarget,
+    initialize_local_repository,
+    initialize_repository_target,
+    resolve_explicit_repository_target,
+    resolve_repository_target,
+    validate_local_repository_layout,
+)
+from .source_input import FilesystemSourceInput, SourceInputError
 
 __all__ = [
     "BlobIntegrityError",
@@ -21,5 +33,16 @@ __all__ = [
     "ExportWriteError",
     "FilesystemBlobStore",
     "FilesystemExportWriter",
+    "FilesystemSourceInput",
+    "LocalRepositoryError",
+    "LocalRepositoryPaths",
+    "RepositoryTargetError",
+    "ResolvedRepositoryTarget",
+    "SourceInputError",
     "UnsafeBlobPathError",
+    "initialize_local_repository",
+    "initialize_repository_target",
+    "resolve_explicit_repository_target",
+    "resolve_repository_target",
+    "validate_local_repository_layout",
 ]

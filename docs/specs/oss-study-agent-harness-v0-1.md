@@ -1,6 +1,6 @@
 # Feature Spec: OSS Study-Agent Harness v0.1
 
-Status: Implemented release candidate; local Python 3.12 and 3.13 gates passed
+Status: Released as v0.1.0; Python 3.12 and 3.13 release gates passed
 Owner: Ebrahim / Codex orchestrator
 Date: 2026-07-10
 Run ID: `20260710-oss-harness-v01`
@@ -550,24 +550,38 @@ Human-readable output is the default. Commands that return domain data support `
 
 This specification.
 
-### 0.2 — Study artifacts and richer retrieval
+### 0.1.1 — Agent operability and recovery
+
+- machine-readable operation and StudyTool discovery;
+- model-free offline tool composition;
+- explicit course enumeration and session start for crash-safe retries;
+- versioned operator skill and blank-project external-agent workflow.
+
+### 0.2 — Agent-operated desired-state lifecycle
+
+- optional strict local population manifest;
+- offline `validate`, deterministic `plan`/`status`, and convergent `apply`;
+- add-only reconciliation through existing application services;
+- manifest intent remains operational while the event stream remains canonical.
+
+### 0.3 — Study artifacts and richer retrieval
 
 - versioned notes, explanations, summaries, and flashcards with provenance;
 - vector/reranking adapters and PDF ingestion;
 - MCP/HTTP tool transport if justified by real consumers.
 
-### 0.3 — Recall and SRS
+### 0.4 — Recall and SRS
 
 - first-class flashcards, review log, scheduler port, FSRS adapter;
 - Anki export as an integration, never canonical scheduling state.
 
-### 0.4 — Assessment and learner evidence
+### 0.5 — Assessment and learner evidence
 
 - MCQ/open/oral text attempts;
 - reasoning and confidence capture;
 - gaps, misconceptions, and deterministic mastery estimates from evidence.
 
-### 0.5 — Planning and advanced pedagogical procedures
+### 0.6 — Planning and advanced pedagogical procedures
 
 - negotiable study plans;
 - playbook loops, conditions, transactional groups, richer dialogue, and composition;
@@ -581,6 +595,11 @@ This specification.
 - local export/import and compatibility documentation;
 - calibrated core eval suite and release gates;
 - contributor-ready documentation and examples.
+
+The agent-managed lifecycle plan is maintained in
+[`specs/done/agent-managed-lifecycle/README.md`](../../specs/done/agent-managed-lifecycle/README.md),
+with its authority boundary recorded in
+[`ADR-0003`](../decisions/ADR-0003--agent-operated-management-plane.md).
 
 ### Beyond the OSS core
 

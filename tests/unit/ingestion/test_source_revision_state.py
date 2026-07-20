@@ -15,6 +15,7 @@ from study_agent.domain import (
     DomainEvent,
     EventId,
     PrincipalKind,
+    RevisionId,
     SourceDocument,
     SourceId,
     SourceKind,
@@ -26,15 +27,21 @@ from study_agent.ingestion import (
     NORMALIZATION_POLICY_VERSION,
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     ChunkingConfig,
     chunk_text,
     decode_source_revision_event,
+    decode_source_revision_selected_event,
     normalize_utf8,
     register_source_revision_events,
     revision_id_for,
     source_event_id_for,
     source_revision_payload,
+    source_revision_selected_event_id_for,
+    source_revision_selected_payload,
 )
+from study_agent.ingestion.identity import legacy_revision_id_for
 from study_agent.state import EventRegistry, PayloadValidationError, Projection, apply_event
 
 type BlobLoader = Callable[[BlobRef], bytes]
@@ -46,7 +53,10 @@ def _blob(content: bytes) -> BlobRef:
 
 
 def make_event(
-    *, sequence: int = 1, original: bytes = "Cafe\u0301 🫀 valve".encode()
+    *,
+    sequence: int = 1,
+    original: bytes = "Cafe\u0301 🫀 valve".encode(),
+    legacy_identity: bool = False,
 ) -> tuple[DomainEvent, BlobLoader]:
     normalized_text = normalize_utf8(original).text
     normalized = normalized_text.encode()
@@ -64,6 +74,15 @@ def make_event(
         chunker_version=CHUNKER_POLICY_VERSION,
         max_characters=CHUNK_MAX_CHARACTERS,
     )
+    if legacy_identity:
+        revision_id = legacy_revision_id_for(
+            original_sha256=original_blob.checksum_sha256,
+            source_id=source_id,
+            kind=SourceKind.TEXT,
+            normalization_version=NORMALIZATION_POLICY_VERSION,
+            chunker_version=CHUNKER_POLICY_VERSION,
+            max_characters=CHUNK_MAX_CHARACTERS,
+        )
     occurred_at = datetime(2026, 7, 11, 8, sequence, tzinfo=UTC)
     source = SourceDocument(
         source_id,
@@ -134,6 +153,20 @@ def test_full_event_decoder_verifies_utf8_nfc_content_spans_and_identities() -> 
     assert decoded.normalized_character_length == len("Café 🫀 valve")
     assert decoded.source.created_at == event.occurred_at
     assert len(decoded.chunks) == 1
+
+
+def test_full_event_decoder_preserves_legacy_revision_identity() -> None:
+    event, load_blob = make_event(legacy_identity=True)
+    decoded = decode_source_revision_event(event, load_blob)
+    registry = EventRegistry()
+    register_source_revision_events(registry, load_blob)
+    source = event.payload.get("source")
+    assert isinstance(source, Mapping)
+    raw_revision_id = source.get("revision_id")
+    assert isinstance(raw_revision_id, str)
+
+    assert str(decoded.source.revision_id) == raw_revision_id
+    assert registry.decode(event) == decoded
 
 
 @pytest.mark.parametrize(
@@ -276,3 +309,61 @@ def test_reducer_preserves_prior_revisions_and_persisted_configuration() -> None
         "max_characters": CHUNK_MAX_CHARACTERS,
     }
     assert projection.state["unrelated"] == "preserved"
+
+
+def test_selection_decoder_and_legacy_projection_append_are_strict_and_compatible() -> None:
+    first, load_blob = make_event()
+    registry = EventRegistry()
+    register_source_revision_events(registry, load_blob)
+    projection = apply_event(Projection(first.course_id), first, registry)
+    sources = projection.state["sources"]
+    assert isinstance(sources, Mapping)
+    source_state = sources["source-1"]
+    assert isinstance(source_state, Mapping)
+    legacy_source_state = dict(source_state)
+    legacy_source_state.pop("current_revision_id")
+    legacy_projection = Projection(
+        first.course_id,
+        sequence=projection.sequence,
+        state={**projection.state, "sources": {"source-1": legacy_source_state}},
+    )
+    source = first.payload["source"]
+    assert isinstance(source, Mapping)
+    revision_id = RevisionId(str(source["revision_id"]))
+    selection = DomainEvent(
+        source_revision_selected_event_id_for(
+            first.course_id, SourceId("source-1"), revision_id, 2
+        ),
+        first.course_id,
+        2,
+        SOURCE_REVISION_SELECTED,
+        SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+        first.actor,
+        first.occurred_at + timedelta(seconds=1),
+        first.correlation_id,
+        source_revision_selected_payload(SourceId("source-1"), revision_id),
+    )
+
+    decoded = decode_source_revision_selected_event(selection)
+    selected_projection = apply_event(legacy_projection, selection, registry)
+    selected_sources = selected_projection.state["sources"]
+    assert isinstance(selected_sources, Mapping)
+    selected_source = selected_sources["source-1"]
+    assert isinstance(selected_source, Mapping)
+    assert decoded.revision_id == revision_id
+    assert selected_source["current_revision_id"] == str(revision_id)
+    assert selected_source["revision_ids"] == legacy_source_state["revision_ids"]
+
+    forged = DomainEvent(
+        EventId("event-arbitrary"),
+        selection.course_id,
+        selection.course_sequence,
+        selection.event_type,
+        selection.schema_version,
+        selection.actor,
+        selection.occurred_at,
+        selection.correlation_id,
+        selection.payload,
+    )
+    with pytest.raises(ValueError, match="event_id"):
+        decode_source_revision_selected_event(forged)

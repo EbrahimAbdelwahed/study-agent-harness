@@ -137,7 +137,7 @@ def test_markdown_headings_inside_fences_do_not_change_section_path(marker: str)
     assert "Not a heading" in text[chunks[1].start_offset : chunks[1].end_offset]
 
 
-def test_revision_identity_excludes_descriptive_metadata_but_includes_algorithms() -> None:
+def test_revision_identity_includes_metadata_and_algorithms() -> None:
     common = {
         "original_sha256": "a" * 64,
         "source_id": SourceId("source-1"),
@@ -159,5 +159,5 @@ def test_revision_identity_excludes_descriptive_metadata_but_includes_algorithms
         **{**common, "max_characters": 101},  # type: ignore[arg-type]
     )
 
-    assert first == metadata_changed
+    assert first != metadata_changed
     assert first != chunking_changed

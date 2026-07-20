@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import PurePath
@@ -19,10 +20,19 @@ from .chunking import CHUNKER_VERSION, DEFAULT_CHUNKING_CONFIG, ChunkingConfig, 
 from .events import (
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     SourceRevisionIngested,
     decode_source_revision_ingested,
+    decode_source_revision_selected_event,
+    source_revision_selected_payload,
 )
-from .identity import revision_id_for, source_event_id_for, source_kind_contract
+from .identity import (
+    revision_id_for,
+    source_event_id_for,
+    source_kind_contract,
+    source_revision_selected_event_id_for,
+)
 from .normalization import InvalidUtf8Error, normalize_utf8
 from .projection import source_revision_payload
 
@@ -85,8 +95,18 @@ class TextIngestionService:
         trust_level: int,
         source_role: str,
         context: ExecutionContext,
+        expected_sequence: int | None = None,
     ) -> TextIngestionResult:
         self._courses.get(context.course_id)
+        stream = tuple(self._events.read(context.course_id))
+        current_sequence = stream[-1].course_sequence if stream else 0
+        if expected_sequence is not None and current_sequence != expected_sequence:
+            raise TextIngestionError(
+                IngestionErrorCode.SEQUENCE_CONFLICT,
+                "course stream does not match expected sequence "
+                f"{expected_sequence}; observed {current_sequence}",
+                retryable=True,
+            )
         if self._chunking.version != CHUNKER_VERSION:
             raise TextIngestionError(
                 IngestionErrorCode.UNSUPPORTED_CONFIGURATION,
@@ -142,15 +162,34 @@ class TextIngestionService:
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
 
-        stream = tuple(self._events.read(context.course_id))
-        existing = _find_revision(stream, source_id, revision_id)
-        current_sequence = stream[-1].course_sequence if stream else 0
-        if existing is not None:
+        current = _current_revision(stream, source_id)
+        if current is not None and _matches_request(current, source, self._chunking):
+            if expected_sequence is not None:
+                latest = tuple(self._events.read(context.course_id))
+                latest_sequence = latest[-1].course_sequence if latest else 0
+                if latest_sequence != expected_sequence:
+                    raise TextIngestionError(
+                        IngestionErrorCode.SEQUENCE_CONFLICT,
+                        "course stream advanced before idempotent return; "
+                        f"expected {expected_sequence}, observed {latest_sequence}",
+                        retryable=True,
+                    )
             return TextIngestionResult(
                 IngestionStatus.IDEMPOTENT,
-                existing.source,
-                existing.chunks,
+                current.source,
+                current.chunks,
                 current_sequence,
+            )
+        historical = _find_matching_revision(
+            stream, source_id, source, self._chunking
+        )
+        if historical is not None:
+            return self._select_historical_revision(
+                historical,
+                current_sequence=current_sequence,
+                context=context,
+                expected_sequence=expected_sequence,
+                occurred_at=now,
             )
 
         try:
@@ -185,14 +224,20 @@ class TextIngestionService:
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
 
-        _write_expected_blob(self._blobs, content, original_blob)
-        _write_expected_blob(self._blobs, normalized.content, normalized_blob)
+        if current is None or current.source.blob != original_blob:
+            _write_expected_blob(self._blobs, content, original_blob)
+        if current is None or current.source.normalized_blob != normalized_blob:
+            _write_expected_blob(self._blobs, normalized.content, normalized_blob)
         try:
             committed = self._events.append(context.course_id, current_sequence, (event,))
         except EventSequenceConflictError as error:
             concurrent_stream = tuple(self._events.read(context.course_id))
-            concurrent = _find_revision(concurrent_stream, source_id, revision_id)
-            if concurrent is not None:
+            concurrent = _current_revision(concurrent_stream, source_id)
+            if (
+                expected_sequence is None
+                and concurrent is not None
+                and _matches_request(concurrent, source, self._chunking)
+            ):
                 concurrent_sequence = (
                     concurrent_stream[-1].course_sequence if concurrent_stream else 0
                 )
@@ -208,6 +253,71 @@ class TextIngestionService:
                 retryable=True,
             ) from error
         return TextIngestionResult(IngestionStatus.EMITTED, source, chunks, committed)
+
+    def _select_historical_revision(
+        self,
+        revision: SourceRevisionIngested,
+        *,
+        current_sequence: int,
+        context: ExecutionContext,
+        expected_sequence: int | None,
+        occurred_at: datetime,
+    ) -> TextIngestionResult:
+        # `occurred_at` is supplied by the service clock in `ingest`; keeping the
+        # transition here ensures historical selection never touches blob storage.
+        next_sequence = current_sequence + 1
+        try:
+            event = DomainEvent(
+                source_revision_selected_event_id_for(
+                    context.course_id,
+                    revision.source.source_id,
+                    revision.source.revision_id,
+                    next_sequence,
+                ),
+                context.course_id,
+                next_sequence,
+                SOURCE_REVISION_SELECTED,
+                SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+                Actor(context.principal_kind, context.principal_id),
+                occurred_at,
+                context.correlation_id,
+                source_revision_selected_payload(
+                    revision.source.source_id, revision.source.revision_id
+                ),
+                session_id=context.session_id,
+            )
+            decode_source_revision_selected_event(event)
+        except ValueError as error:
+            raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
+        try:
+            committed = self._events.append(context.course_id, current_sequence, (event,))
+        except EventSequenceConflictError as error:
+            concurrent_stream = tuple(self._events.read(context.course_id))
+            concurrent = _current_revision(
+                concurrent_stream, revision.source.source_id
+            )
+            if (
+                expected_sequence is None
+                and concurrent is not None
+                and concurrent.source.revision_id == revision.source.revision_id
+            ):
+                concurrent_sequence = (
+                    concurrent_stream[-1].course_sequence if concurrent_stream else 0
+                )
+                return TextIngestionResult(
+                    IngestionStatus.IDEMPOTENT,
+                    concurrent.source,
+                    concurrent.chunks,
+                    concurrent_sequence,
+                )
+            raise TextIngestionError(
+                IngestionErrorCode.SEQUENCE_CONFLICT,
+                "course event sequence changed during revision selection",
+                retryable=True,
+            ) from error
+        return TextIngestionResult(
+            IngestionStatus.EMITTED, revision.source, revision.chunks, committed
+        )
 
 
 def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
@@ -241,8 +351,11 @@ def _write_expected_blob(store: BlobStore, content: bytes, expected: BlobRef) ->
         )
 
 
-def _find_revision(
-    events: tuple[DomainEvent, ...], source_id: SourceId, revision_id: RevisionId
+def _find_matching_revision(
+    events: tuple[DomainEvent, ...],
+    source_id: SourceId,
+    requested: SourceDocument,
+    chunking: ChunkingConfig,
 ) -> SourceRevisionIngested | None:
     for event in events:
         if (
@@ -251,6 +364,65 @@ def _find_revision(
         ):
             continue
         decoded = decode_source_revision_ingested(event.payload)
-        if decoded.source.source_id == source_id and decoded.source.revision_id == revision_id:
+        if decoded.source.source_id == source_id and _matches_request(
+            decoded, requested, chunking
+        ):
             return decoded
     return None
+
+
+def _current_revision(
+    events: tuple[DomainEvent, ...], source_id: SourceId
+) -> SourceRevisionIngested | None:
+    revisions: dict[RevisionId, SourceRevisionIngested] = {}
+    current_revision_id: RevisionId | None = None
+    for event in events:
+        if (
+            event.event_type == SOURCE_REVISION_INGESTED
+            and event.schema_version == SOURCE_REVISION_SCHEMA_VERSION
+        ):
+            decoded = decode_source_revision_ingested(event.payload)
+            if decoded.source.source_id == source_id:
+                revisions[decoded.source.revision_id] = decoded
+                current_revision_id = decoded.source.revision_id
+        elif (
+            event.event_type == SOURCE_REVISION_SELECTED
+            and event.schema_version == SOURCE_REVISION_SELECTED_SCHEMA_VERSION
+        ):
+            selected = decode_source_revision_selected_event(event)
+            if selected.source_id != source_id:
+                continue
+            if selected.revision_id not in revisions:
+                raise ValueError("selected revision does not exist in source history")
+            current_revision_id = selected.revision_id
+    if current_revision_id is None:
+        return None
+    return revisions[current_revision_id]
+
+
+def _matches_request(
+    existing: SourceRevisionIngested,
+    requested: SourceDocument,
+    chunking: ChunkingConfig,
+) -> bool:
+    source = existing.source
+    return (
+        source.source_id == requested.source_id
+        and source.kind is requested.kind
+        and source.title == requested.title
+        and source.media_type == requested.media_type
+        and source.checksum_sha256 == requested.checksum_sha256
+        and source.byte_length == requested.byte_length
+        and source.trust_level == requested.trust_level
+        and source.source_role == requested.source_role
+        and source.blob == requested.blob
+        and source.normalized_blob == requested.normalized_blob
+        and source.normalization_version == requested.normalization_version
+        and source.normalized_character_length
+        == requested.normalized_character_length
+        and source.structure_origin is requested.structure_origin
+        and source.ingestion_method == requested.ingestion_method
+        and source.content_origin is requested.content_origin
+        and existing.chunking.version == chunking.version
+        and existing.chunking.max_characters == chunking.max_characters
+    )

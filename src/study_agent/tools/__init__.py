@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         SourceListTool,
         SourceSearchTool,
         builtin_tools,
+        public_study_tool_manifests,
     )
     from .registry import StudyToolRegistry
 
@@ -48,6 +49,7 @@ _LAZY_BUILTINS = frozenset(
         "SourceListTool",
         "SourceSearchTool",
         "builtin_tools",
+        "public_study_tool_manifests",
     }
 )
 
@@ -86,6 +88,7 @@ __all__ = [
     "ToolResult",
     "builtin_tools",
     "grounding_playbook_tools",
+    "public_study_tool_manifests",
     "validate_json",
     "validate_schema_definition",
 ]

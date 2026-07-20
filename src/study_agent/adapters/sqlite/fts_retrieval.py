@@ -23,6 +23,8 @@ from study_agent.ports.retrieval import (
     retrieval_read_set_fingerprint,
 )
 
+from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
+
 INDEX_VERSION = "sqlite-fts5-unicode61-v1"
 RETRIEVAL_STRATEGY_ID = "sqlite_fts5_bm25"
 RETRIEVAL_STRATEGY_VERSION = "1.0.0"
@@ -102,20 +104,54 @@ def normalize_bm25_score(raw_score: float) -> float:
 
 
 class SQLiteFtsRetrieval:
-    def __init__(self, database: str | Path, content: RetrievalCatalogPort) -> None:
+    def __init__(
+        self,
+        database: str | Path,
+        content: RetrievalCatalogPort,
+        *,
+        read_only: bool = False,
+        connection_identity_guard: SQLiteConnectionGuard | None = None,
+    ) -> None:
         self._database = str(database)
         if self._database == ":memory:":
             raise ValueError("SQLiteFtsRetrieval requires a path-backed database")
+        if type(read_only) is not bool:
+            raise TypeError("read_only must be a boolean")
+        self._read_only = read_only
+        self._connection_identity_guard = connection_identity_guard
         self._content = content
-        with closing(self._connect()) as connection:
-            connection.executescript(_SCHEMA)
+        if not read_only:
+            with closing(self._connect()) as connection:
+                connection.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._database, timeout=30)
-        connection.execute("PRAGMA busy_timeout = 30000")
+        database = self._database
+        uri = False
+        if self._read_only:
+            database = (
+                Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
+            )
+            uri = True
+        elif self._connection_identity_guard is not None:
+            database = _writable_nofollow_uri(database)
+            uri = True
+        def opener() -> sqlite3.Connection:
+            return sqlite3.connect(database, timeout=30, uri=uri)
+        connection = (
+            opener()
+            if self._connection_identity_guard is None
+            else self._connection_identity_guard.connect(opener)
+        )
+        if not self._read_only:
+            connection.execute("PRAGMA busy_timeout = 30000")
         return connection
 
+    def _require_write(self) -> None:
+        if self._read_only:
+            raise PermissionError("read-only retrieval adapter cannot mutate the index")
+
     def index(self, documents: Sequence[RetrievalDocument]) -> IndexReceipt:
+        self._require_write()
         batch = tuple(documents)
         current = self._validate_batch(batch)
         with closing(self._connect()) as connection, connection:
@@ -332,6 +368,7 @@ class SQLiteFtsRetrieval:
         )
 
     def rebuild(self, documents: Sequence[RetrievalDocument]) -> IndexReceipt:
+        self._require_write()
         batch = tuple(documents)
         chunk_ids = tuple(item.chunk.chunk_id for item in batch)
         if len(set(chunk_ids)) != len(chunk_ids):
@@ -351,6 +388,16 @@ class SQLiteFtsRetrieval:
             len(indexed),
             self._current_index_version(),
             retrieval_catalog_fingerprint(indexed),
+        )
+
+    def audit(self) -> IndexReceipt:
+        """Return an integrity receipt without modifying derived index state."""
+
+        canonical = self._audit_integrity()
+        return IndexReceipt(
+            len(canonical),
+            self._current_index_version(),
+            retrieval_catalog_fingerprint(canonical),
         )
 
     def _current_index_version(self) -> str:

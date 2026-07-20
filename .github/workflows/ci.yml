@@ -27,7 +27,20 @@ jobs:
       - run: python -m venv clean-install
       - run: clean-install/bin/python -m pip install --disable-pip-version-check dist/*.whl
       - run: clean-install/bin/study-agent --help
+      - run: clean-install/bin/study-agent --json describe
+      - run: >-
+          clean-install/bin/study-agent --json operator skill
+          --output clean-install/extracted/study-agent-operator/SKILL.md
       - run: >-
           clean-install/bin/python -c
           'import importlib.resources;
-          assert importlib.resources.files("study_agent").joinpath("py.typed").is_file()'
+          root = importlib.resources.files("study_agent");
+          skill = importlib.resources.files("study_agent.operator_skill").joinpath("SKILL.md");
+          assert root.joinpath("py.typed").is_file();
+          assert skill.is_file();
+          assert skill.read_bytes() == open("clean-install/extracted/study-agent-operator/SKILL.md", "rb").read()'
+      - run: >-
+          clean-install/bin/python docs/examples/external_agent.py
+          clean-install/example-project
+        env:
+          STUDY_AGENT_BIN: ${{ github.workspace }}/clean-install/bin/study-agent

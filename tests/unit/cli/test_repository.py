@@ -117,10 +117,19 @@ def test_initialization_rolls_back_owned_paths_after_commit_failure(
 ) -> None:
     root = tmp_path / "repository"
 
-    def fail_replace(source: object, destination: object) -> None:
-        raise OSError(f"simulated replace failure: {source!r} {destination!r}")
+    def fail_link(
+        source: object,
+        destination: object,
+        **kwargs: object,
+    ) -> None:
+        raise OSError(
+            f"simulated no-replace publication failure: "
+            f"{source!r} {destination!r} {kwargs!r}"
+        )
 
-    monkeypatch.setattr("study_agent.cli.repository.os.replace", fail_replace)
+    monkeypatch.setattr(
+        "study_agent.adapters.filesystem.repository_target.os.link", fail_link
+    )
     with pytest.raises(LocalRepositoryError, match="could not be initialized"):
         initialize_local_repository(root, EMPTY_CONFIG)
 
@@ -164,25 +173,45 @@ def test_config_publication_follows_durable_lock_and_layout_order(
     root = tmp_path / "repository"
     events: list[str] = []
     real_fsync = os.fsync
-    real_replace = os.replace
+    real_link = os.link
 
     def observed_fsync(descriptor: int) -> None:
         mode = os.fstat(descriptor).st_mode
         events.append("fsync-file" if stat.S_ISREG(mode) else "fsync-directory")
         real_fsync(descriptor)
 
-    def observed_replace(
-        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    def observed_link(
+        source: str | os.PathLike[str],
+        destination: str | os.PathLike[str],
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
     ) -> None:
-        events.append("replace-config")
-        real_replace(source, destination)
+        assert source == ".study-agent.json.tmp"
+        assert destination == "study-agent.json"
+        assert src_dir_fd is not None
+        assert dst_dir_fd == src_dir_fd
+        assert follow_symlinks is False
+        events.append("link-config")
+        real_link(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
 
-    monkeypatch.setattr("study_agent.cli.repository.os.fsync", observed_fsync)
-    monkeypatch.setattr("study_agent.cli.repository.os.replace", observed_replace)
+    monkeypatch.setattr(
+        "study_agent.adapters.filesystem.repository_target.os.fsync", observed_fsync
+    )
+    monkeypatch.setattr(
+        "study_agent.adapters.filesystem.repository_target.os.link", observed_link
+    )
 
     initialize_local_repository(root, EMPTY_CONFIG)
 
-    publication = events.index("replace-config")
+    publication = events.index("link-config")
     before = events[:publication]
     lock_sync = before.index("fsync-file")
     assert before[lock_sync + 1] == "fsync-directory"

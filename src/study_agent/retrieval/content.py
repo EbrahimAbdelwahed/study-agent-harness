@@ -14,8 +14,11 @@ from study_agent.domain.source import (
 from study_agent.ingestion import (
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_SELECTED,
+    SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     SourceRevisionIngested,
     decode_source_revision_event,
+    decode_source_revision_selected_event,
 )
 from study_agent.ports.retrieval import RetrievalDocument
 from study_agent.ports.storage import BlobStore, EventStore
@@ -43,10 +46,33 @@ class CourseSourceContent:
         self._events = events
         self._blobs = blobs
 
-    def _decode(self) -> tuple[tuple[SourceRevisionIngested, str], ...]:
+    def _decode(
+        self,
+    ) -> tuple[
+        tuple[tuple[SourceRevisionIngested, str], ...],
+        dict[SourceId, RevisionId],
+    ]:
         decoded: list[tuple[SourceRevisionIngested, str]] = []
         seen: dict[tuple[SourceId, RevisionId], SourceRevisionIngested] = {}
+        current: dict[SourceId, RevisionId] = {}
         for event in self._events.read(self._course_id):
+            if (
+                event.event_type == SOURCE_REVISION_SELECTED
+                and event.schema_version == SOURCE_REVISION_SELECTED_SCHEMA_VERSION
+            ):
+                try:
+                    selection = decode_source_revision_selected_event(event)
+                    if (selection.source_id, selection.revision_id) not in seen:
+                        raise ValueError(
+                            "selected revision does not exist in source history"
+                        )
+                except ValueError as error:
+                    raise SourceContentError(
+                        SourceContentErrorCode.INTEGRITY_ERROR,
+                        "source selection event failed integrity validation",
+                    ) from error
+                current[selection.source_id] = selection.revision_id
+                continue
             if (
                 event.event_type != SOURCE_REVISION_INGESTED
                 or event.schema_version != SOURCE_REVISION_SCHEMA_VERSION
@@ -77,14 +103,11 @@ class CourseSourceContent:
                 continue
             seen[key] = revision
             decoded.append((revision, text))
-        return tuple(decoded)
+            current[revision.source.source_id] = revision.source.revision_id
+        return tuple(decoded), current
 
     def catalog(self) -> tuple[SourceRevisionRecord, ...]:
-        decoded = self._decode()
-        current = {
-            revision.source.source_id: revision.source.revision_id
-            for revision, _ in decoded
-        }
+        decoded, current = self._decode()
         return tuple(
             SourceRevisionRecord(
                 self._course_id,

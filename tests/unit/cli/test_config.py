@@ -10,6 +10,7 @@ from study_agent.cli.config import (
     LocalRepositoryConfig,
     ModelAdapterConfig,
 )
+from study_agent.repository_config import LocalRepositoryConfig as CoreRepositoryConfig
 
 
 def configured() -> LocalRepositoryConfig:
@@ -114,3 +115,19 @@ def test_configuration_is_deeply_immutable() -> None:
     assert config.settings["nested"] == {"mode": "strict"}
     with pytest.raises(TypeError):
         config.settings["new"] = "value"  # type: ignore[index]
+
+
+def test_cli_config_is_an_identity_preserving_facade_for_the_neutral_owner() -> None:
+    assert LocalRepositoryConfig is CoreRepositoryConfig
+
+
+def test_configuration_serialization_rejects_more_than_64_kib() -> None:
+    config = LocalRepositoryConfig(
+        ModelAdapterConfig(
+            "adapter",
+            {f"setting_{index}": "x" * 4096 for index in range(16)},
+        )
+    )
+
+    with pytest.raises(LocalConfigError, match="64 KiB"):
+        config.to_bytes()

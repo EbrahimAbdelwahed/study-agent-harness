@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-import fcntl
 import os
-import stat
 from collections.abc import Callable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol
 
-from study_agent.adapters.filesystem import FilesystemBlobStore
+from study_agent.adapters.filesystem import (
+    FilesystemBlobStore,
+    LocalRepositoryError,
+    LocalRepositoryPaths,
+    initialize_local_repository,
+    validate_local_repository_layout,
+)
+from study_agent.adapters.filesystem.repository_target import RepositoryObservationHandle
 from study_agent.adapters.model import (
     ADAPTER_ID as OPENAI_COMPATIBLE_ADAPTER_ID,
 )
@@ -23,10 +27,17 @@ from study_agent.adapters.model import (
     OpenAICompatibleConfig,
     OpenAICompatibleModel,
 )
-from study_agent.adapters.sqlite import SQLiteEventStore, SQLiteFtsRetrieval, SQLiteRunStore
+from study_agent.adapters.sqlite import (
+    SQLiteConnectionIdentityGuard,
+    SQLiteEventStore,
+    SQLiteFtsRetrieval,
+    SQLiteRunStore,
+)
 from study_agent.adapters.system import SystemClock
 from study_agent.application import (
     GroundingAskConfiguration,
+    GroundingAskError,
+    GroundingAskErrorCode,
     GroundingAskService,
     GroundingEngineFactory,
 )
@@ -54,6 +65,7 @@ from study_agent.playbooks.builtin import GROUNDED_ANSWER_FLOW
 from study_agent.ports import IndexReceipt, ModelCapabilities, ModelPort
 from study_agent.ports.retrieval import RetrievalDocument, retrieval_catalog_fingerprint
 from study_agent.prompts import GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer
+from study_agent.repository_config import LocalRepositoryConfig, ModelAdapterConfig
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import (
     GroundedSessionFinalizer,
@@ -65,24 +77,10 @@ from study_agent.skills import ArtifactReference, SemanticVersion
 from study_agent.skills.builtin import GROUNDED_ANSWER_SKILL
 from study_agent.state import EventRegistry
 
-from .config import CONFIG_FILENAME, LocalRepositoryConfig, ModelAdapterConfig
-
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry
 
-_STATE_DIRECTORY = "state"
-_BLOB_DIRECTORY = "blobs"
-_EXPORT_DIRECTORY = "exports"
-_EVENT_DATABASE = "events.sqlite3"
-_RUN_DATABASE = "runs.sqlite3"
-_RETRIEVAL_DATABASE = "retrieval.sqlite3"
-_REPOSITORY_LOCK = ".study-agent.lock"
-_CONFIG_TEMPORARY = ".study-agent.json.tmp"
 _V1 = SemanticVersion.parse("1.0.0")
-
-
-class LocalRepositoryError(RuntimeError):
-    """The path is not a safe compatible local repository."""
 
 
 class ModelAdapterConfigurationError(ValueError):
@@ -104,8 +102,7 @@ class ModelAdapterRegistry:
     ) -> None:
         copied = dict(builders)
         if not copied or any(
-            not isinstance(key, str) or not key or key != key.strip()
-            for key in copied
+            not isinstance(key, str) or not key or key != key.strip() for key in copied
         ):
             raise ValueError("model adapter ids must be unique non-empty trimmed text")
         if any(not callable(builder) for builder in copied.values()):
@@ -152,9 +149,7 @@ class ModelAdapterRegistry:
         if config.credential_env is not None and (
             not isinstance(credential, str) or not credential
         ):
-            raise ModelAdapterConfigurationError(
-                "configured model credential is unavailable"
-            )
+            raise ModelAdapterConfigurationError("configured model credential is unavailable")
         try:
             return builder(config, credential)
         except Exception:
@@ -180,9 +175,7 @@ def default_model_adapters() -> ModelAdapterRegistry:
     )
 
 
-def _openai_compatible_model(
-    config: ModelAdapterConfig, credential: str | None
-) -> ModelPort:
+def _openai_compatible_model(config: ModelAdapterConfig, credential: str | None) -> ModelPort:
     expected = {"endpoint_url", "model_id", "timeout_seconds"}
     if set(config.settings) != expected:
         raise ModelAdapterConfigurationError(
@@ -209,158 +202,6 @@ def _openai_compatible_model(
         )
     except ValueError as error:
         raise ModelAdapterConfigurationError("model adapter configuration is invalid") from error
-
-
-@dataclass(frozen=True, slots=True)
-class LocalRepositoryPaths:
-    root: Path
-    config: Path
-    state: Path
-    events: Path
-    runs: Path
-    retrieval: Path
-    blobs: Path
-    exports: Path
-
-    @classmethod
-    def at(cls, root: str | Path) -> LocalRepositoryPaths:
-        base = Path(root).expanduser()
-        state = base / _STATE_DIRECTORY
-        return cls(
-            base,
-            base / CONFIG_FILENAME,
-            state,
-            state / _EVENT_DATABASE,
-            state / _RUN_DATABASE,
-            state / _RETRIEVAL_DATABASE,
-            base / _BLOB_DIRECTORY,
-            base / _EXPORT_DIRECTORY,
-        )
-
-
-def initialize_local_repository(
-    root: str | Path,
-    config: LocalRepositoryConfig,
-) -> LocalRepositoryPaths:
-    """Publish config only after a locked repository layout is durably persisted."""
-    paths = LocalRepositoryPaths.at(root)
-    if paths.root.is_symlink() or (paths.root.exists() and not paths.root.is_dir()):
-        raise LocalRepositoryError("repository root must be a real directory")
-    root_created = not paths.root.exists()
-    if not paths.root.exists():
-        paths.root.mkdir(parents=True, exist_ok=True)
-        _fsync_directory(paths.root)
-        _fsync_directory(paths.root.parent)
-    if paths.root.is_symlink() or not paths.root.is_dir():
-        raise LocalRepositoryError("repository root must be a real directory")
-    initial_entries = {entry.name for entry in paths.root.iterdir()}
-    if initial_entries and _REPOSITORY_LOCK not in initial_entries:
-        raise LocalRepositoryError("refusing to initialize a non-empty directory")
-    lock = paths.root / _REPOSITORY_LOCK
-    if lock.is_symlink():
-        raise LocalRepositoryError("repository lock is incompatible")
-    lock_fd: int | None = None
-    created_directories: list[Path] = []
-    try:
-        lock_fd = os.open(
-            lock,
-            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
-            raise LocalRepositoryError("repository lock is incompatible")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        os.fsync(lock_fd)
-        _fsync_directory(paths.root)
-        if paths.config.exists() or paths.config.is_symlink():
-            existing = LocalRepositoryConfig.load(paths.config)
-            if existing != config:
-                raise LocalRepositoryError("repository configuration is incompatible")
-            _validate_layout(paths)
-            return paths
-        allowed_recovery = {
-            _REPOSITORY_LOCK,
-            _CONFIG_TEMPORARY,
-            _STATE_DIRECTORY,
-            _BLOB_DIRECTORY,
-            _EXPORT_DIRECTORY,
-        }
-        current_entries = {entry.name for entry in paths.root.iterdir()}
-        if _REPOSITORY_LOCK in initial_entries:
-            if current_entries - allowed_recovery:
-                raise LocalRepositoryError(
-                    "interrupted repository initialization contains unknown paths"
-                )
-            for directory in (paths.state, paths.blobs, paths.exports):
-                if directory.exists() and (
-                    directory.is_symlink()
-                    or not directory.is_dir()
-                    or any(directory.iterdir())
-                ):
-                    raise LocalRepositoryError(
-                        "interrupted repository initialization is incompatible"
-                    )
-        for directory in (paths.state, paths.blobs, paths.exports):
-            if not directory.exists():
-                directory.mkdir()
-                created_directories.append(directory)
-            _fsync_directory(directory)
-        _fsync_directory(paths.root)
-        temporary = paths.root / _CONFIG_TEMPORARY
-        if temporary.is_symlink() or (temporary.exists() and not temporary.is_file()):
-            raise LocalRepositoryError("temporary configuration path is incompatible")
-        with temporary.open("wb") as stream:
-            stream.write(config.to_bytes())
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, paths.config)
-        _fsync_directory(paths.root)
-    except LocalRepositoryError:
-        _rollback_initialization(paths, created_directories)
-        raise
-    except OSError as error:
-        _rollback_initialization(paths, created_directories)
-        raise LocalRepositoryError("repository layout could not be initialized") from error
-    finally:
-        if lock_fd is not None:
-            os.close(lock_fd)
-        if root_created:
-            with suppress(OSError):
-                paths.root.rmdir()
-    _validate_layout(paths)
-    return paths
-
-
-def _rollback_initialization(
-    paths: LocalRepositoryPaths, created_directories: list[Path]
-) -> None:
-    with suppress(OSError):
-        (paths.root / _CONFIG_TEMPORARY).unlink(missing_ok=True)
-    for directory in reversed(created_directories):
-        with suppress(OSError):
-            directory.rmdir()
-
-
-def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _validate_layout(paths: LocalRepositoryPaths) -> None:
-    for directory in (paths.root, paths.state, paths.blobs, paths.exports):
-        if directory.is_symlink() or not directory.is_dir():
-            raise LocalRepositoryError("repository layout contains an incompatible directory")
-    if paths.config.is_symlink() or not paths.config.is_file():
-        raise LocalRepositoryError("repository configuration is incompatible")
-    lock = paths.root / _REPOSITORY_LOCK
-    if lock.is_symlink() or not lock.is_file():
-        raise LocalRepositoryError("repository lock is incompatible")
-    for database in (paths.events, paths.runs, paths.retrieval):
-        if database.is_symlink() or (database.exists() and not database.is_file()):
-            raise LocalRepositoryError("repository database path is incompatible")
 
 
 class _EngineFactory(GroundingEngineFactory):
@@ -391,11 +232,7 @@ class _EngineFactory(GroundingEngineFactory):
                     EvidenceSufficiencyValidator(),
                     GroundedAnswerIntegrityValidator(self._content),
                 ),
-                (
-                    PromptComposerRegistration(
-                        GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer()
-                    ),
-                ),
+                (PromptComposerRegistration(GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer()),),
             ),
             run_store=self._run_store,
             clock=self._clock,
@@ -428,9 +265,7 @@ class _RepositorySourceCatalog:
             for course_id in self._course_ids()
         )
 
-    def documents(
-        self, *, include_superseded: bool = False
-    ) -> tuple[RetrievalDocument, ...]:
+    def documents(self, *, include_superseded: bool = False) -> tuple[RetrievalDocument, ...]:
         return tuple(
             document
             for content in self._contents()
@@ -449,9 +284,7 @@ class _RepositorySourceCatalog:
 
     def resolve(self, citation: Citation) -> ResolvedCitation:
         document = self.canonical_document(citation.chunk_id)
-        return CourseSourceContent(
-            document.course_id, self._events, self._blobs
-        ).resolve(citation)
+        return CourseSourceContent(document.course_id, self._events, self._blobs).resolve(citation)
 
 
 class LocalRepository:
@@ -464,21 +297,73 @@ class LocalRepository:
         *,
         model_adapters: ModelAdapterRegistry | None = None,
         environment: Mapping[str, str] | None = None,
+        observation: RepositoryObservationHandle | None = None,
     ) -> None:
-        _validate_layout(paths)
-        persisted = LocalRepositoryConfig.load(paths.config)
-        if persisted != config:
-            raise LocalRepositoryError("loaded repository configuration is incompatible")
+        if observation is None:
+            validate_local_repository_layout(paths)
+            persisted = LocalRepositoryConfig.load(paths.config)
+            if persisted != config:
+                raise LocalRepositoryError("loaded repository configuration is incompatible")
+            blobs = FilesystemBlobStore(paths.blobs)
+        else:
+            if paths != observation.mutation_paths():
+                raise LocalRepositoryError("repository observation paths are incompatible")
+            blob_descriptor = observation.directory_descriptor("blobs")
+            try:
+                blobs = FilesystemBlobStore.from_descriptor(blob_descriptor, read_only=False)
+            finally:
+                os.close(blob_descriptor)
+        events_database = (
+            paths.events if observation is None else observation.mutation_database_path("events")
+        )
+        runs_database = (
+            paths.runs if observation is None else observation.mutation_database_path("runs")
+        )
+        retrieval_database = (
+            paths.retrieval
+            if observation is None
+            else observation.mutation_database_path("retrieval")
+        )
+        events_guard = (
+            None
+            if observation is None
+            else SQLiteConnectionIdentityGuard(
+                observation.database_connection_identity("events"),
+                observation.verify_binding,
+            )
+        )
+        runs_guard = (
+            None
+            if observation is None
+            else SQLiteConnectionIdentityGuard(
+                observation.database_connection_identity("runs"),
+                observation.verify_binding,
+            )
+        )
+        retrieval_guard = (
+            None
+            if observation is None
+            else SQLiteConnectionIdentityGuard(
+                observation.database_connection_identity("retrieval"),
+                observation.verify_binding,
+            )
+        )
         self.paths = paths
+        self._retrieval_database = retrieval_database
+        self._retrieval_connection_identity_guard = retrieval_guard
         self.config = config
         self.clock = SystemClock()
-        self.blobs = FilesystemBlobStore(paths.blobs)
+        self.blobs = blobs
         registry = EventRegistry()
         register_course_events(registry)
         register_source_revision_events(registry, self.blobs.get)
         register_session_events(registry)
-        self.events = SQLiteEventStore(paths.events, registry)
-        self.runs = SQLiteRunStore(paths.runs)
+        self.events = SQLiteEventStore(
+            events_database, registry, connection_identity_guard=events_guard
+        )
+        self.runs = SQLiteRunStore(
+            runs_database, connection_identity_guard=runs_guard
+        )
         self._source_catalog = _RepositorySourceCatalog(
             self.events.list_course_ids, self.events, self.blobs
         )
@@ -486,11 +371,11 @@ class LocalRepository:
         self.course_catalog = ProjectionCourseCatalog(self.events.list_course_ids, self.courses)
         self.course_service = CourseService(self.events, self.clock, self.courses)
         self.sessions = ProjectionSessionView(self.events.projection)
-        self.session_service = SessionService(
-            self.events, self.clock, self.sessions, self.courses
-        )
+        self.session_service = SessionService(self.events, self.clock, self.sessions, self.courses)
         self._model_adapters = model_adapters or default_model_adapters()
         self._environment = environment
+        if observation is not None:
+            observation.adopt_created_database_bindings()
 
     @classmethod
     def open(
@@ -509,11 +394,37 @@ class LocalRepository:
             environment=environment,
         )
 
+    @classmethod
+    def from_observation(
+        cls,
+        observation: RepositoryObservationHandle,
+        config: LocalRepositoryConfig,
+        *,
+        model_adapters: ModelAdapterRegistry | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> LocalRepository:
+        """Compose mutable adapters while retaining an inspected repository owner."""
+        if not isinstance(observation, RepositoryObservationHandle):
+            raise TypeError("observation must be a RepositoryObservationHandle")
+        if not isinstance(config, LocalRepositoryConfig):
+            raise TypeError("config must be a LocalRepositoryConfig")
+        return cls(
+            observation.mutation_paths(),
+            config,
+            model_adapters=model_adapters,
+            environment=environment,
+            observation=observation,
+        )
+
     def for_course(self, course_id: CourseId) -> CourseRepository:
         content = CourseSourceContent(course_id, self.events, self.blobs)
         return CourseRepository(
             content,
-            SQLiteFtsRetrieval(self.paths.retrieval, self._source_catalog),
+            SQLiteFtsRetrieval(
+                self._retrieval_database,
+                self._source_catalog,
+                connection_identity_guard=self._retrieval_connection_identity_guard,
+            ),
             TextIngestionService(
                 blobs=self.blobs,
                 events=self.events,
@@ -524,7 +435,11 @@ class LocalRepository:
 
     def rebuild_retrieval(self) -> IndexReceipt:
         """Rebuild the one discardable index from the complete canonical catalog."""
-        retrieval = SQLiteFtsRetrieval(self.paths.retrieval, self._source_catalog)
+        retrieval = SQLiteFtsRetrieval(
+            self._retrieval_database,
+            self._source_catalog,
+            connection_identity_guard=self._retrieval_connection_identity_guard,
+        )
         documents = tuple(self._source_catalog.documents(include_superseded=True))
         return retrieval.rebuild(documents)
 
@@ -541,7 +456,11 @@ class LocalRepository:
             raise LocalRepositoryError("repository retrieval receipt is incompatible")
         content = CourseSourceContent(course_id, self.events, self.blobs)
         documents = tuple(content.documents(include_superseded=True))
-        retrieval = SQLiteFtsRetrieval(self.paths.retrieval, self._source_catalog)
+        retrieval = SQLiteFtsRetrieval(
+            self._retrieval_database,
+            self._source_catalog,
+            connection_identity_guard=self._retrieval_connection_identity_guard,
+        )
         try:
             audited = retrieval.index(())
         except (OSError, RuntimeError, ValueError) as error:
@@ -549,9 +468,7 @@ class LocalRepository:
                 "retrieval index does not match the canonical repository catalog"
             ) from error
         if audited != repository_receipt:
-            raise LocalRepositoryError(
-                "repository retrieval receipt is stale or incompatible"
-            )
+            raise LocalRepositoryError("repository retrieval receipt is stale or incompatible")
         return IndexReceipt(
             len(documents),
             repository_receipt.index_version,
@@ -607,19 +524,34 @@ class LocalRepository:
     def study_tools(self, course_id: CourseId) -> StudyToolRegistry:
         """Compose the exact public tool registry from this repository's services."""
         from study_agent.tools import StudyToolRegistry
+        from study_agent.tools.builtin import GroundingAskServiceProvider
 
-        receipt = self.rebuild_retrieval()
         course = self.for_course(course_id)
-        grounding = self.grounding_service(
-            course_id, self.course_index_receipt(course_id, receipt)
-        )
+
+        def resolve_grounding() -> GroundingAskService:
+            if self.config.model is None:
+                raise GroundingAskError(
+                    GroundingAskErrorCode.INCOMPATIBLE_RUNTIME,
+                    "grounding requires a configured model adapter",
+                )
+            try:
+                receipt = self.rebuild_retrieval()
+                return self.grounding_service(
+                    course_id, self.course_index_receipt(course_id, receipt)
+                )
+            except ModelAdapterConfigurationError as error:
+                raise GroundingAskError(
+                    GroundingAskErrorCode.INCOMPATIBLE_RUNTIME,
+                    "grounding model configuration is unavailable",
+                ) from error
+
         return StudyToolRegistry(
             courses=self.courses,
             catalog=course.content,
             retrieval=course.retrieval,
             content=course.content,
             sessions=self.session_service,
-            grounding=grounding,
+            grounding=GroundingAskServiceProvider(resolve_grounding),
         )
 
     def close(self) -> None:

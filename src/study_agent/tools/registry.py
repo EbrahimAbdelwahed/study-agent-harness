@@ -33,7 +33,7 @@ from study_agent.sessions import (
     SessionService,
 )
 
-from .builtin import builtin_tools
+from .builtin import GroundingAskServiceProvider, builtin_tools
 from .contracts import IdempotencyMode, ToolError, ToolErrorCode, ToolManifest, ToolResult
 from .schema import SchemaValidationError, validate_json, validate_schema_definition
 
@@ -49,7 +49,7 @@ class StudyToolRegistry:
         retrieval: RetrievalPort,
         content: SourceContentPort,
         sessions: SessionService,
-        grounding: GroundingAskService,
+        grounding: GroundingAskService | GroundingAskServiceProvider,
     ) -> None:
         tools = cast(
             tuple[StudyTool, ...],
