@@ -199,7 +199,10 @@ def schedule_decision_id_for(
         raise TypeError("schedule identity requires ArtifactRevisionId")
     require_text(trigger, "trigger")
     require_text(identity, "identity")
-    raw = f"recall-schedule@1\0{course_id}\0{session_id}\0{revision_id}\0{trigger}\0{identity}".encode()
+    raw = (
+        f"recall-schedule@1\0{course_id}\0{session_id}\0"
+        f"{revision_id}\0{trigger}\0{identity}"
+    ).encode()
     return ScheduleDecisionId(f"schedule-sha256:{sha256(raw).hexdigest()}")
 
 

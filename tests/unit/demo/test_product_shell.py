@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from study_agent.capabilities import EXPLAIN_CONCEPT_MANIFEST
+from study_agent.capabilities import (
+    EXPLAIN_CONCEPT_MANIFEST,
+    CapabilityContinuation,
+    CapabilityManifest,
+    CapabilityOutcome,
+    TutorCapabilityId,
+)
 from study_agent.demo.product_shell import (
     DueReview,
     ProductShell,
@@ -15,6 +21,7 @@ from study_agent.demo.product_shell import (
 )
 from study_agent.domain import (
     CourseId,
+    ExecutionContext,
     SessionId,
     SessionStatus,
     StudyStatementKind,
@@ -22,6 +29,7 @@ from study_agent.domain import (
     TutorContextState,
     TutorSnapshotV1,
 )
+from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.hosts import TutorHostRunResult, TutorHostRunStatus
 
 COURSE = CourseId("course")
@@ -62,18 +70,41 @@ class _Snapshots:
 
 
 class _Gateway:
-    def discover(self):
+    def discover(self) -> tuple[CapabilityManifest, ...]:
         return (EXPLAIN_CONCEPT_MANIFEST,)
+
+    async def start(
+        self,
+        capability_id: TutorCapabilityId,
+        inputs: JsonObject,
+        context: ExecutionContext,
+    ) -> CapabilityOutcome:
+        raise AssertionError("presentation test must not start capabilities")
+
+    async def resume(
+        self,
+        continuation: CapabilityContinuation,
+        response: JsonValue,
+        context: ExecutionContext,
+    ) -> CapabilityOutcome:
+        raise AssertionError("presentation test must not resume capabilities")
 
 
 class _Due:
-    def due(self, course_id: CourseId):
+    def due(self, course_id: CourseId) -> tuple[DueReview, ...]:
         assert course_id == COURSE
         return (DueReview("review-1", "Aortic valve", datetime(2026, 7, 21, tzinfo=UTC)),)
 
 
 class _Host:
-    async def respond(self, course_id, session_id, learner_entry, *, pending_fingerprint=None):
+    async def respond(
+        self,
+        course_id: CourseId,
+        session_id: SessionId,
+        learner_entry: str,
+        *,
+        pending_fingerprint: str | None = None,
+    ) -> TutorHostRunResult:
         assert (course_id, session_id) == (COURSE, SESSION)
         assert learner_entry
         assert pending_fingerprint is None
