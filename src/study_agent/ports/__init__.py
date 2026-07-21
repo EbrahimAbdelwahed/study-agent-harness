@@ -49,6 +49,8 @@ from .retrieval import (
     RetrievalQuery,
     retrieval_read_set_fingerprint,
 )
+from .recall import RecallCommandPort, RecallViewPort
+from .scheduling import SchedulingPolicyPort
 from .session import (
     AnswerNotFoundError,
     AssistantTurnViewPort,
@@ -124,6 +126,9 @@ __all__ = [
     "RetrievalEvidenceSet",
     "RetrievalPort",
     "RetrievalQuery",
+    "RecallCommandPort",
+    "RecallViewPort",
+    "SchedulingPolicyPort",
     "RetryableTutorDecisionError",
     "RunStore",
     "ServiceDecisionPolicyPort",
