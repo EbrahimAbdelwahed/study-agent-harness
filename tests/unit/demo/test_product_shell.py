@@ -117,6 +117,15 @@ def test_provider_free_completion_refreshes_the_public_snapshot() -> None:
     assert recovered.divergences == ()
 
 
+def test_stale_refresh_is_recovered_by_the_next_completed_host_turn() -> None:
+    shell = ProductShell(_Snapshots(_snapshot()), _Gateway())
+
+    assert shell.mark_stale(COURSE, SESSION).status is ProductShellStatus.STALE
+    recovered = asyncio.run(shell.submit(COURSE, SESSION, "Refresh the answer", _Host()))
+
+    assert recovered.status is ProductShellStatus.RECOVERED
+
+
 def test_render_has_no_ansi_or_provider_details() -> None:
     view = ProductShellView(ProductShellStatus.WORKING, "hello", None, None, None)
 

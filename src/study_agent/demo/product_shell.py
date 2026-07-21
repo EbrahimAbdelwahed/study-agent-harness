@@ -274,6 +274,19 @@ class ProductShell:
         self._last_status = view.status
         return view
 
+    def mark_stale(self, course_id: CourseId, session_id: SessionId) -> ProductShellView:
+        """Expose a host-requested stale refresh before re-running a turn."""
+
+        snapshot = self._snapshots.get(course_id, session_id)
+        view = self._view_for(
+            course_id,
+            snapshot,
+            base_status=ProductShellStatus.STALE,
+            learner_entry=self._last_entry,
+        )
+        self._last_status = view.status
+        return view
+
     def _view_for(
         self,
         course_id: CourseId,
