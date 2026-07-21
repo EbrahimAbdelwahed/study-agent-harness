@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 
 from study_agent.domain import (
     ArtifactRevisionStatus,
@@ -14,7 +13,15 @@ from study_agent.domain import (
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.state import EventRegistry
 
-from .contracts import ReviewHistoryEntry, SchedulingRequest, SchedulingResult, history_fingerprint, result_fingerprint
+from .contracts import (
+    AppliedSchedule,
+    ReviewHistoryEntry,
+    ReviewRecord,
+    SchedulingRequest,
+    SchedulingResult,
+    history_fingerprint,
+    result_fingerprint,
+)
 from .events import (
     RECALL_SCHEMA_VERSION,
     REVIEW_RECORDED,
@@ -26,7 +33,9 @@ from .events import (
 )
 
 
-def reduce_review_recorded(state: JsonObject, event: DomainEvent, payload: ReviewRecorded) -> Mapping[str, JsonValue]:
+def reduce_review_recorded(
+    state: JsonObject, event: DomainEvent, payload: ReviewRecorded
+) -> Mapping[str, JsonValue]:
     _require_scope(state, event)
     if event.actor.kind is not PrincipalKind.HUMAN:
         raise ValueError("reviews require HUMAN authority")
@@ -38,24 +47,40 @@ def reduce_review_recorded(state: JsonObject, event: DomainEvent, payload: Revie
     enrollment = recall["enrollments"].get(str(record.revision_id))
     if enrollment is None:
         raise ValueError("review requires enrollment")
-    review_count = sum(1 for value in recall["reviews"].values() if _mapping(value).get("revision_id") == str(record.revision_id))
-    applied_count = sum(1 for value in recall["schedules"].values() if _mapping(value).get("revision_id") == str(record.revision_id) and _mapping(value).get("trigger") == "review")
+    review_count = sum(
+        1
+        for value in recall["reviews"].values()
+        if _mapping(value).get("revision_id") == str(record.revision_id)
+    )
+    applied_count = sum(
+        1
+        for value in recall["schedules"].values()
+        if _mapping(value).get("revision_id") == str(record.revision_id)
+        and _mapping(value).get("trigger") == "review"
+    )
     if review_count != applied_count:
         raise ValueError("a prior review is awaiting its matching schedule")
     # Persist immutable event evidence, including its trusted occurrence sequence.
     reviews = dict(recall["reviews"])
     reviews[str(record.review_id)] = {
-        **record.to_json(), "course_sequence": event.course_sequence, "session_id": str(event.session_id)
+        **record.to_json(),
+        "course_sequence": event.course_sequence,
+        "session_id": str(event.session_id),
     }
     commands = dict(recall["commands"])
     command_id = str(event.event_id)
     if command_id in commands:
         raise ValueError("recall command already exists")
-    commands[command_id] = {"command_fingerprint": record.command_fingerprint, "result_id": str(record.review_id)}
+    commands[command_id] = {
+        "command_fingerprint": record.command_fingerprint,
+        "result_id": str(record.review_id),
+    }
     return _replace(state, recall["enrollments"], reviews, recall["schedules"], commands)
 
 
-def reduce_schedule_applied(state: JsonObject, event: DomainEvent, payload: ScheduleApplied) -> Mapping[str, JsonValue]:
+def reduce_schedule_applied(
+    state: JsonObject, event: DomainEvent, payload: ScheduleApplied
+) -> Mapping[str, JsonValue]:
     _require_scope(state, event)
     if event.actor.kind is not PrincipalKind.SERVICE:
         raise ValueError("schedules require SERVICE authority")
@@ -96,23 +121,50 @@ def reduce_schedule_applied(state: JsonObject, event: DomainEvent, payload: Sche
         pending = _pending_reviews(recall, revision)
         if pending != (str(schedule.review_id),):
             raise ValueError("schedule must apply the sole newest pending review")
-        history = tuple(_review_from_json(value).history_entry() for value in sorted((v for v in recall["reviews"].values() if _mapping(v).get("revision_id") == revision), key=lambda v: _int(_mapping(v).get("course_sequence"))))
+        history = tuple(
+            _review_from_json(value).history_entry()
+            for value in sorted(
+                (
+                    v
+                    for v in recall["reviews"].values()
+                    if _mapping(v).get("revision_id") == revision
+                ),
+                key=lambda v: _int(_mapping(v).get("course_sequence")),
+            )
+        )
         if history[-1].review_id != schedule.review_id:
             raise ValueError("schedule review is out of order")
-        expected_history = history_fingerprint(schedule.revision_id, enrollment.enrollment_at, history)
+        expected_history = history_fingerprint(
+            schedule.revision_id, enrollment.enrollment_at, history
+        )
         if schedule.history_fingerprint != expected_history:
             raise ValueError("schedule history fingerprint is invalid")
         expected_decision = _review_decision_id(event, schedule)
         if str(schedule.decision_id) != str(expected_decision):
             raise ValueError("review decision identity is invalid")
 
-    request = SchedulingRequest(schedule.revision_id, schedule.enrollment_at, history, schedule.policy)
-    receipt = SchedulingResult(schedule.due_at, schedule.policy_id, schedule.policy_version, schedule.policy_fingerprint, schedule.implementation_id, schedule.implementation_version, schedule.history_fingerprint, schedule.result_fingerprint)
+    request = SchedulingRequest(
+        schedule.revision_id, schedule.enrollment_at, history, schedule.policy
+    )
+    receipt = SchedulingResult(
+        schedule.due_at,
+        schedule.policy_id,
+        schedule.policy_version,
+        schedule.policy_fingerprint,
+        schedule.implementation_id,
+        schedule.implementation_version,
+        schedule.history_fingerprint,
+        schedule.result_fingerprint,
+    )
     expected_result = result_fingerprint(request, receipt)
     if schedule.result_fingerprint != expected_result:
         raise ValueError("schedule result fingerprint is invalid")
     schedules = dict(recall["schedules"])
-    schedules[str(schedule.decision_id)] = {**schedule.to_json(), "course_sequence": event.course_sequence, "session_id": str(event.session_id)}
+    schedules[str(schedule.decision_id)] = {
+        **schedule.to_json(),
+        "course_sequence": event.course_sequence,
+        "session_id": str(event.session_id),
+    }
     enrollments = dict(recall["enrollments"])
     if schedule.trigger == "enrollment":
         enrollments[revision] = schedule.to_json()
@@ -120,13 +172,20 @@ def reduce_schedule_applied(state: JsonObject, event: DomainEvent, payload: Sche
     command_id = str(event.event_id)
     if command_id in commands:
         raise ValueError("recall command already exists")
-    commands[command_id] = {"command_fingerprint": schedule.command_fingerprint, "result_id": str(schedule.decision_id)}
+    commands[command_id] = {
+        "command_fingerprint": schedule.command_fingerprint,
+        "result_id": str(schedule.decision_id),
+    }
     return _replace(state, enrollments, recall["reviews"], schedules, commands)
 
 
 def register_recall_events(registry: EventRegistry) -> None:
-    registry.register_event(REVIEW_RECORDED, RECALL_SCHEMA_VERSION, decode_review_recorded, reduce_review_recorded)
-    registry.register_event(SCHEDULE_APPLIED, RECALL_SCHEMA_VERSION, decode_schedule_applied, reduce_schedule_applied)
+    registry.register_event(
+        REVIEW_RECORDED, RECALL_SCHEMA_VERSION, decode_review_recorded, reduce_review_recorded
+    )
+    registry.register_event(
+        SCHEDULE_APPLIED, RECALL_SCHEMA_VERSION, decode_schedule_applied, reduce_schedule_applied
+    )
 
 
 def _parts(state: JsonObject) -> dict[str, Mapping[str, JsonValue]]:
@@ -139,8 +198,22 @@ def _parts(state: JsonObject) -> dict[str, Mapping[str, JsonValue]]:
     return {key: _mapping(raw.get(key, {})) for key in expected}
 
 
-def _replace(state: JsonObject, enrollments: Mapping[str, JsonValue], reviews: Mapping[str, JsonValue], schedules: Mapping[str, JsonValue], commands: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
-    return {**state, "recall": {"enrollments": enrollments, "reviews": reviews, "schedules": schedules, "commands": commands}}
+def _replace(
+    state: JsonObject,
+    enrollments: Mapping[str, JsonValue],
+    reviews: Mapping[str, JsonValue],
+    schedules: Mapping[str, JsonValue],
+    commands: Mapping[str, JsonValue],
+) -> Mapping[str, JsonValue]:
+    return {
+        **state,
+        "recall": {
+            "enrollments": enrollments,
+            "reviews": reviews,
+            "schedules": schedules,
+            "commands": commands,
+        },
+    }
 
 
 def _require_scope(state: JsonObject, event: DomainEvent) -> None:
@@ -156,26 +229,47 @@ def _accepted_flashcard(state: JsonObject, revision_id: str) -> None:
     artifacts = _mapping(state.get("study_artifacts"))
     revisions = _mapping(artifacts.get("revisions"))
     revision = _mapping(revisions.get(revision_id))
-    if revision.get("status") != ArtifactRevisionStatus.ACCEPTED.value or revision.get("kind") != StudyArtifactKind.FLASHCARD.value:
+    if (
+        revision.get("status") != ArtifactRevisionStatus.ACCEPTED.value
+        or revision.get("kind") != StudyArtifactKind.FLASHCARD.value
+    ):
         raise ValueError("recall target must be an accepted flashcard revision")
 
 
-def _pending_reviews(recall: Mapping[str, Mapping[str, JsonValue]], revision: str) -> tuple[str, ...]:
-    reviewed = {str(_mapping(v).get("review_id")) for v in recall["reviews"].values() if _mapping(v).get("revision_id") == revision}
-    applied = {str(_mapping(v).get("review_id")) for v in recall["schedules"].values() if _mapping(v).get("revision_id") == revision and _mapping(v).get("trigger") == "review"}
+def _pending_reviews(
+    recall: Mapping[str, Mapping[str, JsonValue]], revision: str
+) -> tuple[str, ...]:
+    reviewed = {
+        str(_mapping(v).get("review_id"))
+        for v in recall["reviews"].values()
+        if _mapping(v).get("revision_id") == revision
+    }
+    applied = {
+        str(_mapping(v).get("review_id"))
+        for v in recall["schedules"].values()
+        if _mapping(v).get("revision_id") == revision and _mapping(v).get("trigger") == "review"
+    }
     return tuple(sorted(reviewed - applied))
 
 
-def _enrollment_decision_id(event: DomainEvent, schedule: object) -> object:
+def _enrollment_decision_id(event: DomainEvent, schedule: AppliedSchedule) -> object:
     from study_agent.domain import enrollment_decision_id_for
-    item = schedule
-    return enrollment_decision_id_for(event.course_id, event.session_id, item.revision_id, item.idempotency_key)  # type: ignore[attr-defined]
+
+    if event.session_id is None:
+        raise ValueError("recall requires a session")
+    return enrollment_decision_id_for(
+        event.course_id, event.session_id, schedule.revision_id, schedule.idempotency_key
+    )
 
 
-def _review_decision_id(event: DomainEvent, schedule: object) -> object:
+def _review_decision_id(event: DomainEvent, schedule: AppliedSchedule) -> object:
     from study_agent.domain import review_decision_id_for
-    item = schedule
-    return review_decision_id_for(event.course_id, event.session_id, item.revision_id, item.review_id)  # type: ignore[attr-defined]
+
+    if event.session_id is None or schedule.review_id is None:
+        raise ValueError("review schedule requires session and review")
+    return review_decision_id_for(
+        event.course_id, event.session_id, schedule.revision_id, schedule.review_id
+    )
 
 
 def _mapping(value: object) -> dict[str, JsonValue] | Mapping[str, JsonValue]:
@@ -190,13 +284,15 @@ def _int(value: object) -> int:
     return value
 
 
-def _review_from_json(value: JsonValue) -> object:
+def _review_from_json(value: JsonValue) -> ReviewRecord:
     from .view import review_record_from_json
+
     return review_record_from_json(_mapping(value))
 
 
-def _schedule_from_json(value: JsonValue) -> object:
+def _schedule_from_json(value: JsonValue) -> AppliedSchedule:
     from .view import schedule_from_json
+
     return schedule_from_json(_mapping(value))
 
 

@@ -374,16 +374,19 @@ def run_offline_shell_demo(
     from .anatomy import run_reference_demo
 
     result = run_reference_demo(learner_entry)
-    return {
-        "learner_entry": result["learner_entry"],
-        "status": "recovered",
-        "status_trace": result["timeline"],
-        "material": result["source_state"],
-        "evidence_sequence": result["evidence_refresh_sequence"],
-        "capabilities": result["discovered_capabilities"],
-        "optional_due_review": "unavailable (TUT-07 is optional)",
-        "parity": result["parity"],
-    }
+    return cast(
+        JsonObject,
+        {
+            "learner_entry": result["learner_entry"],
+            "status": "recovered",
+            "status_trace": result["timeline"],
+            "material": result["source_state"],
+            "evidence_sequence": result["evidence_refresh_sequence"],
+            "capabilities": result["discovered_capabilities"],
+            "optional_due_review": "unavailable (TUT-07 is optional)",
+            "parity": result["parity"],
+        },
+    )
 
 
 def main() -> None:

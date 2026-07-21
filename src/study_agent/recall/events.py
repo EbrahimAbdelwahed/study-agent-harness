@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from collections.abc import Mapping
 from typing import cast
 
 from study_agent.domain import (
@@ -27,8 +27,6 @@ from .contracts import (
     RecallRating,
     ReviewRecord,
     SchedulingPolicyConfigV1,
-    _fp,
-    _timestamp,
 )
 
 RECALL_SCHEMA_VERSION = 1
@@ -47,28 +45,50 @@ class ScheduleApplied:
     schedule: AppliedSchedule
 
 
-def encode_review_recorded(record: ReviewRecord, *, course_id: CourseId, session_id: SessionId) -> JsonObject:
+def encode_review_recorded(
+    record: ReviewRecord, *, course_id: CourseId, session_id: SessionId
+) -> JsonObject:
     if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
         raise TypeError("recall event scope is invalid")
     return {
-        "course_id": str(course_id), "session_id": str(session_id), "review_id": str(record.review_id),
-        "revision_id": str(record.revision_id), "rating": record.rating.value,
-        "latency_ms": record.latency_ms, "confidence_bps": record.confidence_bps,
-        "idempotency_key": record.idempotency_key, "command_fingerprint": record.command_fingerprint,
+        "course_id": str(course_id),
+        "session_id": str(session_id),
+        "review_id": str(record.review_id),
+        "revision_id": str(record.revision_id),
+        "rating": record.rating.value,
+        "latency_ms": record.latency_ms,
+        "confidence_bps": record.confidence_bps,
+        "idempotency_key": record.idempotency_key,
+        "command_fingerprint": record.command_fingerprint,
     }
 
 
-def encode_schedule_applied(schedule: AppliedSchedule, *, course_id: CourseId, session_id: SessionId) -> JsonObject:
-    return {
-        "course_id": str(course_id), "session_id": str(session_id), **schedule.to_json()
-    }
+def encode_schedule_applied(
+    schedule: AppliedSchedule, *, course_id: CourseId, session_id: SessionId
+) -> JsonObject:
+    return {"course_id": str(course_id), "session_id": str(session_id), **schedule.to_json()}
 
 
 def decode_review_recorded(event: DomainEvent) -> ReviewRecorded:
     payload = _event_payload(event, REVIEW_RECORDED, PrincipalKind.HUMAN)
-    _strict(payload, {"course_id", "session_id", "review_id", "revision_id", "rating", "latency_ms", "confidence_bps", "idempotency_key", "command_fingerprint"})
+    _strict(
+        payload,
+        {
+            "course_id",
+            "session_id",
+            "review_id",
+            "revision_id",
+            "rating",
+            "latency_ms",
+            "confidence_bps",
+            "idempotency_key",
+            "command_fingerprint",
+        },
+    )
     key = _text(payload["idempotency_key"], "idempotency_key")
-    if event.event_id != recall_event_id_for(event.course_id, cast(SessionId, event.session_id), key, REVIEW_RECORDED):
+    if event.event_id != recall_event_id_for(
+        event.course_id, cast(SessionId, event.session_id), key, REVIEW_RECORDED
+    ):
         raise ValueError("review event identity does not match retry key")
     latency = _optional_int(payload["latency_ms"], "latency_ms")
     confidence = _optional_int(payload["confidence_bps"], "confidence_bps")
@@ -77,8 +97,12 @@ def decode_review_recorded(event: DomainEvent) -> ReviewRecorded:
     record = ReviewRecord(
         ReviewId(_text(payload["review_id"], "review_id")),
         ArtifactRevisionId(_text(payload["revision_id"], "revision_id")),
-        RecallRating(_text(payload["rating"], "rating")), latency, confidence,
-        event.occurred_at, key, _text(payload["command_fingerprint"], "command_fingerprint"),
+        RecallRating(_text(payload["rating"], "rating")),
+        latency,
+        confidence,
+        event.occurred_at,
+        key,
+        _text(payload["command_fingerprint"], "command_fingerprint"),
     )
     return ReviewRecorded(record)
 
@@ -86,37 +110,71 @@ def decode_review_recorded(event: DomainEvent) -> ReviewRecorded:
 def decode_schedule_applied(event: DomainEvent) -> ScheduleApplied:
     payload = _event_payload(event, SCHEDULE_APPLIED, PrincipalKind.SERVICE)
     expected = {
-        "course_id", "session_id", "decision_id", "revision_id", "trigger", "review_id",
-        "enrollment_at", "due_at", "policy", "policy_id", "policy_version", "policy_fingerprint",
-        "implementation_id", "implementation_version", "history_fingerprint", "result_fingerprint",
-        "idempotency_key", "command_fingerprint",
+        "course_id",
+        "session_id",
+        "decision_id",
+        "revision_id",
+        "trigger",
+        "review_id",
+        "enrollment_at",
+        "due_at",
+        "policy",
+        "policy_id",
+        "policy_version",
+        "policy_fingerprint",
+        "implementation_id",
+        "implementation_version",
+        "history_fingerprint",
+        "result_fingerprint",
+        "idempotency_key",
+        "command_fingerprint",
     }
     _strict(payload, expected)
     key = _text(payload["idempotency_key"], "idempotency_key")
-    if event.event_id != recall_event_id_for(event.course_id, cast(SessionId, event.session_id), key, SCHEDULE_APPLIED):
+    if event.event_id != recall_event_id_for(
+        event.course_id, cast(SessionId, event.session_id), key, SCHEDULE_APPLIED
+    ):
         raise ValueError("schedule event identity does not match retry key")
     policy_raw = payload["policy"]
     if not isinstance(policy_raw, Mapping):
         raise ValueError("policy must be an object")
-    policy = SchedulingPolicyConfigV1.from_json(cast(JsonObject, policy_raw))
+    policy = SchedulingPolicyConfigV1.from_json(policy_raw)
     review_raw = payload["review_id"]
     review_id = ReviewId(_text(review_raw, "review_id")) if isinstance(review_raw, str) else None
     schedule = AppliedSchedule(
         ScheduleDecisionId(_text(payload["decision_id"], "decision_id")),
         ArtifactRevisionId(_text(payload["revision_id"], "revision_id")),
-        _text(payload["trigger"], "trigger"), review_id,
-        _parse_time(payload["enrollment_at"], "enrollment_at"), _parse_time(payload["due_at"], "due_at"),
-        policy, _text(payload["policy_id"], "policy_id"), _text(payload["policy_version"], "policy_version"),
-        _text(payload["policy_fingerprint"], "policy_fingerprint"), _text(payload["implementation_id"], "implementation_id"),
-        _text(payload["implementation_version"], "implementation_version"), _text(payload["history_fingerprint"], "history_fingerprint"),
-        _text(payload["result_fingerprint"], "result_fingerprint"), key,
+        _text(payload["trigger"], "trigger"),
+        review_id,
+        _parse_time(payload["enrollment_at"], "enrollment_at"),
+        _parse_time(payload["due_at"], "due_at"),
+        policy,
+        _text(payload["policy_id"], "policy_id"),
+        _text(payload["policy_version"], "policy_version"),
+        _text(payload["policy_fingerprint"], "policy_fingerprint"),
+        _text(payload["implementation_id"], "implementation_id"),
+        _text(payload["implementation_version"], "implementation_version"),
+        _text(payload["history_fingerprint"], "history_fingerprint"),
+        _text(payload["result_fingerprint"], "result_fingerprint"),
+        key,
         _text(payload["command_fingerprint"], "command_fingerprint"),
     )
     return ScheduleApplied(schedule)
 
 
 def decode_review_recorded_payload(payload: JsonObject, *, occurred_at: datetime) -> ReviewRecorded:
-    event = DomainEvent(EventId("decode-placeholder"), CourseId(_text(payload.get("course_id"), "course_id")), 1, REVIEW_RECORDED, 1, Actor(PrincipalKind.HUMAN, "decoder"), occurred_at, CorrelationId("decode"), payload, SessionId(_text(payload.get("session_id"), "session_id")))
+    event = DomainEvent(
+        EventId("decode-placeholder"),
+        CourseId(_text(payload.get("course_id"), "course_id")),
+        1,
+        REVIEW_RECORDED,
+        1,
+        Actor(PrincipalKind.HUMAN, "decoder"),
+        occurred_at,
+        CorrelationId("decode"),
+        payload,
+        SessionId(_text(payload.get("session_id"), "session_id")),
+    )
     return decode_review_recorded(event)
 
 
@@ -140,7 +198,9 @@ def _event_payload(event: DomainEvent, event_type: str, authority: PrincipalKind
     if not isinstance(event.actor, Actor) or event.actor.kind is not authority:
         raise ValueError(f"{event_type} requires {authority.value} authority")
     payload = event.payload
-    if payload.get("course_id") != str(event.course_id) or payload.get("session_id") != str(event.session_id):
+    if payload.get("course_id") != str(event.course_id) or payload.get("session_id") != str(
+        event.session_id
+    ):
         raise ValueError("recall event scope does not match envelope")
     return payload
 
@@ -176,7 +236,16 @@ def _parse_time(value: JsonValue | object, name: str) -> datetime:
 
 
 __all__ = [
-    "RECALL_EVENT_TYPES", "RECALL_SCHEMA_VERSION", "REVIEW_RECORDED", "SCHEDULE_APPLIED",
-    "ReviewRecorded", "ScheduleApplied", "decode_review_recorded", "decode_review_recorded_payload",
-    "decode_schedule_applied", "encode_review_recorded", "encode_schedule_applied", "register_recall_events",
+    "RECALL_EVENT_TYPES",
+    "RECALL_SCHEMA_VERSION",
+    "REVIEW_RECORDED",
+    "SCHEDULE_APPLIED",
+    "ReviewRecorded",
+    "ScheduleApplied",
+    "decode_review_recorded",
+    "decode_review_recorded_payload",
+    "decode_schedule_applied",
+    "encode_review_recorded",
+    "encode_schedule_applied",
+    "register_recall_events",
 ]

@@ -9,7 +9,13 @@ from study_agent.domain import ArtifactRevisionId, CourseId, ReviewId, ScheduleD
 from study_agent.domain._validation import JsonValue
 from study_agent.state import Projection
 
-from .contracts import AppliedSchedule, RecallSnapshot, RecallViewRow, RecallRating, ReviewRecord, SchedulingPolicyConfigV1
+from .contracts import (
+    AppliedSchedule,
+    RecallRating,
+    RecallSnapshot,
+    ReviewRecord,
+    SchedulingPolicyConfigV1,
+)
 
 ProjectionLoader = Callable[[CourseId], Projection]
 
@@ -28,9 +34,11 @@ class ProjectionRecallView:
         enrollments_raw = _mapping(raw.get("enrollments", {}))
         reviews_raw = _mapping(raw.get("reviews", {}))
         schedules_raw = _mapping(raw.get("schedules", {}))
-        enrollments = tuple(schedule_from_json(value) for value in enrollments_raw.values())
-        reviews = tuple(review_record_from_json(value) for value in reviews_raw.values())
-        schedules = tuple(schedule_from_json(value) for value in schedules_raw.values())
+        enrollments = tuple(
+            schedule_from_json(_mapping(value)) for value in enrollments_raw.values()
+        )
+        reviews = tuple(review_record_from_json(_mapping(value)) for value in reviews_raw.values())
+        schedules = tuple(schedule_from_json(_mapping(value)) for value in schedules_raw.values())
         return RecallSnapshot(course_id, projection.sequence, enrollments, reviews, schedules)
 
     def command_fingerprint(self, course_id: CourseId, event_id: str) -> str | None:
@@ -48,10 +56,14 @@ class ProjectionRecallView:
 
 def review_record_from_json(value: Mapping[str, JsonValue]) -> ReviewRecord:
     return ReviewRecord(
-        ReviewId(_text(value.get("review_id"))), ArtifactRevisionId(_text(value.get("revision_id"))),
-        RecallRating(_text(value.get("rating"))), _optional_int(value.get("latency_ms")),
-        _optional_int(value.get("confidence_bps")), _time(value.get("occurred_at")),
-        _text(value.get("idempotency_key")), _text(value.get("command_fingerprint")),
+        ReviewId(_text(value.get("review_id"))),
+        ArtifactRevisionId(_text(value.get("revision_id"))),
+        RecallRating(_text(value.get("rating"))),
+        _optional_int(value.get("latency_ms")),
+        _optional_int(value.get("confidence_bps")),
+        _time(value.get("occurred_at")),
+        _text(value.get("idempotency_key")),
+        _text(value.get("command_fingerprint")),
     )
 
 
@@ -59,13 +71,22 @@ def schedule_from_json(value: Mapping[str, JsonValue]) -> AppliedSchedule:
     policy_raw = _mapping(value.get("policy"))
     review = value.get("review_id")
     return AppliedSchedule(
-        ScheduleDecisionId(_text(value.get("decision_id"))), ArtifactRevisionId(_text(value.get("revision_id"))),
-        _text(value.get("trigger")), ReviewId(review) if isinstance(review, str) else None,
-        _time(value.get("enrollment_at")), _time(value.get("due_at")), SchedulingPolicyConfigV1.from_json(policy_raw),
-        _text(value.get("policy_id")), _text(value.get("policy_version")), _text(value.get("policy_fingerprint")),
-        _text(value.get("implementation_id")), _text(value.get("implementation_version")),
-        _text(value.get("history_fingerprint")), _text(value.get("result_fingerprint")),
-        _text(value.get("idempotency_key")), _text(value.get("command_fingerprint")),
+        ScheduleDecisionId(_text(value.get("decision_id"))),
+        ArtifactRevisionId(_text(value.get("revision_id"))),
+        _text(value.get("trigger")),
+        ReviewId(review) if isinstance(review, str) else None,
+        _time(value.get("enrollment_at")),
+        _time(value.get("due_at")),
+        SchedulingPolicyConfigV1.from_json(policy_raw),
+        _text(value.get("policy_id")),
+        _text(value.get("policy_version")),
+        _text(value.get("policy_fingerprint")),
+        _text(value.get("implementation_id")),
+        _text(value.get("implementation_version")),
+        _text(value.get("history_fingerprint")),
+        _text(value.get("result_fingerprint")),
+        _text(value.get("idempotency_key")),
+        _text(value.get("command_fingerprint")),
     )
 
 

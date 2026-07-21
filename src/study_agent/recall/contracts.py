@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
 
-from study_agent.domain import ArtifactRevisionId, CourseId, ReviewId, ScheduleDecisionId, SessionId
+from study_agent.domain import ArtifactRevisionId, CourseId, ReviewId, ScheduleDecisionId
 from study_agent.domain._validation import JsonObject, JsonValue, require_aware, require_text
 from study_agent.state import canonical_json_bytes
 
@@ -43,7 +43,9 @@ def _version(value: str, name: str) -> None:
     require_text(value, name)
     if re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._+-]*", value) is None:
         raise ValueError(f"{name} must be portable")
-    if any(token in value.lower() for token in ("secret", "password", "token", "api_key", "bearer")):
+    if any(
+        token in value.lower() for token in ("secret", "password", "token", "api_key", "bearer")
+    ):
         raise ValueError(f"{name} cannot contain secret-shaped text")
 
 
@@ -73,8 +75,13 @@ class SchedulingPolicyConfigV1:
             raise ValueError("target_retention_bps must be in 1..10000")
         if type(self.maximum_interval_days) is not int or self.maximum_interval_days < 1:
             raise ValueError("maximum_interval_days must be positive")
-        for name, steps in (("learning_steps_minutes", self.learning_steps_minutes), ("relearning_steps_minutes", self.relearning_steps_minutes)):
-            if not isinstance(steps, tuple) or any(type(item) is not int or item <= 0 for item in steps):
+        for name, steps in (
+            ("learning_steps_minutes", self.learning_steps_minutes),
+            ("relearning_steps_minutes", self.relearning_steps_minutes),
+        ):
+            if not isinstance(steps, tuple) or any(
+                type(item) is not int or item <= 0 for item in steps
+            ):
                 raise ValueError(f"{name} must contain positive integer minutes")
             if len(steps) > 32:
                 raise ValueError(f"{name} is too long")
@@ -97,25 +104,39 @@ class SchedulingPolicyConfigV1:
 
     @property
     def fingerprint(self) -> str:
-        return sha256(b"recall-policy-config@1\0" + canonical_json_bytes(self.to_json())).hexdigest()
+        return sha256(
+            b"recall-policy-config@1\0" + canonical_json_bytes(self.to_json())
+        ).hexdigest()
 
     @classmethod
     def from_json(cls, value: JsonObject) -> SchedulingPolicyConfigV1:
-        _strict(value, {"schema_version", "target_retention_bps", "maximum_interval_days", "learning_steps_minutes", "relearning_steps_minutes", "fuzzing_enabled"}, "policy")
+        _strict(
+            value,
+            {
+                "schema_version",
+                "target_retention_bps",
+                "maximum_interval_days",
+                "learning_steps_minutes",
+                "relearning_steps_minutes",
+                "fuzzing_enabled",
+            },
+            "policy",
+        )
         if value.get("schema_version") != 1:
             raise ValueError("unsupported scheduling policy schema")
         steps = value.get("learning_steps_minutes")
         relearning = value.get("relearning_steps_minutes")
         if not isinstance(steps, tuple) or not isinstance(relearning, tuple):
             raise ValueError("policy step lists must be canonical tuples")
-        if type(value.get("fuzzing_enabled")) is not bool:
+        fuzzing_enabled = value.get("fuzzing_enabled")
+        if type(fuzzing_enabled) is not bool:
             raise ValueError("fuzzing_enabled must be boolean")
         return cls(
             _exact_int(value.get("target_retention_bps"), "target_retention_bps"),
             _exact_int(value.get("maximum_interval_days"), "maximum_interval_days"),
             tuple(_exact_int(item, "learning step") for item in steps),
             tuple(_exact_int(item, "relearning step") for item in relearning),
-            value["fuzzing_enabled"],
+            fuzzing_enabled,
         )
 
 
@@ -129,7 +150,9 @@ class ReviewHistoryEntry:
     occurred_at: datetime
 
     def __post_init__(self) -> None:
-        if not isinstance(self.review_id, ReviewId) or not isinstance(self.revision_id, ArtifactRevisionId):
+        if not isinstance(self.review_id, ReviewId) or not isinstance(
+            self.revision_id, ArtifactRevisionId
+        ):
             raise TypeError("review history ids are invalid")
         if not isinstance(self.rating, RecallRating):
             raise TypeError("review rating is invalid")
@@ -194,21 +217,39 @@ class ReviewRecord:
     command_fingerprint: str
 
     def __post_init__(self) -> None:
-        entry = ReviewHistoryEntry(self.review_id, self.revision_id, self.rating, self.latency_ms, self.confidence_bps, self.occurred_at)
+        entry = ReviewHistoryEntry(
+            self.review_id,
+            self.revision_id,
+            self.rating,
+            self.latency_ms,
+            self.confidence_bps,
+            self.occurred_at,
+        )
         object.__setattr__(self, "occurred_at", entry.occurred_at)
         require_text(self.idempotency_key, "idempotency_key")
         _fp(self.command_fingerprint, "command_fingerprint")
 
     def to_json(self) -> JsonObject:
         return {
-            "review_id": str(self.review_id), "revision_id": str(self.revision_id), "rating": self.rating.value,
-            "latency_ms": self.latency_ms, "confidence_bps": self.confidence_bps,
-            "occurred_at": _timestamp(self.occurred_at), "idempotency_key": self.idempotency_key,
+            "review_id": str(self.review_id),
+            "revision_id": str(self.revision_id),
+            "rating": self.rating.value,
+            "latency_ms": self.latency_ms,
+            "confidence_bps": self.confidence_bps,
+            "occurred_at": _timestamp(self.occurred_at),
+            "idempotency_key": self.idempotency_key,
             "command_fingerprint": self.command_fingerprint,
         }
 
     def history_entry(self) -> ReviewHistoryEntry:
-        return ReviewHistoryEntry(self.review_id, self.revision_id, self.rating, self.latency_ms, self.confidence_bps, self.occurred_at)
+        return ReviewHistoryEntry(
+            self.review_id,
+            self.revision_id,
+            self.rating,
+            self.latency_ms,
+            self.confidence_bps,
+            self.occurred_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +272,9 @@ class AppliedSchedule:
     command_fingerprint: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.decision_id, ScheduleDecisionId) or not isinstance(self.revision_id, ArtifactRevisionId):
+        if not isinstance(self.decision_id, ScheduleDecisionId) or not isinstance(
+            self.revision_id, ArtifactRevisionId
+        ):
             raise TypeError("schedule ids are invalid")
         if self.trigger not in {"enrollment", "review"}:
             raise ValueError("schedule trigger is invalid")
@@ -243,20 +286,37 @@ class AppliedSchedule:
         object.__setattr__(self, "due_at", _utc(self.due_at, "due_at"))
         if self.due_at < self.enrollment_at:
             raise ValueError("due_at cannot precede enrollment")
-        receipt = SchedulingResult(self.due_at, self.policy_id, self.policy_version, self.policy_fingerprint, self.implementation_id, self.implementation_version, self.history_fingerprint, self.result_fingerprint)
+        receipt = SchedulingResult(
+            self.due_at,
+            self.policy_id,
+            self.policy_version,
+            self.policy_fingerprint,
+            self.implementation_id,
+            self.implementation_version,
+            self.history_fingerprint,
+            self.result_fingerprint,
+        )
         del receipt
         require_text(self.idempotency_key, "idempotency_key")
         _fp(self.command_fingerprint, "command_fingerprint")
 
     def to_json(self) -> JsonObject:
         return {
-            "decision_id": str(self.decision_id), "revision_id": str(self.revision_id), "trigger": self.trigger,
+            "decision_id": str(self.decision_id),
+            "revision_id": str(self.revision_id),
+            "trigger": self.trigger,
             "review_id": str(self.review_id) if self.review_id else None,
-            "enrollment_at": _timestamp(self.enrollment_at), "due_at": _timestamp(self.due_at),
-            "policy": self.policy.to_json(), "policy_id": self.policy_id, "policy_version": self.policy_version,
-            "policy_fingerprint": self.policy_fingerprint, "implementation_id": self.implementation_id,
-            "implementation_version": self.implementation_version, "history_fingerprint": self.history_fingerprint,
-            "result_fingerprint": self.result_fingerprint, "idempotency_key": self.idempotency_key,
+            "enrollment_at": _timestamp(self.enrollment_at),
+            "due_at": _timestamp(self.due_at),
+            "policy": self.policy.to_json(),
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "policy_fingerprint": self.policy_fingerprint,
+            "implementation_id": self.implementation_id,
+            "implementation_version": self.implementation_version,
+            "history_fingerprint": self.history_fingerprint,
+            "result_fingerprint": self.result_fingerprint,
+            "idempotency_key": self.idempotency_key,
             "command_fingerprint": self.command_fingerprint,
         }
 
@@ -270,7 +330,11 @@ class RecallSnapshot:
     schedules: tuple[AppliedSchedule, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.course_id, CourseId) or type(self.sequence) is not int or self.sequence < 0:
+        if (
+            not isinstance(self.course_id, CourseId)
+            or type(self.sequence) is not int
+            or self.sequence < 0
+        ):
             raise ValueError("recall snapshot identity is invalid")
         object.__setattr__(self, "enrollments", tuple(self.enrollments))
         object.__setattr__(self, "reviews", tuple(self.reviews))
@@ -300,40 +364,76 @@ def history_fingerprint(
         "schema_version": 1,
         "revision_id": str(revision_id),
         "enrollment_at": _timestamp(_utc(enrollment_at, "enrollment_at")),
-        "reviews": tuple({
-            "review_id": str(item.review_id), "revision_id": str(item.revision_id), "rating": item.rating.value,
-            "latency_ms": item.latency_ms, "confidence_bps": item.confidence_bps,
-            "occurred_at": _timestamp(item.occurred_at),
-        } for item in history),
+        "reviews": tuple(
+            {
+                "review_id": str(item.review_id),
+                "revision_id": str(item.revision_id),
+                "rating": item.rating.value,
+                "latency_ms": item.latency_ms,
+                "confidence_bps": item.confidence_bps,
+                "occurred_at": _timestamp(item.occurred_at),
+            }
+            for item in history
+        ),
     }
     return sha256(b"recall-history@1\0" + canonical_json_bytes(payload)).hexdigest()
 
 
-def result_fingerprint(request: SchedulingRequest, result: SchedulingResult | None = None, *, due_at: datetime | None = None, policy_id: str | None = None, policy_version: str | None = None, implementation_id: str | None = None, implementation_version: str | None = None) -> str:
+def result_fingerprint(
+    request: SchedulingRequest,
+    result: SchedulingResult | None = None,
+    *,
+    due_at: datetime | None = None,
+    policy_id: str | None = None,
+    policy_version: str | None = None,
+    implementation_id: str | None = None,
+    implementation_version: str | None = None,
+) -> str:
     """Bind a schedule result to its complete request and normalized receipt."""
     if result is not None:
         due_at = result.due_at
         policy_id, policy_version = result.policy_id, result.policy_version
-        implementation_id, implementation_version = result.implementation_id, result.implementation_version
+        implementation_id, implementation_version = (
+            result.implementation_id,
+            result.implementation_version,
+        )
         policy_fingerprint, history_fp = result.policy_fingerprint, result.history_fingerprint
     else:
         policy_fingerprint, history_fp = request.policy.fingerprint, request.history_fingerprint
-    if due_at is None or policy_id is None or policy_version is None or implementation_id is None or implementation_version is None:
+    if (
+        due_at is None
+        or policy_id is None
+        or policy_version is None
+        or implementation_id is None
+        or implementation_version is None
+    ):
         raise ValueError("complete scheduling receipt is required")
     payload: JsonObject = {
-        "schema_version": 1, "revision_id": str(request.revision_id),
+        "schema_version": 1,
+        "revision_id": str(request.revision_id),
         "enrollment_at": _timestamp(request.enrollment_at),
-        "history": tuple(_history_json(item) for item in request.history), "policy": request.policy.to_json(),
-        "policy_id": policy_id, "policy_version": policy_version,
-        "policy_fingerprint": policy_fingerprint, "implementation_id": implementation_id,
-        "implementation_version": implementation_version, "history_fingerprint": history_fp,
+        "history": tuple(_history_json(item) for item in request.history),
+        "policy": request.policy.to_json(),
+        "policy_id": policy_id,
+        "policy_version": policy_version,
+        "policy_fingerprint": policy_fingerprint,
+        "implementation_id": implementation_id,
+        "implementation_version": implementation_version,
+        "history_fingerprint": history_fp,
         "due_at": _timestamp(_utc(due_at, "due_at")),
     }
     return sha256(b"recall-result@1\0" + canonical_json_bytes(payload)).hexdigest()
 
 
 def _history_json(item: ReviewHistoryEntry) -> JsonObject:
-    return {"review_id": str(item.review_id), "revision_id": str(item.revision_id), "rating": item.rating.value, "latency_ms": item.latency_ms, "confidence_bps": item.confidence_bps, "occurred_at": _timestamp(item.occurred_at)}
+    return {
+        "review_id": str(item.review_id),
+        "revision_id": str(item.revision_id),
+        "rating": item.rating.value,
+        "latency_ms": item.latency_ms,
+        "confidence_bps": item.confidence_bps,
+        "occurred_at": _timestamp(item.occurred_at),
+    }
 
 
 def _strict(value: Mapping[str, JsonValue], expected: set[str], name: str) -> None:
@@ -352,7 +452,15 @@ def _timestamp(value: datetime) -> str:
 
 
 __all__ = [
-    "AppliedSchedule", "RecallRating", "RecallSnapshot", "RecallViewRow", "ReviewHistoryEntry",
-    "ReviewRecord", "SchedulingPolicyConfigV1", "SchedulingRequest", "SchedulingResult",
-    "history_fingerprint", "result_fingerprint",
+    "AppliedSchedule",
+    "RecallRating",
+    "RecallSnapshot",
+    "RecallViewRow",
+    "ReviewHistoryEntry",
+    "ReviewRecord",
+    "SchedulingPolicyConfigV1",
+    "SchedulingRequest",
+    "SchedulingResult",
+    "history_fingerprint",
+    "result_fingerprint",
 ]

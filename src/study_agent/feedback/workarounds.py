@@ -150,9 +150,8 @@ class WorkaroundExecutionReceipt:
         if type(self.manifest_version) is not int or self.manifest_version < 1:
             raise ValueError("invalid_manifest_version")
         _digest(self.input_fingerprint, "input_fingerprint")
-        if (
-            self.status is WorkaroundReceiptStatus.ATTEMPTED_SUCCEEDED
-            and (self.output_fingerprint is None or self.provenance_fingerprint is None)
+        if self.status is WorkaroundReceiptStatus.ATTEMPTED_SUCCEEDED and (
+            self.output_fingerprint is None or self.provenance_fingerprint is None
         ):
             raise ValueError("success_requires_provenance")
         if self.output_fingerprint is not None:
@@ -182,25 +181,38 @@ class WorkaroundExecutionReceipt:
         try:
             value = canonical_json_object(data)
             fields = {
-                "schema_version", "status", "manifest_identity", "manifest_version",
-                "input_fingerprint", "output_fingerprint", "provenance_fingerprint",
+                "schema_version",
+                "status",
+                "manifest_identity",
+                "manifest_version",
+                "input_fingerprint",
+                "output_fingerprint",
+                "provenance_fingerprint",
                 "limitation_fingerprint",
             }
             if set(value) != fields or canonical_json_bytes(value) != data:
                 raise ValueError
             if value["schema_version"] != 1:
                 raise ValueError
+            status = value["status"]
+            version = value["manifest_version"]
+            if not isinstance(status, str) or type(version) is not int:
+                raise ValueError
             return cls(
-                WorkaroundReceiptStatus(value["status"]),
-                value["manifest_identity"],
-                value["manifest_version"],
-                value["input_fingerprint"],
-                value["output_fingerprint"],
-                value["provenance_fingerprint"],
-                value["limitation_fingerprint"],
+                WorkaroundReceiptStatus(status),
+                _opaque(value["manifest_identity"], "manifest_identity"),
+                version,
+                _digest(value["input_fingerprint"], "input_fingerprint"),
+                _optional_digest(value["output_fingerprint"], "output_fingerprint"),
+                _optional_digest(value["provenance_fingerprint"], "provenance_fingerprint"),
+                _optional_digest(value["limitation_fingerprint"], "limitation_fingerprint"),
             )
         except (TypeError, ValueError, UnicodeDecodeError):
             raise ValueError("invalid_execution_receipt") from None
+
+
+def _optional_digest(value: object, field: str) -> str | None:
+    return None if value is None else _digest(value, field)
 
 
 class WorkaroundRegistry:
@@ -268,10 +280,7 @@ class WorkaroundRegistry:
         manifest = self.get(receipt.manifest_identity)
         if receipt.manifest_identity not in granted:
             raise PermissionError("workaround_not_granted")
-        if (
-            manifest.approval_policy is WorkaroundApprovalPolicy.HOST_APPROVAL
-            and not approved
-        ):
+        if manifest.approval_policy is WorkaroundApprovalPolicy.HOST_APPROVAL and not approved:
             raise PermissionError("workaround_approval_required")
         if receipt.manifest_version != manifest.version:
             raise ValueError("manifest_version_mismatch")
