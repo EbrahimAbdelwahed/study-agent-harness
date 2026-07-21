@@ -1,6 +1,6 @@
 # Task Bead: TUT-08 Build Week product shell
 
-Status: Blocked on TUT-06
+Status: In progress — terminal product-shell tracer implemented; browser UI is intentionally out of scope
 Priority: P1
 Type: product tracer-bullet
 Depends On: TUT-06

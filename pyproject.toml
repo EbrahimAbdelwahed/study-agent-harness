@@ -29,6 +29,7 @@ Source = "https://github.com/EbrahimAbdelwahed/study-agent-harness"
 [project.scripts]
 study-agent = "study_agent.cli.main:main"
 study-agent-demo = "study_agent.demo.anatomy:main"
+study-agent-shell = "study_agent.demo.product_shell:main"
 
 [project.optional-dependencies]
 dev = [
