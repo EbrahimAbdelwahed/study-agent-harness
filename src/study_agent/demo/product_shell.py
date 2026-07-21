@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -268,7 +268,7 @@ class ProductShell:
             snapshot,
             base_status=base,
             learner_entry=self._last_entry,
-            assistant_message=result.text,
+            assistant_message=_result_message(result),
             continuation=continuation,
         )
         self._last_status = view.status
@@ -420,6 +420,19 @@ def _bounded_entry(value: str) -> str:
     if len(entry) > MAX_LEARNER_ENTRY_CHARS:
         raise ValueError("learner_entry exceeds the shell text bound")
     return entry
+
+
+def _result_message(result: TutorHostRunResult) -> str | None:
+    if result.text is not None:
+        return result.text
+    output = result.completed_output
+    if not isinstance(output, Mapping):
+        return None
+    for key in ("tutor_message", "message", "answer"):
+        value = output.get(key)
+        if isinstance(value, str) and value.strip() and len(value) <= MAX_LEARNER_ENTRY_CHARS:
+            return value
+    return None
 
 
 def _discover(
