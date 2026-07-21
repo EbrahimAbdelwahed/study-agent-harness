@@ -31,7 +31,24 @@ from .host_tool import (
     WorkaroundSuggestionKind,
 )
 from .service import CapabilityGapService
+from .source_tracer import (
+    SourceFormatDisposition,
+    SourceFormatTrace,
+    UnsupportedSourceEvidence,
+    trace_unsupported_source_format,
+)
 from .view import CapabilityGapCompactView, CapabilityGapDetailView
+from .workarounds import (
+    WorkaroundApprovalPolicy,
+    WorkaroundEffect,
+    WorkaroundExecutionReceipt,
+    WorkaroundInputKind,
+    WorkaroundManifest,
+    WorkaroundOutputKind,
+    WorkaroundReceiptStatus,
+    WorkaroundRegistry,
+    WorkaroundTask,
+)
 
 __all__ = [
     "CapabilityGapAggregate",
@@ -57,10 +74,23 @@ __all__ = [
     "ImpactKind",
     "RequestedOperationKind",
     "SafeTargetKind",
+    "SourceFormatDisposition",
+    "SourceFormatTrace",
     "TrustedLimitationCode",
     "TrustedLimitationReceipt",
+    "UnsupportedSourceEvidence",
     "VerificationKind",
+    "WorkaroundApprovalPolicy",
+    "WorkaroundEffect",
+    "WorkaroundExecutionReceipt",
+    "WorkaroundInputKind",
+    "WorkaroundManifest",
+    "WorkaroundOutputKind",
+    "WorkaroundReceiptStatus",
+    "WorkaroundRegistry",
     "WorkaroundSuggestionKind",
+    "WorkaroundTask",
     "proposal_for",
     "report_id_for",
+    "trace_unsupported_source_format",
 ]
