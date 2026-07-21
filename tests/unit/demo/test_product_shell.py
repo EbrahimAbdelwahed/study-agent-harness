@@ -79,7 +79,10 @@ class _Host:
         assert pending_fingerprint is None
         return TutorHostRunResult(
             TutorHostRunStatus.COMPLETED,
-            completed_output={"status": "answered"},
+            completed_output={
+                "status": "answered",
+                "tutor_message": "The aortic valve opens from the left ventricle.",
+            },
         )
 
 
@@ -110,7 +113,7 @@ def test_provider_free_completion_refreshes_the_public_snapshot() -> None:
     recovered = asyncio.run(shell.submit(COURSE, SESSION, "What differs?", _Host()))
 
     assert recovered.status is ProductShellStatus.READY
-    assert recovered.assistant_message is None
+    assert recovered.assistant_message == "The aortic valve opens from the left ventricle."
     assert recovered.divergences == ()
 
 
