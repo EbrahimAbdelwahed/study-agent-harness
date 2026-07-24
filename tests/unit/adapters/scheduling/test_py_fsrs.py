@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -43,11 +44,7 @@ def _request(ratings: tuple[RecallRating, ...] = ()) -> SchedulingRequest:
 
 
 def _fsrs_available() -> bool:
-    try:
-        import fsrs  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    return importlib.util.find_spec("fsrs") is not None
 
 
 @pytest.mark.skipif(not _fsrs_available(), reason="optional fsrs extra is not installed")
