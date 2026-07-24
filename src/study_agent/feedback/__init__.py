@@ -63,6 +63,7 @@ from .view import CapabilityGapCompactView, CapabilityGapDetailView
 from .workaround_service import WorkaroundService
 from .workarounds import (
     WorkaroundApprovalPolicy,
+    WorkaroundApprovalReceipt,
     WorkaroundAuthorityError,
     WorkaroundEffect,
     WorkaroundExecutionReceipt,
@@ -132,6 +133,7 @@ __all__ = [
     "UnsupportedSourceEvidence",
     "VerificationKind",
     "WorkaroundApprovalPolicy",
+    "WorkaroundApprovalReceipt",
     "WorkaroundAuthorityError",
     "WorkaroundEffect",
     "WorkaroundExecutionReceipt",

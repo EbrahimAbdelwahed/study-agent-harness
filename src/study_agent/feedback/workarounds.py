@@ -251,6 +251,11 @@ class WorkaroundManifest:
         )
         return sha256(b"study-agent-workaround-effects-v1\0" + encoded).hexdigest()
 
+    @property
+    def quality_limitation_fingerprint(self) -> str:
+        encoded = canonical_json_bytes(cast(Any, list(self.quality_limitations)))
+        return sha256(b"study-agent-workaround-quality-v1\0" + encoded).hexdigest()
+
 
 @dataclass(frozen=True, slots=True)
 class WorkaroundTask:
@@ -264,6 +269,88 @@ class WorkaroundTask:
         if not isinstance(self.output_kind, WorkaroundOutputKind):
             raise WorkaroundValidationError("invalid_output_kind")
         _digest(self.input_fingerprint, "input_fingerprint")
+
+    @property
+    def fingerprint(self) -> str:
+        encoded = canonical_json_bytes(
+            cast(
+                Any,
+                {
+                    "input_fingerprint": self.input_fingerprint,
+                    "input_kind": self.input_kind.value,
+                    "output_kind": self.output_kind.value,
+                },
+            )
+        )
+        return sha256(b"study-agent-workaround-task-v1\0" + encoded).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class WorkaroundApprovalReceipt:
+    """Host-issued, closed approval bound to one exact task and manifest."""
+
+    task_fingerprint: str
+    manifest_identity: str
+    manifest_version: int
+    manifest_fingerprint: str
+    effect_fingerprint: str
+    approval_fingerprint: str
+
+    def __post_init__(self) -> None:
+        _digest(self.task_fingerprint, "task_fingerprint")
+        _opaque(self.manifest_identity, "manifest_identity")
+        if type(self.manifest_version) is not int or self.manifest_version < 1:
+            raise WorkaroundValidationError("invalid_manifest_version")
+        _digest(self.manifest_fingerprint, "manifest_fingerprint")
+        _digest(self.effect_fingerprint, "effect_fingerprint")
+        _digest(self.approval_fingerprint, "approval_fingerprint")
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "approval_fingerprint": self.approval_fingerprint,
+            "effect_fingerprint": self.effect_fingerprint,
+            "manifest_fingerprint": self.manifest_fingerprint,
+            "manifest_identity": self.manifest_identity,
+            "manifest_version": self.manifest_version,
+            "schema_version": 1,
+            "task_fingerprint": self.task_fingerprint,
+        }
+
+    def to_bytes(self) -> bytes:
+        return canonical_json_bytes(cast(Any, self.to_json()))
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> WorkaroundApprovalReceipt:
+        try:
+            value = canonical_json_object(data)
+            fields = {
+                "approval_fingerprint",
+                "effect_fingerprint",
+                "manifest_fingerprint",
+                "manifest_identity",
+                "manifest_version",
+                "schema_version",
+                "task_fingerprint",
+            }
+            if (
+                set(value) != fields
+                or canonical_json_bytes(value) != data
+                or value["schema_version"] != 1
+            ):
+                raise ValueError
+            result = cls(
+                _json_text(value["task_fingerprint"], "task_fingerprint"),
+                _json_text(value["manifest_identity"], "manifest_identity"),
+                _json_int(value["manifest_version"], "manifest_version"),
+                _json_text(value["manifest_fingerprint"], "manifest_fingerprint"),
+                _json_text(value["effect_fingerprint"], "effect_fingerprint"),
+                _json_text(value["approval_fingerprint"], "approval_fingerprint"),
+            )
+            if result.to_bytes() != data:
+                raise ValueError
+            return result
+        except (TypeError, ValueError, UnicodeDecodeError):
+            raise WorkaroundValidationError("invalid_approval_receipt") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,7 +478,11 @@ class WorkaroundRegistry:
             ):
                 continue
             grant = grants.get(identity)
-            if grant is None or grant.manifest_version != manifest.version:
+            if (
+                grant is None
+                or grant.manifest_version != manifest.version
+                or grant.effect_fingerprint != manifest.effect_fingerprint
+            ):
                 continue
             if manifest.approval_policy is WorkaroundApprovalPolicy.HOST_APPROVAL:
                 return WorkaroundExecutionReceipt(
@@ -420,6 +511,50 @@ class WorkaroundRegistry:
         except KeyError:
             raise WorkaroundValidationError("manifest_not_found") from None
 
+    def resolve_execution(
+        self, task: WorkaroundTask, granted: frozenset[str] | tuple[WorkaroundGrant, ...]
+    ) -> tuple[WorkaroundManifest, WorkaroundGrant]:
+        """Resolve one installed, exact-grant strategy without executing it."""
+
+        if not isinstance(task, WorkaroundTask):
+            raise WorkaroundValidationError("invalid_task")
+        grants = _grant_map(granted)
+        for identity in sorted(self._manifests):
+            manifest = self._manifests[identity]
+            grant = grants.get(identity)
+            if (
+                manifest.input_kind is task.input_kind
+                and manifest.output_kind is task.output_kind
+                and grant is not None
+                and grant.manifest_version == manifest.version
+                and grant.effect_fingerprint == manifest.effect_fingerprint
+            ):
+                return manifest, grant
+        raise WorkaroundAuthorityError("workaround_not_available")
+
+    def validate_approval(
+        self,
+        task: WorkaroundTask,
+        manifest: WorkaroundManifest,
+        grant: WorkaroundGrant,
+        approval: WorkaroundApprovalReceipt | None,
+    ) -> None:
+        if manifest.approval_policy is WorkaroundApprovalPolicy.NONE:
+            if approval is not None:
+                raise WorkaroundValidationError("unexpected_approval")
+            return
+        if not isinstance(approval, WorkaroundApprovalReceipt):
+            raise WorkaroundAuthorityError("workaround_approval_required")
+        if (
+            approval.task_fingerprint != task.fingerprint
+            or approval.manifest_identity != manifest.identity
+            or approval.manifest_version != manifest.version
+            or approval.manifest_fingerprint != manifest.fingerprint
+            or approval.effect_fingerprint != manifest.effect_fingerprint
+            or grant.effect_fingerprint != manifest.effect_fingerprint
+        ):
+            raise WorkaroundAuthorityError("workaround_approval_mismatch")
+
     @property
     def manifests(self) -> tuple[WorkaroundManifest, ...]:
         return tuple(self._manifests[key] for key in sorted(self._manifests))
@@ -430,7 +565,7 @@ class WorkaroundRegistry:
         receipt: WorkaroundExecutionReceipt,
         *,
         granted: frozenset[str] | tuple[WorkaroundGrant, ...],
-        approved: bool = False,
+        approval: WorkaroundApprovalReceipt | None = None,
     ) -> WorkaroundExecutionReceipt:
         if receipt.status not in {
             WorkaroundReceiptStatus.ATTEMPTED_SUCCEEDED,
@@ -442,8 +577,7 @@ class WorkaroundRegistry:
         grant = grants.get(manifest.identity)
         if grant is None or grant.manifest_version != manifest.version:
             raise WorkaroundAuthorityError("workaround_not_granted")
-        if manifest.approval_policy is WorkaroundApprovalPolicy.HOST_APPROVAL and not approved:
-            raise WorkaroundAuthorityError("workaround_approval_required")
+        self.validate_approval(task, manifest, grant, approval)
         if (
             receipt.manifest_version != manifest.version
             or receipt.manifest_fingerprint != manifest.fingerprint
@@ -461,6 +595,19 @@ class WorkaroundRegistry:
             or manifest.output_kind is not task.output_kind
         ):
             raise WorkaroundValidationError("task_kind_mismatch")
+        if receipt.executor_fingerprint is None:
+            raise WorkaroundValidationError("executor_fingerprint_required")
+        if approval is None:
+            if receipt.approval_fingerprint is not None:
+                raise WorkaroundValidationError("unexpected_approval_fingerprint")
+        elif receipt.approval_fingerprint != approval.approval_fingerprint:
+            raise WorkaroundValidationError("approval_fingerprint_mismatch")
+        if (
+            receipt.status is WorkaroundReceiptStatus.ATTEMPTED_SUCCEEDED
+            and manifest.quality_limitations
+            and receipt.limitation_fingerprint != manifest.quality_limitation_fingerprint
+        ):
+            raise WorkaroundValidationError("quality_limitation_mismatch")
         return receipt
 
 
@@ -483,6 +630,7 @@ WorkaroundStrategyManifest = WorkaroundManifest
 
 __all__ = [
     "WorkaroundApprovalPolicy",
+    "WorkaroundApprovalReceipt",
     "WorkaroundAuthorityError",
     "WorkaroundEffect",
     "WorkaroundExecutionReceipt",

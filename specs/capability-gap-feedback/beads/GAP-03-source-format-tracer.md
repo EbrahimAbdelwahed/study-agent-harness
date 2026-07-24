@@ -1,6 +1,6 @@
 # Task Bead: GAP-03 unsupported source-format tracer
 
-Status: Approved — blocked on GAP-02 and TUT-06 implementation
+Status: In progress — P1 trust hardening implemented; end-to-end closure remains
 Priority: P1
 Type: tracer-bullet
 Depends On: GAP-02, TUT-06
@@ -51,7 +51,8 @@ Rationale: bounded host integration and scripted behavior eval.
   note; the original remains unmodified.
 - [ ] Prompt injection in filename/content cannot alter the report or host policy.
 - [ ] Main tutor context receives only the compact report receipt.
-- [ ] The scripted agent cannot forge a successful manual or tool workaround.
+- [x] The scripted agent cannot forge a successful manual or tool workaround;
+  the tracer requires an exact host-trusted limitation receipt in context.
 
 ## Verification
 

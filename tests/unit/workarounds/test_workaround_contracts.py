@@ -4,6 +4,7 @@ import pytest
 
 from study_agent.feedback import (
     WorkaroundApprovalPolicy,
+    WorkaroundApprovalReceipt,
     WorkaroundEffect,
     WorkaroundExecutionReceipt,
     WorkaroundGrant,
@@ -44,6 +45,15 @@ def test_manifest_and_receipt_codecs_are_canonical_and_digest_bound() -> None:
         executor_fingerprint="e" * 64,
     )
     assert WorkaroundExecutionReceipt.from_bytes(receipt.to_bytes()) == receipt
+    approval = WorkaroundApprovalReceipt(
+        "f" * 64,
+        manifest.identity,
+        manifest.version,
+        manifest.fingerprint,
+        manifest.effect_fingerprint,
+        "d" * 64,
+    )
+    assert WorkaroundApprovalReceipt.from_bytes(approval.to_bytes()) == approval
     with pytest.raises(WorkaroundValidationError):
         WorkaroundManifest(
             "bad/path",

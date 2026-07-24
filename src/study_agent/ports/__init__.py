@@ -85,6 +85,7 @@ from .tutor_runner import (
     TutorHostAuthorityPort,
 )
 from .tutor_snapshot import TutorSnapshotPort
+from .workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
 
 __all__ = [
     "MAX_SOURCE_BYTES",
@@ -152,5 +153,7 @@ __all__ = [
     "VerifiedGeneratedBatchPort",
     "VerifiedGradeOwnerStore",
     "VerifiedGradePort",
+    "WorkaroundApprovalAuthority",
+    "WorkaroundExecutor",
     "retrieval_read_set_fingerprint",
 ]

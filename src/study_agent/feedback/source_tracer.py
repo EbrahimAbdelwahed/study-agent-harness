@@ -80,15 +80,6 @@ class UnsupportedSourceEvidence:
         if not isinstance(self.target_kind, SafeTargetKind):
             raise ValueError("invalid_source_target")
 
-    def receipt(self) -> TrustedLimitationReceipt:
-        return TrustedLimitationReceipt(
-            self.contract_identity,
-            self.contract_major,
-            TrustedLimitationCode.UNSUPPORTED_FORMAT,
-            self.failure_fingerprint,
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class SourceFormatTrace:
     disposition: SourceFormatDisposition
@@ -110,19 +101,21 @@ def trace_unsupported_source_format(
         raise ValueError("invalid_source_evidence")
     if metadata is not None and not isinstance(metadata, SourceFormatMetadata):
         raise ValueError("invalid_source_metadata")
-    if context.limitation_receipt is not None:
-        # A mismatching receipt is never replaced by source-format evidence.
-        if context.limitation_receipt != evidence.receipt():
-            raise ValueError("limitation_receipt_context_mismatch")
-        write_context = context
-    else:
-        write_context = CapabilityGapWriteContext(
-            context.harness_version,
-            context.correlation_id,
-            context.idempotency_fingerprint,
-            context.observed_at,
-            evidence.receipt(),
-        )
+    # Evidence is a comparison view, never an authority factory.  Only the
+    # host-trusted receipt already bound into the write context may authorize
+    # persistence; absence and mismatch both fail closed before ``record``.
+    trusted_receipt = context.limitation_receipt
+    if trusted_receipt is None:
+        raise ValueError("limitation_receipt_required")
+    expected_receipt = TrustedLimitationReceipt(
+        evidence.contract_identity,
+        evidence.contract_major,
+        TrustedLimitationCode.UNSUPPORTED_FORMAT,
+        evidence.failure_fingerprint,
+    )
+    if trusted_receipt != expected_receipt:
+        raise ValueError("limitation_receipt_context_mismatch")
+    write_context = context
     observation = CapabilityGapObservation(
         GapCategory.INPUT_FORMAT,
         RequestedOperationKind.INGEST_SOURCE,

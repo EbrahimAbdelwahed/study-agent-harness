@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from study_agent.feedback.workarounds import (
+        WorkaroundApprovalReceipt,
         WorkaroundExecutionReceipt,
+        WorkaroundGrant,
+        WorkaroundManifest,
         WorkaroundTask,
     )
 
@@ -19,4 +22,15 @@ class WorkaroundExecutor(Protocol):
     ) -> WorkaroundExecutionReceipt: ...
 
 
-__all__ = ["WorkaroundExecutor"]
+class WorkaroundApprovalAuthority(Protocol):
+    """Trusted host seam for approval; model/caller inputs never authorize."""
+
+    def approve(
+        self,
+        task: WorkaroundTask,
+        manifest: WorkaroundManifest,
+        grant: WorkaroundGrant,
+    ) -> WorkaroundApprovalReceipt | None: ...
+
+
+__all__ = ["WorkaroundApprovalAuthority", "WorkaroundExecutor"]

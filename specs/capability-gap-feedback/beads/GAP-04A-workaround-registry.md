@@ -1,6 +1,6 @@
 # Task Bead: GAP-04A allowlisted workaround registry and receipts
 
-Status: Approved — dependency-ready optional lane
+Status: In progress — P1 execution/approval hardening implemented; closure remains
 Priority: P2
 Type: expand
 Depends On: GAP-00

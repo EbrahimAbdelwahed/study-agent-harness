@@ -4,6 +4,7 @@ import pytest
 
 from study_agent.feedback import (
     WorkaroundApprovalPolicy,
+    WorkaroundApprovalReceipt,
     WorkaroundAuthorityError,
     WorkaroundEffect,
     WorkaroundExecutionReceipt,
@@ -39,7 +40,7 @@ def test_selection_requires_installed_grant_and_approval() -> None:
     selected = registry.select(task, (grant,))
     assert selected.status is WorkaroundReceiptStatus.REQUIRES_APPROVAL
     with pytest.raises(WorkaroundValidationError):
-        registry.validate_execution(task, selected, granted=(grant,), approved=True)
+        registry.validate_execution(task, selected, granted=(grant,))
 
 
 def test_attempted_receipt_must_match_manifest_effect_and_provenance() -> None:
@@ -54,6 +55,30 @@ def test_attempted_receipt_must_match_manifest_effect_and_provenance() -> None:
         effect_fingerprint=manifest.effect_fingerprint,
         executor_fingerprint="c" * 64,
     )
-    assert registry.validate_execution(task, receipt, granted=(grant,), approved=True) == receipt
+    approval = WorkaroundApprovalReceipt(
+        task.fingerprint,
+        manifest.identity,
+        manifest.version,
+        manifest.fingerprint,
+        manifest.effect_fingerprint,
+        "d" * 64,
+    )
+    receipt = WorkaroundExecutionReceipt(
+        receipt.status,
+        receipt.manifest_identity,
+        receipt.manifest_version,
+        receipt.input_fingerprint,
+        receipt.output_fingerprint,
+        receipt.provenance_fingerprint,
+        receipt.limitation_fingerprint,
+        receipt.manifest_fingerprint,
+        receipt.effect_fingerprint,
+        approval.approval_fingerprint,
+        "e" * 64,
+    )
+    assert (
+        registry.validate_execution(task, receipt, granted=(grant,), approval=approval)
+        == receipt
+    )
     with pytest.raises(WorkaroundAuthorityError):
-        registry.validate_execution(task, receipt, granted=(), approved=True)
+        registry.validate_execution(task, receipt, granted=(), approval=approval)

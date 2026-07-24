@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from study_agent.ports.workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
+
 from .workarounds import (
+    WorkaroundApprovalPolicy,
+    WorkaroundAuthorityError,
     WorkaroundExecutionReceipt,
     WorkaroundGrant,
     WorkaroundRegistry,
@@ -11,10 +15,18 @@ from .workarounds import (
 
 
 class WorkaroundService:
-    """Never executes; it only selects and validates trusted host receipts."""
+    """Selection is inert; execution requires host-composed inward ports."""
 
-    def __init__(self, registry: WorkaroundRegistry) -> None:
+    def __init__(
+        self,
+        registry: WorkaroundRegistry,
+        *,
+        executor: WorkaroundExecutor | None = None,
+        approval_authority: WorkaroundApprovalAuthority | None = None,
+    ) -> None:
         self._registry = registry
+        self._executor = executor
+        self._approval_authority = approval_authority
 
     def select(
         self, task: WorkaroundTask, grants: frozenset[str] | tuple[WorkaroundGrant, ...]
@@ -24,12 +36,23 @@ class WorkaroundService:
     def record_execution(
         self,
         task: WorkaroundTask,
-        receipt: WorkaroundExecutionReceipt,
         *,
         grants: frozenset[str] | tuple[WorkaroundGrant, ...],
-        approved: bool = False,
     ) -> WorkaroundExecutionReceipt:
-        return self._registry.validate_execution(task, receipt, granted=grants, approved=approved)
+        if self._executor is None:
+            raise WorkaroundAuthorityError("executor_not_configured")
+        manifest, grant = self._registry.resolve_execution(task, grants)
+        approval = None
+        if (
+            manifest.approval_policy is WorkaroundApprovalPolicy.HOST_APPROVAL
+            and self._approval_authority is not None
+        ):
+            approval = self._approval_authority.approve(task, manifest, grant)
+        self._registry.validate_approval(task, manifest, grant, approval)
+        receipt = self._executor.execute(task, manifest.identity)
+        return self._registry.validate_execution(
+            task, receipt, granted=grants, approval=approval
+        )
 
 
 __all__ = ["WorkaroundService"]
