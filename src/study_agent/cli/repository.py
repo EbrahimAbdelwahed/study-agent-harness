@@ -72,11 +72,11 @@ from study_agent.ports import IndexReceipt, ModelCapabilities, ModelPort
 from study_agent.ports.retrieval import RetrievalDocument, retrieval_catalog_fingerprint
 from study_agent.ports.scheduling import SchedulingPolicyPort
 from study_agent.prompts import GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer
-from study_agent.recall import (
+from study_agent.recall import register_recall_events
+from study_agent.recall.composition import (
     RecallAvailability,
     RecallComposition,
     compose_recall,
-    register_recall_events,
 )
 from study_agent.repository_config import LocalRepositoryConfig, ModelAdapterConfig
 from study_agent.retrieval import CourseSourceContent

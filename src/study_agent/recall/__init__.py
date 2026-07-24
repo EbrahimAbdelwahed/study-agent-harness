@@ -1,11 +1,5 @@
 """Canonical provider-neutral recall ledger."""
 
-from .composition import (
-    RecallAvailability,
-    RecallAvailabilityCode,
-    RecallComposition,
-    compose_recall,
-)
 from .contracts import (
     AppliedSchedule,
     RecallRating,
@@ -83,6 +77,25 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     """Load application-layer B consumers without importing artifact adapters."""
+    if name in {
+        "RecallAvailability",
+        "RecallAvailabilityCode",
+        "RecallComposition",
+        "compose_recall",
+    }:
+        from .composition import (
+            RecallAvailability,
+            RecallAvailabilityCode,
+            RecallComposition,
+            compose_recall,
+        )
+
+        return {
+            "RecallAvailability": RecallAvailability,
+            "RecallAvailabilityCode": RecallAvailabilityCode,
+            "RecallComposition": RecallComposition,
+            "compose_recall": compose_recall,
+        }[name]
     if name == "DueRecallView":
         from .due import DueRecallView
 

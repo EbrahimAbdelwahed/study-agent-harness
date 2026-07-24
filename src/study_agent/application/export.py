@@ -396,9 +396,9 @@ type _EventDecoder = Callable[[DomainEvent], object]
 
 
 def _reject_v1_artifact_stream(stream: Sequence[DomainEvent]) -> None:
+    _reject_recall_stream(stream)
     if any(event.event_type in ARTIFACT_EVENT_TYPES | ASSESSMENT_EVENT_TYPES for event in stream):
         raise ExportStateError("artifact export requires v2")
-    _reject_recall_stream(stream)
 
 
 def _reject_recall_stream(stream: Sequence[DomainEvent]) -> None:

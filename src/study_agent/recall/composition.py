@@ -84,6 +84,7 @@ def compose_recall(
 
     if scheduler is not None and scheduler_factory is not None:
         raise TypeError("scheduler and scheduler_factory are mutually exclusive")
+    scheduler_from_factory = scheduler_factory is not None
     recall_view = ProjectionRecallView(_course_projection_loader(load_projection))
     due = DueRecallView(_course_projection_loader(load_projection), clock)
     if scheduler_factory is not None:
@@ -106,6 +107,19 @@ def compose_recall(
                     RecallAvailabilityCode.NOT_CONFIGURED,
                     "recall is optional; supply an explicit scheduling adapter "
                     "(for example the recall extra)",
+            ),
+            recall_view,
+            due,
+            None,
+        )
+    if not callable(getattr(scheduler, "decide", None)):
+        if not scheduler_from_factory:
+            raise TypeError("scheduler must implement SchedulingPolicyPort")
+        return RecallComposition(
+            RecallAvailability(
+                RecallAvailabilityCode.UNAVAILABLE,
+                "optional recall scheduler is unavailable; install and configure "
+                "the recall extra",
             ),
             recall_view,
             due,

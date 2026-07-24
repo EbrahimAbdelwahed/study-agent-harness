@@ -40,6 +40,14 @@ invoke FSRS.
 - `ruff check` focused changed Python files: passed.
 - `/study-agent-harness/.venv/bin/mypy --strict src`: passed.
 - `git diff --check`: passed.
+- Independent review found and the integration pass fixed two issues:
+  v1 now prioritizes the exact recall-v3 error when artifact and recall events
+  coexist, and invalid scheduler/factory results fail at composition rather
+  than on the first command.
+- Integration also made the new composition exports lazy to preserve clean
+  imports through the provider-neutral ports package.
+- Full repository suite after those fixes: 1,754 passed, 11 skipped (only
+  optional/network tests); Ruff, strict mypy, and `git diff --check`: passed.
 
 ## Notes
 

@@ -56,3 +56,41 @@ def test_v1_and_v2_fail_exactly_when_recall_is_present(tmp_path: Path) -> None:
         with pytest.raises(ExportStateError, match=r"^recall export requires v3$"):
             ExportService(source).assemble(COURSE, version=version)
     blobs.close()
+
+
+def test_v1_prioritizes_recall_v3_error_when_artifact_events_are_also_present(
+    tmp_path: Path,
+) -> None:
+    blobs, events, _, _ = _stack(tmp_path)
+    stream = tuple(events.read(COURSE))
+    artifact = DomainEvent(
+        EventId("artifact-test-event"),
+        COURSE,
+        len(stream) + 1,
+        "artifact.proposal_recorded",
+        1,
+        Actor(PrincipalKind.SERVICE, "worker"),
+        datetime(2026, 7, 24, tzinfo=UTC),
+        CorrelationId("artifact-test"),
+        {},
+        SESSION,
+    )
+    recall = DomainEvent(
+        EventId("recall-test-event-after-artifact"),
+        COURSE,
+        len(stream) + 2,
+        "recall.review_recorded",
+        1,
+        Actor(PrincipalKind.HUMAN, "reviewer"),
+        datetime(2026, 7, 24, tzinfo=UTC),
+        CorrelationId("recall-test-after-artifact"),
+        {},
+        SESSION,
+    )
+
+    with pytest.raises(ExportStateError, match=r"^recall export requires v3$"):
+        ExportService(ReadOnlyEvents((*stream, artifact, recall))).assemble(
+            COURSE,
+            version=ExportVersion.V1,
+        )
+    blobs.close()
