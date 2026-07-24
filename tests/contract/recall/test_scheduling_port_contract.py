@@ -13,6 +13,7 @@ from study_agent.recall.contracts import (
     SchedulingPolicyConfigV1,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     result_fingerprint,
 )
 
@@ -25,7 +26,7 @@ class FakeScheduler:
             NOW + timedelta(days=1),
             "fake",
             "1",
-            request.policy.fingerprint,
+            effective_policy_fingerprint(request.policy, "fake", "1", "fake", "1"),
             "fake",
             "1",
             request.history_fingerprint,
@@ -75,3 +76,13 @@ def test_scheduler_request_rejects_opaque_package_state_and_floats() -> None:
             None,
             NOW,
         )
+
+
+def test_effective_policy_fingerprint_binds_core_and_adapter_identities() -> None:
+    policy = SchedulingPolicyConfigV1()
+    baseline = effective_policy_fingerprint(policy, "fake", "1", "fake", "1")
+    assert baseline != effective_policy_fingerprint(policy, "fake", "2", "fake", "1")
+    assert baseline != effective_policy_fingerprint(policy, "fake", "1", "fake", "2")
+    assert baseline != effective_policy_fingerprint(
+        SchedulingPolicyConfigV1(8500), "fake", "1", "fake", "1"
+    )

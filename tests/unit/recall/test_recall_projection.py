@@ -29,6 +29,7 @@ from study_agent.recall.contracts import (
     SchedulingPolicyConfigV1,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     result_fingerprint,
 )
 from study_agent.recall.events import (
@@ -91,7 +92,7 @@ def _result(request: SchedulingRequest, due_at: datetime) -> SchedulingResult:
         due_at,
         "deterministic",
         "1",
-        request.policy.fingerprint,
+        effective_policy_fingerprint(request.policy, "deterministic", "1", "fake", "1"),
         "fake",
         "1",
         request.history_fingerprint,

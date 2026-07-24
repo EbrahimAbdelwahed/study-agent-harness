@@ -10,6 +10,7 @@ from .contracts import (
     SchedulingPolicyConfigV1,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     history_fingerprint,
     result_fingerprint,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "SchedulingResult",
     "decode_review_recorded",
     "decode_schedule_applied",
+    "effective_policy_fingerprint",
     "encode_review_recorded",
     "encode_schedule_applied",
     "history_fingerprint",

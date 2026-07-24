@@ -289,8 +289,15 @@ class AppliedSchedule:
         object.__setattr__(self, "due_at", _utc(self.due_at, "due_at"))
         if self.due_at < self.enrollment_at:
             raise ValueError("due_at cannot precede enrollment")
-        if self.policy.fingerprint != self.policy_fingerprint:
-            raise ValueError("policy_fingerprint does not match exact configuration")
+        expected_policy_fingerprint = effective_policy_fingerprint(
+            self.policy,
+            self.policy_id,
+            self.policy_version,
+            self.implementation_id,
+            self.implementation_version,
+        )
+        if expected_policy_fingerprint != self.policy_fingerprint:
+            raise ValueError("policy_fingerprint does not match effective configuration")
         receipt = SchedulingResult(
             self.due_at,
             self.policy_id,
@@ -384,6 +391,36 @@ def history_fingerprint(
     return sha256(b"recall-history@1\0" + canonical_json_bytes(payload)).hexdigest()
 
 
+def effective_policy_fingerprint(
+    policy: SchedulingPolicyConfigV1,
+    policy_id: str,
+    policy_version: str,
+    implementation_id: str,
+    implementation_version: str,
+) -> str:
+    """Bind core policy and scheduler identities to one effective fingerprint.
+
+    Scheduler-specific effective parameters belong in the stable policy version
+    (for example, the FSRS adapter's descriptor hash).  Including the policy
+    and implementation identities here lets core replay verify that binding
+    without importing a provider package.
+    """
+
+    _portable(policy_id, "policy_id")
+    _version(policy_version, "policy_version")
+    _portable(implementation_id, "implementation_id")
+    _version(implementation_version, "implementation_version")
+    payload: JsonObject = {
+        "schema_version": 1,
+        "policy": policy.to_json(),
+        "policy_id": policy_id,
+        "policy_version": policy_version,
+        "implementation_id": implementation_id,
+        "implementation_version": implementation_version,
+    }
+    return sha256(b"recall-effective-policy@1\0" + canonical_json_bytes(payload)).hexdigest()
+
+
 def result_fingerprint(
     request: SchedulingRequest,
     result: SchedulingResult | None = None,
@@ -405,10 +442,38 @@ def result_fingerprint(
         policy_fingerprint, history_fp = result.policy_fingerprint, result.history_fingerprint
         if history_fp != request.history_fingerprint:
             raise ValueError("scheduler result history fingerprint does not match request")
-        if policy_fingerprint != request.policy.fingerprint:
+        if (
+            policy_id is None
+            or policy_version is None
+            or implementation_id is None
+            or implementation_version is None
+        ):
+            raise ValueError("complete scheduling receipt is required")
+        expected_policy_fingerprint = effective_policy_fingerprint(
+            request.policy,
+            policy_id,
+            policy_version,
+            implementation_id,
+            implementation_version,
+        )
+        if policy_fingerprint != expected_policy_fingerprint:
             raise ValueError("scheduler result policy fingerprint does not match request")
     else:
-        policy_fingerprint, history_fp = request.policy.fingerprint, request.history_fingerprint
+        if (
+            policy_id is None
+            or policy_version is None
+            or implementation_id is None
+            or implementation_version is None
+        ):
+            raise ValueError("complete scheduling receipt is required")
+        policy_fingerprint = effective_policy_fingerprint(
+            request.policy,
+            policy_id,
+            policy_version,
+            implementation_id,
+            implementation_version,
+        )
+        history_fp = request.history_fingerprint
     if (
         due_at is None
         or policy_id is None
@@ -470,6 +535,7 @@ __all__ = [
     "SchedulingPolicyConfigV1",
     "SchedulingRequest",
     "SchedulingResult",
+    "effective_policy_fingerprint",
     "history_fingerprint",
     "result_fingerprint",
 ]

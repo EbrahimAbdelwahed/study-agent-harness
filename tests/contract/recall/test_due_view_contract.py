@@ -17,6 +17,7 @@ from study_agent.recall import (
     SchedulingPolicyConfigV1,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     result_fingerprint,
 )
 from study_agent.recall.contracts import AppliedSchedule
@@ -41,7 +42,7 @@ def _schedule(revision_id: ArtifactRevisionId, due_at: datetime, key: str) -> Ap
         due_at,
         "fake",
         "1",
-        POLICY.fingerprint,
+        effective_policy_fingerprint(POLICY, "fake", "1", "fake", "1"),
         "fake",
         "1",
         request.history_fingerprint,

@@ -13,6 +13,7 @@ from study_agent.recall.contracts import (
     SchedulingPolicyConfigV1,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     history_fingerprint,
     result_fingerprint,
 )
@@ -49,7 +50,7 @@ def _result(
         due_at,
         "deterministic",
         "1",
-        request.policy.fingerprint,
+        effective_policy_fingerprint(request.policy, "deterministic", "1", "fake", "1"),
         "fake",
         "1",
         request.history_fingerprint,
@@ -111,8 +112,15 @@ def test_history_and_result_fingerprints_bind_every_effective_input() -> None:
     )
     changed_policy = replace(request, policy=SchedulingPolicyConfigV1(8800))
     assert result_fingerprint(changed_policy, _result(changed_policy)) != result.result_fingerprint
+    changed_implementation = replace(
+        result,
+        implementation_version="2",
+        policy_fingerprint=effective_policy_fingerprint(
+            request.policy, "deterministic", "1", "fake", "2"
+        ),
+    )
     assert (
-        result_fingerprint(request, replace(result, implementation_version="2"))
+        result_fingerprint(request, changed_implementation)
         != result.result_fingerprint
     )
 

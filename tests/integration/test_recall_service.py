@@ -29,6 +29,7 @@ from study_agent.recall import (
     RetryableRecallConflictError,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     result_fingerprint,
 )
 from study_agent.recall.events import register_recall_events
@@ -60,7 +61,7 @@ class FakeScheduler:
             request.enrollment_at + timedelta(days=1 if not request.history else 2),
             "fake",
             "1",
-            request.policy.fingerprint,
+            effective_policy_fingerprint(request.policy, "fake", "1", "fake", "1"),
             "fake",
             "1",
             request.history_fingerprint,

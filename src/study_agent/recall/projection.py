@@ -19,6 +19,7 @@ from .contracts import (
     ReviewRecord,
     SchedulingRequest,
     SchedulingResult,
+    effective_policy_fingerprint,
     history_fingerprint,
     result_fingerprint,
 )
@@ -90,8 +91,14 @@ def reduce_schedule_applied(
     _accepted_flashcard(state, revision)
     if str(schedule.decision_id) in recall["schedules"]:
         raise ValueError("schedule decision identity already exists")
-    if schedule.policy.fingerprint != schedule.policy_fingerprint:
-        raise ValueError("policy fingerprint does not match exact configuration")
+    if schedule.policy_fingerprint != effective_policy_fingerprint(
+        schedule.policy,
+        schedule.policy_id,
+        schedule.policy_version,
+        schedule.implementation_id,
+        schedule.implementation_version,
+    ):
+        raise ValueError("policy fingerprint does not match effective configuration")
     if schedule.trigger == "enrollment":
         if revision in recall["enrollments"]:
             raise ValueError("duplicate enrollment")
