@@ -1,5 +1,11 @@
 """Canonical provider-neutral recall ledger."""
 
+from .composition import (
+    RecallAvailability,
+    RecallAvailabilityCode,
+    RecallComposition,
+    compose_recall,
+)
 from .contracts import (
     AppliedSchedule,
     RecallRating,
@@ -44,7 +50,10 @@ __all__ = [
     "AppliedSchedule",
     "DueRecallView",
     "ProjectionRecallView",
+    "RecallAvailability",
+    "RecallAvailabilityCode",
     "RecallCommandError",
+    "RecallComposition",
     "RecallConflictError",
     "RecallRating",
     "RecallService",
@@ -58,6 +67,7 @@ __all__ = [
     "SchedulingPolicyConfigV1",
     "SchedulingRequest",
     "SchedulingResult",
+    "compose_recall",
     "decode_review_recorded",
     "decode_schedule_applied",
     "effective_policy_fingerprint",

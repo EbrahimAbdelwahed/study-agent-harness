@@ -60,7 +60,9 @@ jobs:
       - run: >-
           python -m pytest
           tests/unit/adapters/scheduling/test_py_fsrs.py
+          tests/integration/test_recall_real_fsrs_e2e.py
           tests/architecture/test_fsrs_adapter_boundaries.py
+          tests/architecture/test_recall_boundaries.py
       - run: python -m pip install --disable-pip-version-check build
       - run: python -m build --wheel --outdir dist
       - run: python -m venv clean-recall-install
