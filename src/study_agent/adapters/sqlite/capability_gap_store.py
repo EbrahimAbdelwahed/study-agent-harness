@@ -62,9 +62,7 @@ class SQLiteCapabilityGapStore:
         self._database = str(database)
         normalized = self._database.strip().lower()
         if not normalized or normalized == ":memory:" or normalized.startswith("file:"):
-            raise UnsupportedSQLiteCapabilityGapDatabaseError(
-                "path_backed_database_required"
-            )
+            raise UnsupportedSQLiteCapabilityGapDatabaseError("path_backed_database_required")
         self._connection_identity_guard = _SerializedConnectionGuard(
             connection_identity_guard or _guard_for_database(Path(self._database))
         )
@@ -91,9 +89,7 @@ class SQLiteCapabilityGapStore:
         except sqlite3.DatabaseError:
             raise CapabilityGapCorruptionError("gap_store_corrupt") from None
         user_rows = [
-            row
-            for row in table_rows
-            if row[1] not in {"sqlite_schema", "sqlite_temp_schema"}
+            row for row in table_rows if row[1] not in {"sqlite_schema", "sqlite_temp_schema"}
         ]
         if {row[1] for row in user_rows} != expected_tables or len(user_rows) != 2:
             raise CapabilityGapCorruptionError("gap_store_schema_invalid")
@@ -206,6 +202,8 @@ class SQLiteCapabilityGapStore:
                     raise CapabilityGapCorruptionError("gap_store_corrupt")
                 current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
                 _assert_aggregate_matches_proposal(current, proposal)
+                if current.resolution is not GapResolutionKind.UNRESOLVED:
+                    raise CapabilityGapValidationError("resolution_closed")
                 updated = CapabilityGapAggregate(
                     gap_key=current.gap_key,
                     dimensions=current.dimensions,
@@ -297,6 +295,11 @@ class SQLiteCapabilityGapStore:
                 current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
                 if current.gap_key.value != gap_key:
                     raise CapabilityGapCollisionError("gap_key_collision")
+                if current.resolution is resolution.kind:
+                    if current.resolution_authority_fingerprint != resolution.authority_fingerprint:
+                        raise CapabilityGapCollisionError("resolution_authority_mismatch")
+                    connection.commit()
+                    return bytes(row[0])
                 if current.resolution is not resolution.kind:
                     if (
                         current.resolution is not resolution.kind
@@ -412,6 +415,20 @@ class SQLiteCapabilityGapStore:
                 if current.export_state is state:
                     connection.commit()
                     return bytes(row[0])
+                allowed: dict[GapExportState, frozenset[GapExportState]] = {
+                    GapExportState.LOCAL: frozenset(
+                        {GapExportState.PENDING, GapExportState.FAILED}
+                    ),
+                    GapExportState.PENDING: frozenset(
+                        {GapExportState.EXPORTED, GapExportState.FAILED}
+                    ),
+                    GapExportState.FAILED: frozenset(
+                        {GapExportState.PENDING, GapExportState.FAILED}
+                    ),
+                    GapExportState.EXPORTED: frozenset(),
+                }
+                if state not in allowed[current.export_state]:
+                    raise CapabilityGapValidationError("export_state_transition_invalid")
                 updated = CapabilityGapAggregate(
                     gap_key=current.gap_key,
                     dimensions=current.dimensions,

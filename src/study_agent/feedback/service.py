@@ -83,9 +83,12 @@ class CapabilityGapService:
             existing = self.get(proposed.gap_key)
         except CapabilityGapUnavailableError:
             existing = None
-        if existing is not None and existing.last_seen >= (
-            context.observed_at.astimezone(UTC) - self._rate_policy.window
-        ) and existing.occurrence_count >= self._rate_policy.max_occurrences:
+        if (
+            existing is not None
+            and existing.last_seen
+            >= (context.observed_at.astimezone(UTC) - self._rate_policy.window)
+            and existing.occurrence_count >= self._rate_policy.max_occurrences
+        ):
             return CapabilityGapCompactView(
                 report_id=report_id,
                 gap_key=existing.gap_key,

@@ -282,9 +282,10 @@ class CapabilityGapReportResult:
     local_only: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.report_id, str) or re.fullmatch(
-            r"[0-9a-f]{64}", self.report_id
-        ) is None:
+        if (
+            not isinstance(self.report_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.report_id) is None
+        ):
             raise CapabilityGapValidationError("invalid_report_id")
         if not isinstance(self.gap_key, GapKeyV1):
             raise CapabilityGapValidationError("invalid_gap_key")

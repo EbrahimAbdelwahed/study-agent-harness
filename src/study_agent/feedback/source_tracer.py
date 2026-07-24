@@ -6,6 +6,7 @@ filename, path, MIME string, source body, or prompt text.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -27,6 +28,39 @@ class SourceFormatDisposition(StrEnum):
     SUPPORTED_DERIVATIVE_REQUESTED = "supported_derivative_requested"
 
 
+_EXTENSION = re.compile(r"^\.[A-Za-z0-9]{1,16}$")
+_MIME = re.compile(r"^[a-z0-9][a-z0-9.+-]{0,30}/[a-z0-9][a-z0-9.+-]{0,30}$")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFormatMetadata:
+    """Small host-produced metadata record; source bodies are not a field."""
+
+    extension: str
+    mime_type: str | None = None
+    filename: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.extension, str) or _EXTENSION.fullmatch(self.extension) is None:
+            raise ValueError("invalid_source_extension")
+        if self.mime_type is not None and (
+            not isinstance(self.mime_type, str) or _MIME.fullmatch(self.mime_type.lower()) is None
+        ):
+            raise ValueError("invalid_source_mime")
+        if self.filename is not None:
+            if not isinstance(self.filename, str) or not self.filename:
+                raise ValueError("invalid_source_filename")
+            # A filename is never persisted.  Reject paths and control text so
+            # hostile names cannot become policy/input instructions.
+            if (
+                "/" in self.filename
+                or "\\" in self.filename
+                or ".." in self.filename
+                or any(ord(char) < 32 for char in self.filename)
+            ):
+                raise ValueError("invalid_source_filename")
+
+
 @dataclass(frozen=True, slots=True)
 class UnsupportedSourceEvidence:
     """Host-produced evidence for an unsupported source family."""
@@ -35,6 +69,16 @@ class UnsupportedSourceEvidence:
     contract_identity: str
     contract_major: int
     failure_fingerprint: str
+    extension: str | None = None
+    mime_type: str | None = None
+
+    def __post_init__(self) -> None:
+        # Metadata is checked only for shape.  It is deliberately omitted from
+        # the operational report and never used to read a body or filename.
+        if self.extension is not None or self.mime_type is not None:
+            SourceFormatMetadata(self.extension or ".unknown", self.mime_type)
+        if not isinstance(self.target_kind, SafeTargetKind):
+            raise ValueError("invalid_source_target")
 
     def receipt(self) -> TrustedLimitationReceipt:
         return TrustedLimitationReceipt(
@@ -50,17 +94,22 @@ class SourceFormatTrace:
     disposition: SourceFormatDisposition
     learner_message: str
     report: object
+    original_immutable: bool = True
+    derivative_kinds: tuple[SafeTargetKind, ...] = (SafeTargetKind.TEXT, SafeTargetKind.MARKDOWN)
 
 
 def trace_unsupported_source_format(
     service: CapabilityGapService,
     evidence: UnsupportedSourceEvidence,
     context: CapabilityGapWriteContext,
+    metadata: SourceFormatMetadata | None = None,
 ) -> SourceFormatTrace:
     """Record one typed limitation and return an honest manual fallback."""
 
     if not isinstance(evidence, UnsupportedSourceEvidence):
         raise ValueError("invalid_source_evidence")
+    if metadata is not None and not isinstance(metadata, SourceFormatMetadata):
+        raise ValueError("invalid_source_metadata")
     if context.limitation_receipt is not None:
         # A mismatching receipt is never replaced by source-format evidence.
         if context.limitation_receipt != evidence.receipt():
@@ -88,11 +137,13 @@ def trace_unsupported_source_format(
             ".txt or .md derivative; the original was not changed."
         ),
         receipt,
+        original_immutable=True,
     )
 
 
 __all__ = [
     "SourceFormatDisposition",
+    "SourceFormatMetadata",
     "SourceFormatTrace",
     "UnsupportedSourceEvidence",
     "trace_unsupported_source_format",

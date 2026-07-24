@@ -52,4 +52,5 @@ def test_gap_plane_is_small_and_separate_from_study_tools() -> None:
         "source_tracer.py",
         "view.py",
         "workarounds.py",
+        "workaround_service.py",
     }
