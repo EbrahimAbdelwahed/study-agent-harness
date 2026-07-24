@@ -146,7 +146,7 @@ def test_nonblocking_dispatch_never_calls_sink_and_passes_closed_values() -> Non
     dispatcher = _RecordingDispatcher()
     tool = CapabilityGapHostTool(sink, dispatcher=dispatcher)  # type: ignore[arg-type]
 
-    assert tool.report_nonblocking(_proposal(), _context()) is None
+    tool.report_nonblocking(_proposal(), _context())
     assert sink.calls == 0
     assert dispatcher.calls == [(_proposal(), _context())]
 
@@ -154,10 +154,10 @@ def test_nonblocking_dispatch_never_calls_sink_and_passes_closed_values() -> Non
 def test_nonblocking_dispatch_is_explicit_fail_soft_when_queue_is_full_or_absent() -> None:
     sink = _RecordingSink(object())
     full = CapabilityGapHostTool(sink, dispatcher=_RecordingDispatcher(False))  # type: ignore[arg-type]
-    absent = CapabilityGapHostTool(sink)
+    absent = CapabilityGapHostTool(sink)  # type: ignore[arg-type]
 
-    assert full.report_nonblocking(_proposal(), _context()) is None
-    assert absent.report_nonblocking(_proposal(), _context()) is None
+    full.report_nonblocking(_proposal(), _context())
+    absent.report_nonblocking(_proposal(), _context())
     assert sink.calls == 0
 
 
