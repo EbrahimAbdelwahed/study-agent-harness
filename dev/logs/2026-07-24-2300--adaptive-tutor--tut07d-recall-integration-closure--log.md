@@ -53,6 +53,9 @@ invoke FSRS.
   fixture used a timestamp older than the repository's system-clock session
   event. Both fixtures were corrected without weakening either gate; full
   configured mypy now checks all 461 source and test files successfully.
+- GitHub Actions run `30113999281`: all Python 3.12/3.13 base and recall jobs
+  passed, including real FSRS E2E, clean-wheel installation, CLI smoke, Ruff,
+  and full configured mypy.
 
 ## Notes
 
