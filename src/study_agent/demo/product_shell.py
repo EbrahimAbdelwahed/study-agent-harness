@@ -382,7 +382,13 @@ def run_offline_shell_demo(
             "status_trace": result["timeline"],
             "material": result["source_state"],
             "evidence_sequence": result["evidence_refresh_sequence"],
+            "context_state": result["context_state"],
             "capabilities": result["discovered_capabilities"],
+            "due_review": {
+                "status": "unavailable",
+                "items": (),
+                "message": "Optional recall capability is not installed; continuing safely.",
+            },
             "optional_due_review": "unavailable (TUT-07 is optional)",
             "parity": result["parity"],
         },

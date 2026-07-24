@@ -1,6 +1,6 @@
 # Build Week product shell
 
-The product shell is a small, terminal-first consumer of the public tutor
+The product shell is a small conversation-first consumer of the public tutor
 contracts. It accepts a free-form learner entry before the context is complete,
 then renders the current conversation, material snapshot, learner evidence
 sequence, context conflicts, capability discovery, and optional due review.
@@ -15,6 +15,27 @@ Use `--json` to inspect the same trace in scripts. The shell command reuses the
 existing anatomy host trace; it does not create another tutor loop or write
 canonical state. The optional TUT-07 due-review view is omitted safely when no
 recall composition is installed.
+
+For a browser-visible reference surface, run:
+
+```bash
+study-agent-shell-web
+```
+
+Open <http://127.0.0.1:8765/>. The standard-library server binds to localhost,
+serves a packaged accessible HTML page, and exposes `GET /api/state` plus
+`POST /api/entry` for the same bounded free-form journey. The browser owns only
+the latest presentation input in memory; every response is delegated to the
+existing `run_offline_shell_demo` / `ProductShell` seam. It never imports
+SQLite or a provider adapter and never sends credentials over the wire. Use
+`--port 0` only for an embedding host or an integration test.
+
+The page includes conversation, material, evidence, context-conflict, and
+optional due-review panels. A clear conflict and unavailable recall capability
+are explicit empty states, not invented evidence. The offline route is the only
+browser mode in this package. A configured GPT-5.6 adapter remains an opt-in
+host composition through the existing host port; this local reference server
+does not silently select a provider or claim API-key availability.
 
 ## States shown to learners
 
@@ -37,6 +58,7 @@ as `stale`, `degraded`, and `recovered` respectively.
    the shell; an API-key GPT-5.6 adapter is opt-in and never used by the
    offline path.
 
-The implementation is terminal-only on purpose: it provides an accessible,
-deterministic proof surface without adding a web framework or a second UI
-state owner. A future browser consumer can use the same immutable view model.
+The implementation uses only the Python standard library and a packaged page:
+it provides an accessible, deterministic proof surface without a web framework
+or a second UI state owner. The terminal and browser surfaces share the same
+immutable view projection and offline anatomy journey.
