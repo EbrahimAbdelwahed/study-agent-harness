@@ -36,6 +36,20 @@ from .host_tool import (
     CapabilityGapReportResult,
     WorkaroundSuggestionKind,
 )
+from .outbox import (
+    OUTBOX_SCHEMA_VERSION,
+    GapOutboxBundle,
+    GapOutboxBundleV1,
+    GapOutboxCorruptionError,
+    GapOutboxExportReceipt,
+    GapOutboxExportService,
+    GapOutboxPublication,
+    GapOutboxPublicationError,
+    GapOutboxPublisher,
+    GapOutboxRecord,
+    GapOutboxRecordV1,
+    GapOutboxValidationError,
+)
 from .service import CapabilityGapService, GapRatePolicy, GapRetentionPolicy
 from .source_tracer import (
     SourceFormatDisposition,
@@ -65,6 +79,7 @@ from .workarounds import (
 )
 
 __all__ = [
+    "OUTBOX_SCHEMA_VERSION",
     "CapabilityGapAggregate",
     "CapabilityGapCapabilityComparison",
     "CapabilityGapCollisionError",
@@ -90,6 +105,17 @@ __all__ = [
     "GapDisposition",
     "GapExportState",
     "GapKeyV1",
+    "GapOutboxBundle",
+    "GapOutboxBundleV1",
+    "GapOutboxCorruptionError",
+    "GapOutboxExportReceipt",
+    "GapOutboxExportService",
+    "GapOutboxPublication",
+    "GapOutboxPublicationError",
+    "GapOutboxPublisher",
+    "GapOutboxRecord",
+    "GapOutboxRecordV1",
+    "GapOutboxValidationError",
     "GapRatePolicy",
     "GapResolutionKind",
     "GapRetentionPolicy",

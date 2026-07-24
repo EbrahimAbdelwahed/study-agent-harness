@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -27,6 +28,20 @@ class CapabilityGapStore(Protocol):
 
     def set_export_state(self, gap_key: str, state: GapExportState) -> bytes: ...
 
+    def set_export_states(
+        self, gap_keys: Collection[str], state: GapExportState
+    ) -> tuple[bytes, ...]: ...
+
+    def list_aggregates(
+        self, *, states: Collection[GapExportState] | None = None
+    ) -> tuple[bytes, ...]: ...
+
+
+class GapOutboxPublisher(Protocol):
+    """Trusted local publication effect for an explicit outbox export."""
+
+    def publish(self, payload: bytes) -> None: ...
+
 
 class FeatureGapSink(Protocol):
     """Trusted inward sink used by the separately discoverable host tool."""
@@ -38,4 +53,4 @@ class FeatureGapSink(Protocol):
     ) -> CapabilityGapCompactView: ...
 
 
-__all__ = ["CapabilityGapStore", "FeatureGapSink"]
+__all__ = ["CapabilityGapStore", "FeatureGapSink", "GapOutboxPublisher"]
