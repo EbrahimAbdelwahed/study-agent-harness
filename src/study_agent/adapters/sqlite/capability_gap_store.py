@@ -7,6 +7,7 @@ import sqlite3
 import stat
 from collections.abc import Callable
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import cast
@@ -15,7 +16,10 @@ from study_agent.feedback.contracts import (
     CapabilityGapAggregate,
     CapabilityGapCollisionError,
     CapabilityGapCorruptionError,
+    CapabilityGapResolution,
     CapabilityGapValidationError,
+    GapExportState,
+    GapResolutionKind,
 )
 
 from .event_store import (
@@ -210,6 +214,10 @@ class SQLiteCapabilityGapStore:
                     first_seen=current.first_seen,
                     last_seen=proposal.last_seen,
                     occurrence_count=current.occurrence_count + 1,
+                    resolution=current.resolution,
+                    export_state=current.export_state,
+                    resolution_authority_fingerprint=current.resolution_authority_fingerprint,
+                    resolved_at=current.resolved_at,
                 )
                 encoded = updated.to_bytes()
                 connection.execute(
@@ -264,6 +272,179 @@ class SQLiteCapabilityGapStore:
         if aggregate.gap_key.value != gap_key:
             raise CapabilityGapCollisionError("gap_key_collision")
         return bytes(row[0])
+
+    def resolve(self, gap_key: str, resolution: CapabilityGapResolution) -> bytes:
+        """Atomically apply one trusted terminal resolution exactly once."""
+
+        _validate_digest(gap_key, "gap_key")
+        if not isinstance(resolution, CapabilityGapResolution):
+            raise CapabilityGapValidationError("invalid_resolution")
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._validate_schema(connection)
+                row = connection.execute(
+                    "SELECT payload, typeof(payload) FROM capability_gap_aggregates "
+                    "WHERE gap_key = ?",
+                    (gap_key,),
+                ).fetchone()
+                if row is None:
+                    from study_agent.feedback.contracts import CapabilityGapUnavailableError
+
+                    raise CapabilityGapUnavailableError("gap_not_found")
+                if row[1] != "blob" or not isinstance(row[0], bytes):
+                    raise CapabilityGapCorruptionError("gap_store_corrupt")
+                current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
+                if current.gap_key.value != gap_key:
+                    raise CapabilityGapCollisionError("gap_key_collision")
+                if current.resolution is not resolution.kind:
+                    if (
+                        current.resolution is not resolution.kind
+                        and current.resolution is not GapResolutionKind.UNRESOLVED
+                    ):
+                        raise CapabilityGapValidationError("resolution_already_set")
+                    updated = CapabilityGapAggregate(
+                        gap_key=current.gap_key,
+                        dimensions=current.dimensions,
+                        verification_kind=current.verification_kind,
+                        impact_kind=current.impact_kind,
+                        first_seen=current.first_seen,
+                        last_seen=current.last_seen,
+                        occurrence_count=current.occurrence_count,
+                        resolution=resolution.kind,
+                        export_state=current.export_state,
+                        resolution_authority_fingerprint=resolution.authority_fingerprint,
+                        resolved_at=resolution.resolved_at,
+                    )
+                    encoded = updated.to_bytes()
+                    connection.execute(
+                        "UPDATE capability_gap_aggregates SET payload = ? WHERE gap_key = ?",
+                        (encoded, gap_key),
+                    )
+                    connection.commit()
+                    return encoded
+                connection.commit()
+                return bytes(row[0])
+            except (
+                CapabilityGapValidationError,
+                CapabilityGapCollisionError,
+                CapabilityGapCorruptionError,
+            ):
+                connection.rollback()
+                raise
+            except sqlite3.DatabaseError:
+                connection.rollback()
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def prune(self, before: object) -> int:
+        """Delete expired aggregates and their report identities atomically."""
+
+        if not isinstance(before, datetime) or before.tzinfo is None or before.utcoffset() is None:
+            raise CapabilityGapValidationError("invalid_retention_boundary")
+        cutoff = before.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._validate_schema(connection)
+                rows = connection.execute(
+                    "SELECT gap_key, payload, typeof(payload) FROM capability_gap_aggregates"
+                ).fetchall()
+                expired: list[str] = []
+                for key, payload, payload_type in rows:
+                    if payload_type != "blob" or not isinstance(payload, bytes):
+                        raise CapabilityGapCorruptionError("gap_store_corrupt")
+                    aggregate = CapabilityGapAggregate.from_bytes(bytes(payload))
+                    seen = aggregate.last_seen.isoformat(timespec="microseconds").replace(
+                        "+00:00", "Z"
+                    )
+                    if seen < cutoff:
+                        expired.append(str(key))
+                for key in expired:
+                    connection.execute(
+                        "DELETE FROM capability_gap_reports WHERE gap_key = ?", (key,)
+                    )
+                    connection.execute(
+                        "DELETE FROM capability_gap_aggregates WHERE gap_key = ?", (key,)
+                    )
+                connection.commit()
+                return len(expired)
+            except (
+                CapabilityGapValidationError,
+                CapabilityGapCollisionError,
+                CapabilityGapCorruptionError,
+            ):
+                connection.rollback()
+                raise
+            except sqlite3.DatabaseError:
+                connection.rollback()
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def set_export_state(self, gap_key: str, state: GapExportState) -> bytes:
+        """Record explicit local export state without changing evidence."""
+
+        _validate_digest(gap_key, "gap_key")
+        if not isinstance(state, GapExportState):
+            raise CapabilityGapValidationError("invalid_export_state")
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._validate_schema(connection)
+                row = connection.execute(
+                    "SELECT payload, typeof(payload) FROM capability_gap_aggregates "
+                    "WHERE gap_key = ?",
+                    (gap_key,),
+                ).fetchone()
+                if row is None:
+                    from study_agent.feedback.contracts import CapabilityGapUnavailableError
+
+                    raise CapabilityGapUnavailableError("gap_not_found")
+                if row[1] != "blob" or not isinstance(row[0], bytes):
+                    raise CapabilityGapCorruptionError("gap_store_corrupt")
+                current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
+                if current.gap_key.value != gap_key:
+                    raise CapabilityGapCollisionError("gap_key_collision")
+                if current.export_state is state:
+                    connection.commit()
+                    return bytes(row[0])
+                updated = CapabilityGapAggregate(
+                    gap_key=current.gap_key,
+                    dimensions=current.dimensions,
+                    verification_kind=current.verification_kind,
+                    impact_kind=current.impact_kind,
+                    first_seen=current.first_seen,
+                    last_seen=current.last_seen,
+                    occurrence_count=current.occurrence_count,
+                    resolution=current.resolution,
+                    export_state=state,
+                    resolution_authority_fingerprint=current.resolution_authority_fingerprint,
+                    resolved_at=current.resolved_at,
+                )
+                encoded = updated.to_bytes()
+                connection.execute(
+                    "UPDATE capability_gap_aggregates SET payload = ? WHERE gap_key = ?",
+                    (encoded, gap_key),
+                )
+                connection.commit()
+                return encoded
+            except (
+                CapabilityGapValidationError,
+                CapabilityGapCollisionError,
+                CapabilityGapCorruptionError,
+            ):
+                connection.rollback()
+                raise
+            except sqlite3.DatabaseError:
+                connection.rollback()
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            except BaseException:
+                connection.rollback()
+                raise
 
 
 def _validate_digest(value: object, field: str) -> None:

@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from study_agent.feedback.contracts import CapabilityGapObservation, CapabilityGapWriteContext
+    from study_agent.feedback.contracts import (
+        CapabilityGapObservation,
+        CapabilityGapResolution,
+        CapabilityGapWriteContext,
+        GapExportState,
+    )
     from study_agent.feedback.view import CapabilityGapCompactView
 
 
@@ -17,6 +22,10 @@ class CapabilityGapStore(Protocol):
     ) -> tuple[bytes, bool]: ...
 
     def load(self, gap_key: str) -> bytes: ...
+
+    def resolve(self, gap_key: str, resolution: CapabilityGapResolution) -> bytes: ...
+
+    def set_export_state(self, gap_key: str, state: GapExportState) -> bytes: ...
 
 
 class FeatureGapSink(Protocol):
