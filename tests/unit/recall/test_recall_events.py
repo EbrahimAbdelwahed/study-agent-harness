@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +19,7 @@ from study_agent.domain import (
     recall_event_id_for,
     review_id_for,
 )
+from study_agent.domain._validation import JsonValue
 from study_agent.recall.contracts import (
     AppliedSchedule,
     RecallRating,
@@ -45,6 +47,11 @@ POLICY = SchedulingPolicyConfigV1()
 FP = "a" * 64
 
 
+def _mapping(value: JsonValue) -> Mapping[str, JsonValue]:
+    assert isinstance(value, Mapping)
+    return value
+
+
 def _review() -> ReviewRecord:
     return ReviewRecord(
         review_id_for(COURSE, SESSION, REVISION, "review-key"),
@@ -62,7 +69,7 @@ def _event(
     *,
     event_id: EventId,
     event_type: str,
-    payload: dict[str, object],
+    payload: Mapping[str, JsonValue],
     actor: PrincipalKind,
     occurred_at: datetime = NOW,
 ) -> DomainEvent:
@@ -75,7 +82,7 @@ def _event(
         Actor(actor, "test"),
         occurred_at,
         CorrelationId("correlation-1"),
-        payload,  # type: ignore[arg-type]
+        payload,
         SESSION,
     )
 
@@ -192,7 +199,10 @@ def test_schedule_codec_round_trips_and_rejects_wrong_scope_or_authority() -> No
             _event(
                 event_id=event_id,
                 event_type=SCHEDULE_APPLIED,
-                payload={**payload, "policy": {**payload["policy"], "provider": "fsrs"}},
+                payload={
+                    **payload,
+                    "policy": {**_mapping(payload["policy"]), "provider": "fsrs"},
+                },
                 actor=PrincipalKind.SERVICE,
             )
-        )  # type: ignore[index]
+        )

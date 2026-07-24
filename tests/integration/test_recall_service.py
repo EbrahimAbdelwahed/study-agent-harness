@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -12,11 +13,14 @@ from study_agent.domain import (
     ArtifactRevisionStatus,
     CorrelationId,
     CourseId,
+    DomainEvent,
     ExecutionContext,
     PrincipalKind,
     SessionId,
     StudyArtifactKind,
 )
+from study_agent.domain._validation import JsonValue
+from study_agent.ports.artifact import ArtifactViewPort
 from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.recall import (
     RecallCommandError,
@@ -70,7 +74,7 @@ class FakeScheduler:
 
 class MemoryEventStore:
     def __init__(self) -> None:
-        self.events = []
+        self.events: list[DomainEvent] = []
         self.projection = Projection(COURSE, 0, _base_state())
         self.registry = EventRegistry()
         register_recall_events(self.registry)
@@ -105,8 +109,10 @@ class MutableRecallView:
         return ProjectionRecallView(lambda _: self.store.projection).get(course_id)
 
 
-def _base_state() -> dict[str, object]:
-    return {
+def _base_state() -> dict[str, JsonValue]:
+    return cast(
+        dict[str, JsonValue],
+        {
         "course": {"course_id": str(COURSE)},
         "sessions": {str(SESSION): {"course_id": str(COURSE)}},
         "study_artifacts": {
@@ -117,10 +123,11 @@ def _base_state() -> dict[str, object]:
                 }
             }
         },
-    }
+        },
+    )
 
 
-def _artifact_view() -> object:
+def _artifact_view() -> ArtifactViewPort:
     target = SimpleNamespace(
         id=REVISION,
         artifact_id=ARTIFACT,
@@ -135,7 +142,7 @@ def _artifact_view() -> object:
         ),
         batches=(batch,),
     )
-    return SimpleNamespace(get=lambda course_id: snapshot)
+    return cast(ArtifactViewPort, SimpleNamespace(get=lambda course_id: snapshot))
 
 
 def _context(kind: PrincipalKind, key: str) -> ExecutionContext:

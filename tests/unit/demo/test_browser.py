@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 import pytest
 
 from study_agent.demo.browser import BrowserSurface, create_server
+from study_agent.domain._validation import JsonValue
 
 
 def _journey(entry: str) -> dict[str, object]:
@@ -19,6 +21,11 @@ def _journey(entry: str) -> dict[str, object]:
     }
 
 
+def _mapping(value: JsonValue) -> Mapping[str, JsonValue]:
+    assert isinstance(value, Mapping)
+    return value
+
+
 def test_browser_surface_projects_the_existing_journey_without_new_state() -> None:
     surface = BrowserSurface(_journey)
 
@@ -27,13 +34,13 @@ def test_browser_surface_projects_the_existing_journey_without_new_state() -> No
 
     assert first == second
     assert first["learner_entry"] == "Explain valves"
-    assert first["conversation"]["status_trace"] == (
+    assert _mapping(first["conversation"])["status_trace"] == (
         {"step": 1, "status": "completed", "detail": "Grounded"},
     )
-    assert first["material"]["fixture"] == "notes.md"
-    assert first["evidence"]["sequence"] == 2
-    assert first["conflict"]["status"] == "clear"
-    assert first["due_review"]["status"] == "unavailable"
+    assert _mapping(first["material"])["fixture"] == "notes.md"
+    assert _mapping(first["evidence"])["sequence"] == 2
+    assert _mapping(first["conflict"])["status"] == "clear"
+    assert _mapping(first["due_review"])["status"] == "unavailable"
     assert first["parity"] is True
 
 
@@ -51,8 +58,9 @@ def test_browser_surface_uses_conflicts_and_due_review_when_a_host_view_has_them
     payload = BrowserSurface(journey).state("review this")
 
     assert payload["conflict"] == {"status": "conflicted", "message": "Goal differs"}
-    assert payload["due_review"]["status"] == "needs_review"
-    assert payload["due_review"]["items"] == ({"label": "Aortic valve"},)
+    due_review = _mapping(payload["due_review"])
+    assert due_review["status"] == "needs_review"
+    assert due_review["items"] == ({"label": "Aortic valve"},)
 
 
 def test_browser_input_is_bounded_and_server_is_local_only() -> None:

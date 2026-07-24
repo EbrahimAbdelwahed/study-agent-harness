@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -11,6 +13,7 @@ from study_agent.domain import (
     CorrelationId,
     CourseId,
     DomainEvent,
+    EventId,
     PrincipalKind,
     SessionId,
     enrollment_decision_id_for,
@@ -18,6 +21,7 @@ from study_agent.domain import (
     review_decision_id_for,
     review_id_for,
 )
+from study_agent.domain._validation import JsonValue
 from study_agent.recall.contracts import (
     AppliedSchedule,
     RecallRating,
@@ -44,24 +48,32 @@ POLICY = SchedulingPolicyConfigV1()
 FP = "a" * 64
 
 
-def _state(kind: str = "flashcard", status: str = "accepted") -> dict[str, object]:
-    return {
+def _state(kind: str = "flashcard", status: str = "accepted") -> dict[str, JsonValue]:
+    return cast(
+        dict[str, JsonValue],
+        {
         "course": {"course_id": str(COURSE)},
         "sessions": {str(SESSION): {"course_id": str(COURSE)}},
         "study_artifacts": {"revisions": {str(REVISION): {"status": status, "kind": kind}}},
-    }
+        },
+    )
+
+
+def _mapping(value: JsonValue) -> Mapping[str, JsonValue]:
+    assert isinstance(value, Mapping)
+    return value
 
 
 def _event(
     event_type: str,
-    event_id: object,
+    event_id: EventId,
     sequence: int,
     actor: PrincipalKind,
-    payload: object,
+    payload: Mapping[str, JsonValue],
     occurred_at: datetime = NOW,
 ) -> DomainEvent:
     return DomainEvent(
-        event_id,  # type: ignore[arg-type]
+        event_id,
         COURSE,
         sequence,
         event_type,
@@ -69,7 +81,7 @@ def _event(
         Actor(actor, "test"),
         occurred_at,
         CorrelationId("correlation-1"),
-        payload,  # type: ignore[arg-type]
+        payload,
         SESSION,
     )
 
@@ -188,10 +200,10 @@ def test_replay_preserves_enrollment_review_and_matching_schedule() -> None:
     projection = Projection(COURSE, 0, _state())
     for event in (enrollment, review_event, schedule):
         projection = apply_event(projection, event, registry)
-    recall = projection.state["recall"]
-    assert set(recall["enrollments"]) == {str(REVISION)}  # type: ignore[index]
-    assert set(recall["reviews"]) == {str(review.review_id)}  # type: ignore[index]
-    assert len(recall["schedules"]) == 2  # type: ignore[arg-type]
+    recall = _mapping(projection.state["recall"])
+    assert set(_mapping(recall["enrollments"])) == {str(REVISION)}
+    assert set(_mapping(recall["reviews"])) == {str(review.review_id)}
+    assert len(_mapping(recall["schedules"])) == 2
     replayed = Projection(COURSE, 0, _state())
     for event in (enrollment, review_event, schedule):
         replayed = apply_event(replayed, event, _registry())

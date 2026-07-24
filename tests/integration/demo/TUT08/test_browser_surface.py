@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from http.client import HTTPConnection
+from typing import cast
 
 from study_agent.demo.browser import create_server
 
@@ -24,7 +25,7 @@ def test_local_browser_journey_serves_page_state_and_free_form_entry() -> None:
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     try:
-        host, port = server.server_address
+        host, port = cast(tuple[str, int], server.server_address)
         connection = HTTPConnection(host, port, timeout=2)
         connection.request("GET", "/")
         page_response = connection.getresponse()

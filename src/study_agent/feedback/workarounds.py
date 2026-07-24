@@ -12,10 +12,35 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Any, cast
 
+from study_agent.domain._validation import JsonValue
 from study_agent.state import canonical_json_bytes, canonical_json_object
 
 _OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _json_text(value: JsonValue, field: str) -> str:
+    if not isinstance(value, str):
+        raise WorkaroundValidationError(f"invalid_{field}")
+    return value
+
+
+def _json_int(value: JsonValue, field: str) -> int:
+    if type(value) is not int:
+        raise WorkaroundValidationError(f"invalid_{field}")
+    return value
+
+
+def _json_optional_text(value: JsonValue, field: str) -> str | None:
+    if value is not None and not isinstance(value, str):
+        raise WorkaroundValidationError(f"invalid_{field}")
+    return value
+
+
+def _json_sequence(value: JsonValue, field: str) -> tuple[JsonValue, ...]:
+    if not isinstance(value, tuple):
+        raise WorkaroundValidationError(f"invalid_{field}")
+    return value
 
 
 class WorkaroundValidationError(ValueError):
@@ -191,27 +216,26 @@ class WorkaroundManifest:
                 or value["schema_version"] != 1
             ):
                 raise ValueError
-            arrays = tuple(
-                value[name]
-                for name in (
-                    "effects",
-                    "preconditions",
-                    "quality_limitations",
-                    "provenance_obligations",
-                )
+            effects = _json_sequence(value["effects"], "effects")
+            preconditions = _json_sequence(value["preconditions"], "preconditions")
+            quality_limitations = _json_sequence(
+                value["quality_limitations"], "quality_limitations"
             )
-            if any(not isinstance(item, (list, tuple)) for item in arrays):
-                raise ValueError
+            provenance_obligations = _json_sequence(
+                value["provenance_obligations"], "provenance_obligations"
+            )
             return cls(
-                value["identity"],
-                value["version"],
-                WorkaroundInputKind(value["input_kind"]),
-                WorkaroundOutputKind(value["output_kind"]),
-                tuple(WorkaroundEffect(item) for item in value["effects"]),
-                WorkaroundApprovalPolicy(value["approval_policy"]),
-                tuple(value["preconditions"]),
-                tuple(value["quality_limitations"]),
-                tuple(value["provenance_obligations"]),
+                _json_text(value["identity"], "identity"),
+                _json_int(value["version"], "version"),
+                WorkaroundInputKind(_json_text(value["input_kind"], "input_kind")),
+                WorkaroundOutputKind(_json_text(value["output_kind"], "output_kind")),
+                tuple(WorkaroundEffect(_json_text(item, "effect")) for item in effects),
+                WorkaroundApprovalPolicy(
+                    _json_text(value["approval_policy"], "approval_policy")
+                ),
+                tuple(_json_text(item, "precondition") for item in preconditions),
+                tuple(_json_text(item, "quality_limitation") for item in quality_limitations),
+                tuple(_json_text(item, "provenance_obligation") for item in provenance_obligations),
             )
         except (TypeError, ValueError, UnicodeDecodeError):
             raise WorkaroundValidationError("invalid_manifest") from None
@@ -317,17 +341,17 @@ class WorkaroundExecutionReceipt:
             ):
                 raise ValueError
             result = cls(
-                WorkaroundReceiptStatus(value["status"]),
-                value["manifest_identity"],
-                value["manifest_version"],
-                value["input_fingerprint"],
-                value["output_fingerprint"],
-                value["provenance_fingerprint"],
-                value["limitation_fingerprint"],
-                value["manifest_fingerprint"],
-                value["effect_fingerprint"],
-                value["approval_fingerprint"],
-                value["executor_fingerprint"],
+                WorkaroundReceiptStatus(_json_text(value["status"], "status")),
+                _json_text(value["manifest_identity"], "manifest_identity"),
+                _json_int(value["manifest_version"], "manifest_version"),
+                _json_text(value["input_fingerprint"], "input_fingerprint"),
+                _json_optional_text(value["output_fingerprint"], "output_fingerprint"),
+                _json_optional_text(value["provenance_fingerprint"], "provenance_fingerprint"),
+                _json_optional_text(value["limitation_fingerprint"], "limitation_fingerprint"),
+                _json_optional_text(value["manifest_fingerprint"], "manifest_fingerprint"),
+                _json_optional_text(value["effect_fingerprint"], "effect_fingerprint"),
+                _json_optional_text(value["approval_fingerprint"], "approval_fingerprint"),
+                _json_optional_text(value["executor_fingerprint"], "executor_fingerprint"),
             )
             if result.to_bytes() != data:
                 raise ValueError
