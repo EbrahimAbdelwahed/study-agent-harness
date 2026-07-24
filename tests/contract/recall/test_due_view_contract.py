@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 from study_agent.domain import (
-    ArtifactId,
+    ArtifactDecision,
     ArtifactRevisionId,
-    ArtifactRevisionStatus,
     CourseId,
     ScheduleDecisionId,
-    StudyArtifactKind,
 )
 from study_agent.recall import (
     DueRecallView,
@@ -21,7 +18,9 @@ from study_agent.recall import (
     result_fingerprint,
 )
 from study_agent.recall.contracts import AppliedSchedule
-from study_agent.state import Projection
+from study_agent.state import apply_event
+from tests.unit.artifacts.test_lifecycle_events import decision_event
+from tests.unit.artifacts.test_lifecycle_projection import proposed_pair, registry
 
 COURSE = CourseId("course-1")
 NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
@@ -70,78 +69,87 @@ def _schedule(revision_id: ArtifactRevisionId, due_at: datetime, key: str) -> Ap
 
 
 def test_due_view_filters_current_accepted_revisions_and_sorts_without_scheduler() -> None:
-    first = ArtifactRevisionId("revision-a")
-    second = ArtifactRevisionId("revision-b")
+    artifact_projection, first_record, second_record = proposed_pair()
+    artifact_projection = apply_event(
+        artifact_projection,
+        replace(
+            decision_event(first_record.revision_id, ArtifactDecision.ACCEPT, key="first"),
+            course_sequence=3,
+        ),
+        registry(),
+    )
+    artifact_projection = apply_event(
+        artifact_projection,
+        replace(
+            decision_event(second_record.revision_id, ArtifactDecision.ACCEPT, key="second"),
+            course_sequence=4,
+        ),
+        registry(),
+    )
+    first = first_record.revision_id
+    second = second_record.revision_id
     first_schedule = _schedule(first, NOW, "decision-a")
     second_schedule = _schedule(second, NOW, "decision-b")
-    state = Projection(
-        COURSE,
-        12,
-        {
+    course = artifact_projection.course_id
+    state = replace(
+        artifact_projection,
+        sequence=12,
+        state={
+            **artifact_projection.state,
             "recall": {
                 "enrollments": {},
                 "reviews": {},
                 "schedules": {
-                    "decision-a": {**first_schedule.to_json(), "course_sequence": 3},
-                    "decision-b": {**second_schedule.to_json(), "course_sequence": 2},
+                    "decision-a": {
+                        **first_schedule.to_json(),
+                        "course_sequence": 3,
+                        "session_id": "session-artifacts",
+                    },
+                    "decision-b": {
+                        **second_schedule.to_json(),
+                        "course_sequence": 2,
+                        "session_id": "session-artifacts",
+                    },
                 },
                 "commands": {},
-            }
+            },
         },
     )
-    revisions = {
-        first: SimpleNamespace(
-            id=first,
-            artifact_id=ArtifactId("artifact-z"),
-            status=ArtifactRevisionStatus.ACCEPTED,
-            kind=StudyArtifactKind.FLASHCARD,
-        ),
-        second: SimpleNamespace(
-            id=second,
-            artifact_id=ArtifactId("artifact-a"),
-            status=ArtifactRevisionStatus.ACCEPTED,
-            kind=StudyArtifactKind.FLASHCARD,
-        ),
-    }
-    artifacts = SimpleNamespace(
-        get=lambda _: SimpleNamespace(revision=lambda revision: revisions[revision])
-    )
     clock = FakeClock()
-    view = DueRecallView(lambda _: state, clock, artifact_view=artifacts)
-    rows = view.due_rows(COURSE)
-    assert [(row.artifact_id, row.revision_id) for row in rows] == [
-        ("artifact-a", second),
-        ("artifact-z", first),
-    ]
+    view = DueRecallView(lambda _: state, clock)
+    rows = view.due_rows(course)
+    assert {row.revision_id for row in rows} == {first, second}
+    assert rows == tuple(
+        sorted(rows, key=lambda row: (row.due_at, row.artifact_id, str(row.revision_id)))
+    )
     clock.current = NOW - timedelta(seconds=1)
-    assert view.get(COURSE) == ()
+    assert view.get(course) == ()
 
 
 def test_due_view_uses_one_projection_and_never_mutates_it() -> None:
     revision = ArtifactRevisionId("revision-a")
     schedule = _schedule(revision, NOW, "decision-a")
-    state = Projection(
-        COURSE,
-        7,
-        {
+    artifact_projection, record, _ = proposed_pair()
+    course = artifact_projection.course_id
+    state = replace(
+        artifact_projection,
+        sequence=7,
+        state={
+            **artifact_projection.state,
             "recall": {
                 "enrollments": {},
                 "reviews": {},
-                "schedules": {"decision-a": {**schedule.to_json(), "course_sequence": 1}},
+                "schedules": {
+                    "decision-a": {
+                        **replace(schedule, revision_id=record.revision_id).to_json(),
+                        "course_sequence": 1,
+                        "session_id": "session-artifacts",
+                    }
+                },
                 "commands": {},
-            }
+            },
         },
     )
-    artifacts = SimpleNamespace(
-        get=lambda _: SimpleNamespace(
-            revision=lambda requested: SimpleNamespace(
-                id=requested,
-                artifact_id=ArtifactId("artifact-a"),
-                status=ArtifactRevisionStatus.PROPOSED,
-                kind=StudyArtifactKind.FLASHCARD,
-            )
-        )
-    )
     before = state.canonical_bytes()
-    assert DueRecallView(lambda _: state, FakeClock(), artifact_view=artifacts).due(COURSE) == ()
+    assert DueRecallView(lambda _: state, FakeClock()).due(course) == ()
     assert state.canonical_bytes() == before

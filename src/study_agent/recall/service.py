@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import cast
+from typing import TYPE_CHECKING
 
 from study_agent.domain import (
     Actor,
@@ -52,6 +51,9 @@ from .events import (
     encode_schedule_applied,
 )
 
+if TYPE_CHECKING:
+    from study_agent.ports.recall import RecallViewPort
+
 
 class RecallCommandError(ValueError):
     """A recall command violates authority, ownership, or validation rules."""
@@ -79,7 +81,7 @@ class RecallService:
         clock: ClockPort,
         artifacts: ArtifactViewPort,
         scheduler: SchedulingPolicyPort,
-        recall_view: Callable[[CourseId], RecallSnapshot] | object,
+        recall_view: RecallViewPort,
         *,
         default_policy: SchedulingPolicyConfigV1 | None = None,
         service_principal_id: str = "recall-service",
@@ -87,15 +89,8 @@ class RecallService:
         self._events = events
         self._clock = clock
         self._artifacts = artifacts
-        scheduler_candidate: object = scheduler
-        view_candidate: object = recall_view
-        if hasattr(scheduler_candidate, "get") and hasattr(view_candidate, "decide"):
-            # Accept the natural read-port-before-policy ordering used by other
-            # application services while retaining the explicit scheduler-first
-            # constructor for hosts that prefer it.
-            scheduler_candidate, view_candidate = view_candidate, scheduler_candidate
-        self._scheduler = cast(SchedulingPolicyPort, scheduler_candidate)
-        self._recall_view = view_candidate
+        self._scheduler = scheduler
+        self._recall_view = recall_view
         self._default_policy = default_policy or SchedulingPolicyConfigV1()
         self._service_principal_id = service_principal_id
 
@@ -120,13 +115,14 @@ class RecallService:
                 or decoded.schedule.revision_id != revision_id
             ):
                 raise RecallConflictError("enrollment retry identity names another revision")
-            if policy is not None and decoded.schedule.policy != policy:
+            effective_policy = policy if policy is not None else self._default_policy
+            if decoded.schedule.policy != effective_policy:
                 raise RecallConflictError("enrollment retry identity names another policy")
             return self._snapshot(context.course_id)
 
-        self._accepted_target(context.course_id, session_id, revision_id)
+        self._accepted_target(context.course_id, revision_id)
         enrollment_at = _utc_now(self._clock.now())
-        selected_policy = policy or self._default_policy
+        selected_policy = policy if policy is not None else self._default_policy
         request = SchedulingRequest(revision_id, enrollment_at, (), selected_policy)
         result = self._decide(request)
         schedule = self._schedule(
@@ -201,11 +197,16 @@ class RecallService:
                 or decoded_schedule.schedule.review_id != decoded_review.review.review_id
             ):
                 raise RecallConflictError("review retry identity names different evidence")
-            if policy is not None and decoded_schedule.schedule.policy != policy:
+            effective_policy = (
+                policy
+                if policy is not None
+                else self._review_policy(context.course_id, revision_id)
+            )
+            if decoded_schedule.schedule.policy != effective_policy:
                 raise RecallConflictError("review retry identity names another policy")
             return self._snapshot(context.course_id)
 
-        self._accepted_target(context.course_id, session_id, revision_id)
+        self._accepted_target(context.course_id, revision_id)
         before = self._snapshot(context.course_id)
         enrollment = next(
             (item for item in before.enrollments if item.revision_id == revision_id), None
@@ -218,7 +219,7 @@ class RecallService:
         prior_reviews = tuple(item for item in before.reviews if item.revision_id == revision_id)
         if prior_reviews and occurred_at <= max(item.occurred_at for item in prior_reviews):
             raise RecallCommandError("review time must advance monotonically")
-        selected_policy = policy or enrollment.policy
+        selected_policy = policy if policy is not None else enrollment.policy
         review = ReviewRecord(
             review_id_for(context.course_id, session_id, revision_id, key),
             revision_id,
@@ -280,7 +281,7 @@ class RecallService:
         return self._snapshot(context.course_id)
 
     def _accepted_target(
-        self, course_id: CourseId, session_id: SessionId, revision_id: ArtifactRevisionId
+        self, course_id: CourseId, revision_id: ArtifactRevisionId
     ) -> None:
         try:
             snapshot = self._artifacts.get(course_id)
@@ -292,10 +293,18 @@ class RecallService:
             or target.kind is not StudyArtifactKind.FLASHCARD
         ):
             raise RecallCommandError("recall target must be an accepted flashcard revision")
-        batch = next((item for item in snapshot.batches if item.id == target.batch_id), None)
-        if batch is None or batch.session_id != session_id:
-            raise RecallCommandError("recall target belongs to another session")
         return None
+
+    def _review_policy(
+        self, course_id: CourseId, revision_id: ArtifactRevisionId
+    ) -> SchedulingPolicyConfigV1:
+        snapshot = self._snapshot(course_id)
+        enrollment = next(
+            (item for item in snapshot.enrollments if item.revision_id == revision_id), None
+        )
+        if enrollment is None:
+            raise RecallConflictError("review retry identity has no enrollment policy")
+        return enrollment.policy
 
     def _decide(self, request: SchedulingRequest) -> SchedulingResult:
         try:
@@ -361,14 +370,7 @@ class RecallService:
         return context.session_id, context.idempotency_key
 
     def _snapshot(self, course_id: CourseId) -> RecallSnapshot:
-        view = self._recall_view
-        if callable(view):
-            loader = cast(Callable[[CourseId], RecallSnapshot], view)
-            return loader(course_id)
-        getter = getattr(view, "get", None)
-        if not callable(getter):
-            raise TypeError("recall_view must be callable or expose get")
-        return cast(RecallSnapshot, getter(course_id))
+        return self._recall_view.get(course_id)
 
     def _find_event(self, course_id: CourseId, event_id: EventId) -> DomainEvent | None:
         matches = tuple(item for item in self._events.read(course_id) if item.event_id == event_id)

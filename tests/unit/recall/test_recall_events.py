@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -183,6 +184,22 @@ def test_schedule_codec_round_trips_and_rejects_wrong_scope_or_authority() -> No
                 event_id=event_id,
                 event_type=SCHEDULE_APPLIED,
                 payload=wrong_scope,
+                actor=PrincipalKind.SERVICE,
+            )
+        )
+
+
+@pytest.mark.parametrize("invalid_review_id", [0, [], {}])
+def test_schedule_codec_rejects_non_text_review_ids(invalid_review_id: object) -> None:
+    schedule = _schedule()
+    payload = encode_schedule_applied(schedule, course_id=COURSE, session_id=SESSION)
+    event_id = recall_event_id_for(COURSE, SESSION, schedule.idempotency_key, SCHEDULE_APPLIED)
+    with pytest.raises(ValueError, match="review_id must be text or null"):
+        decode_schedule_applied(
+            _event(
+                event_id=event_id,
+                event_type=SCHEDULE_APPLIED,
+                payload={**payload, "review_id": cast(JsonValue, invalid_review_id)},
                 actor=PrincipalKind.SERVICE,
             )
         )

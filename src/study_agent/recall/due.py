@@ -22,27 +22,19 @@ class DueRecallView:
         self,
         load_projection: Callable[[CourseId], Projection],
         clock: ClockPort,
-        *,
-        artifact_view: object | None = None,
     ) -> None:
         self._load_projection = load_projection
         self._clock = clock
-        self._artifact_view = artifact_view
 
     def due(self, course_id: CourseId, *, now: datetime | None = None) -> tuple[RecallViewRow, ...]:
         projection = self._load_projection(course_id)
         if projection.course_id != course_id:
             raise ValueError("projection loader returned another course")
-        artifact_view = self._artifact_view
-        if artifact_view is None:
-            from study_agent.artifacts.view import ProjectionArtifactView
+        from study_agent.artifacts.view import ProjectionArtifactView
 
-            artifact_snapshot = ProjectionArtifactView(lambda _: projection).get(course_id)
-        else:
-            getter = getattr(artifact_view, "get", None)
-            if not callable(getter):
-                raise TypeError("artifact_view must expose get")
-            artifact_snapshot = getter(course_id)
+        if "study_artifacts" not in projection.state:
+            raise ValueError("projection has no artifact lifecycle state")
+        artifact_snapshot = ProjectionArtifactView(lambda _: projection).get(course_id)
         raw = projection.state.get("recall", {})
         if not isinstance(raw, Mapping):
             raise ValueError("recall projection is corrupt")

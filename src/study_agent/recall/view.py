@@ -35,19 +35,21 @@ class ProjectionRecallView:
         raw = projection.state.get("recall", {})
         if not isinstance(raw, Mapping):
             raise ValueError("recall projection is corrupt")
+        if raw and set(raw) != {"enrollments", "reviews", "schedules", "commands"}:
+            raise ValueError("recall projection fields are corrupt")
         enrollments_raw = _mapping(raw.get("enrollments", {}))
         reviews_raw = _mapping(raw.get("reviews", {}))
         schedules_raw = _mapping(raw.get("schedules", {}))
         enrollments = tuple(
-            schedule_from_json(_mapping(value))
+            schedule_from_json(_checked_schedule(_mapping(value), enrollment=True))
             for _, value in sorted(enrollments_raw.items(), key=lambda item: str(item[0]))
         )
         reviews = tuple(
-            review_record_from_json(_mapping(value))
+            review_record_from_json(_checked_review(_mapping(value)))
             for _, value in sorted(reviews_raw.items(), key=_course_order)
         )
         schedules = tuple(
-            schedule_from_json(_mapping(value))
+            schedule_from_json(_checked_schedule(_mapping(value), enrollment=False))
             for _, value in sorted(schedules_raw.items(), key=_course_order)
         )
         return RecallSnapshot(course_id, projection.sequence, enrollments, reviews, schedules)
@@ -59,6 +61,8 @@ class ProjectionRecallView:
         if entry is None:
             return None
         value = _mapping(entry)
+        if set(value) != {"command_fingerprint", "result_id"}:
+            raise ValueError("recall command projection fields are corrupt")
         result = value.get("command_fingerprint")
         if not isinstance(result, str):
             raise ValueError("recall command fingerprint is corrupt")
@@ -81,11 +85,13 @@ def review_record_from_json(value: Mapping[str, JsonValue]) -> ReviewRecord:
 def schedule_from_json(value: Mapping[str, JsonValue]) -> AppliedSchedule:
     policy_raw = _mapping(value.get("policy"))
     review = value.get("review_id")
+    if review is not None and not isinstance(review, str):
+        raise ValueError("recall view review_id must be text or null")
     return AppliedSchedule(
         ScheduleDecisionId(_text(value.get("decision_id"))),
         ArtifactRevisionId(_text(value.get("revision_id"))),
         _text(value.get("trigger")),
-        ReviewId(review) if isinstance(review, str) else None,
+        ReviewId(review) if review is not None else None,
         _time(value.get("enrollment_at")),
         _time(value.get("due_at")),
         SchedulingPolicyConfigV1.from_json(policy_raw),
@@ -99,6 +105,59 @@ def schedule_from_json(value: Mapping[str, JsonValue]) -> AppliedSchedule:
         _text(value.get("idempotency_key")),
         _text(value.get("command_fingerprint")),
     )
+
+
+def _checked_review(value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+    expected = {
+        "review_id",
+        "revision_id",
+        "rating",
+        "latency_ms",
+        "confidence_bps",
+        "occurred_at",
+        "idempotency_key",
+        "command_fingerprint",
+        "course_sequence",
+        "session_id",
+    }
+    if set(value) != expected or type(value.get("course_sequence")) is not int:
+        raise ValueError("recall review projection fields are corrupt")
+    if not isinstance(value.get("session_id"), str):
+        raise ValueError("recall review session is corrupt")
+    return value
+
+
+def _checked_schedule(
+    value: Mapping[str, JsonValue], *, enrollment: bool
+) -> Mapping[str, JsonValue]:
+    expected = {
+        "decision_id",
+        "revision_id",
+        "trigger",
+        "review_id",
+        "enrollment_at",
+        "due_at",
+        "policy",
+        "policy_id",
+        "policy_version",
+        "policy_fingerprint",
+        "implementation_id",
+        "implementation_version",
+        "history_fingerprint",
+        "result_fingerprint",
+        "idempotency_key",
+        "command_fingerprint",
+    }
+    if not enrollment:
+        expected |= {"course_sequence", "session_id"}
+    if set(value) != expected:
+        raise ValueError("recall schedule projection fields are corrupt")
+    if not enrollment and (
+        type(value.get("course_sequence")) is not int
+        or not isinstance(value.get("session_id"), str)
+    ):
+        raise ValueError("recall schedule scope is corrupt")
+    return value
 
 
 def _mapping(value: object) -> Mapping[str, JsonValue]:

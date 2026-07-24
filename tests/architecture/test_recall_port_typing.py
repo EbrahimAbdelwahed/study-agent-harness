@@ -1,10 +1,7 @@
-"""Read and write ports for optional recall composition."""
-
 from __future__ import annotations
 
-from typing import Protocol
-
-from study_agent.domain import ArtifactRevisionId, CourseId, ExecutionContext
+from study_agent.domain import ArtifactRevisionId, ExecutionContext
+from study_agent.ports.recall import RecallCommandPort
 from study_agent.recall.contracts import (
     RecallRating,
     RecallSnapshot,
@@ -12,11 +9,7 @@ from study_agent.recall.contracts import (
 )
 
 
-class RecallViewPort(Protocol):
-    def get(self, course_id: CourseId) -> RecallSnapshot: ...
-
-
-class RecallCommandPort(Protocol):
+class _TypedRecallCommand:
     def enroll(
         self,
         revision_id: ArtifactRevisionId,
@@ -24,7 +17,9 @@ class RecallCommandPort(Protocol):
         expected_sequence: int,
         *,
         policy: SchedulingPolicyConfigV1 | None = None,
-    ) -> RecallSnapshot: ...
+    ) -> RecallSnapshot:
+        raise NotImplementedError
+
     def review(
         self,
         revision_id: ArtifactRevisionId,
@@ -35,7 +30,10 @@ class RecallCommandPort(Protocol):
         latency_ms: int | None = None,
         confidence_bps: int | None = None,
         policy: SchedulingPolicyConfigV1 | None = None,
-    ) -> RecallSnapshot: ...
+    ) -> RecallSnapshot:
+        raise NotImplementedError
 
 
-__all__ = ["RecallCommandPort", "RecallViewPort"]
+def test_recall_command_port_matches_public_service_shape() -> None:
+    port: RecallCommandPort = _TypedRecallCommand()
+    assert port is not None

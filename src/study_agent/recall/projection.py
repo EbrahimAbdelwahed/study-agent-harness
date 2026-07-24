@@ -9,6 +9,7 @@ from study_agent.domain import (
     DomainEvent,
     PrincipalKind,
     StudyArtifactKind,
+    review_id_for,
 )
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.state import EventRegistry
@@ -42,6 +43,13 @@ def reduce_review_recorded(
         raise ValueError("reviews require HUMAN authority")
     recall = _parts(state)
     record = payload.review
+    if event.session_id is None:
+        raise ValueError("review requires a session")
+    expected_review_id = review_id_for(
+        event.course_id, event.session_id, record.revision_id, record.idempotency_key
+    )
+    if record.review_id != expected_review_id:
+        raise ValueError("review identity does not match trusted scope and retry key")
     _accepted_flashcard(state, str(record.revision_id))
     if str(record.review_id) in recall["reviews"]:
         raise ValueError("review identity already exists")
@@ -216,6 +224,19 @@ def _validate_prior(parts: Mapping[str, Mapping[str, JsonValue]]) -> None:
             raise ValueError("recall review identity or sequence is corrupt")
         if raw.get("session_id") is None:
             raise ValueError("recall review session is corrupt")
+        if set(raw) != {
+            "review_id",
+            "revision_id",
+            "rating",
+            "latency_ms",
+            "confidence_bps",
+            "occurred_at",
+            "idempotency_key",
+            "command_fingerprint",
+            "course_sequence",
+            "session_id",
+        }:
+            raise ValueError("recall review projection fields are corrupt")
         _review_from_json(raw)
     for key, raw in parts["schedules"].items():
         if not isinstance(key, str) or not isinstance(raw, Mapping):
@@ -224,12 +245,52 @@ def _validate_prior(parts: Mapping[str, Mapping[str, JsonValue]]) -> None:
             raise ValueError("recall schedule identity or sequence is corrupt")
         if raw.get("session_id") is None:
             raise ValueError("recall schedule session is corrupt")
+        if set(raw) != {
+            "decision_id",
+            "revision_id",
+            "trigger",
+            "review_id",
+            "enrollment_at",
+            "due_at",
+            "policy",
+            "policy_id",
+            "policy_version",
+            "policy_fingerprint",
+            "implementation_id",
+            "implementation_version",
+            "history_fingerprint",
+            "result_fingerprint",
+            "idempotency_key",
+            "command_fingerprint",
+            "course_sequence",
+            "session_id",
+        }:
+            raise ValueError("recall schedule projection fields are corrupt")
         _schedule_from_json(raw)
     for key, raw in parts["enrollments"].items():
         if not isinstance(key, str) or not isinstance(raw, Mapping):
             raise ValueError("recall enrollment projection is corrupt")
         if raw.get("revision_id") != key:
             raise ValueError("recall enrollment identity is corrupt")
+        if set(raw) != {
+            "decision_id",
+            "revision_id",
+            "trigger",
+            "review_id",
+            "enrollment_at",
+            "due_at",
+            "policy",
+            "policy_id",
+            "policy_version",
+            "policy_fingerprint",
+            "implementation_id",
+            "implementation_version",
+            "history_fingerprint",
+            "result_fingerprint",
+            "idempotency_key",
+            "command_fingerprint",
+        }:
+            raise ValueError("recall enrollment projection fields are corrupt")
         _schedule_from_json(raw)
     for key, raw in parts["commands"].items():
         if not isinstance(key, str) or not isinstance(raw, Mapping):
@@ -239,6 +300,8 @@ def _validate_prior(parts: Mapping[str, Mapping[str, JsonValue]]) -> None:
         fingerprint = raw.get("command_fingerprint")
         if not isinstance(fingerprint, str) or len(fingerprint) != 64:
             raise ValueError("recall command fingerprint is corrupt")
+        if not isinstance(raw.get("result_id"), str) or not raw.get("result_id"):
+            raise ValueError("recall command result identity is corrupt")
 
 
 def _replace(

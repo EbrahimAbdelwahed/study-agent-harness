@@ -18,15 +18,18 @@ from study_agent.domain import (
     PrincipalKind,
     SessionId,
     StudyArtifactKind,
+    review_id_for,
 )
 from study_agent.domain._validation import JsonValue
 from study_agent.ports.artifact import ArtifactViewPort
 from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.recall import (
     RecallCommandError,
+    RecallConflictError,
     RecallRating,
     RecallService,
     RetryableRecallConflictError,
+    SchedulingPolicyConfigV1,
     SchedulingRequest,
     SchedulingResult,
     effective_policy_fingerprint,
@@ -37,6 +40,7 @@ from study_agent.state import EventRegistry, Projection, apply_event
 
 COURSE = CourseId("course-1")
 SESSION = SessionId("session-1")
+SECOND_SESSION = SessionId("session-2")
 REVISION = ArtifactRevisionId("revision-1")
 ARTIFACT = ArtifactId("artifact-1")
 START = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
@@ -104,7 +108,7 @@ class MutableRecallView:
     def __init__(self, store: MemoryEventStore) -> None:
         self.store = store
 
-    def __call__(self, course_id):  # type: ignore[no-untyped-def]
+    def get(self, course_id):  # type: ignore[no-untyped-def]
         from study_agent.recall.view import ProjectionRecallView
 
         return ProjectionRecallView(lambda _: self.store.projection).get(course_id)
@@ -115,7 +119,10 @@ def _base_state() -> dict[str, JsonValue]:
         dict[str, JsonValue],
         {
         "course": {"course_id": str(COURSE)},
-        "sessions": {str(SESSION): {"course_id": str(COURSE)}},
+        "sessions": {
+            str(SESSION): {"course_id": str(COURSE)},
+            str(SECOND_SESSION): {"course_id": str(COURSE)},
+        },
         "study_artifacts": {
             "revisions": {
                 str(REVISION): {
@@ -146,9 +153,16 @@ def _artifact_view() -> ArtifactViewPort:
     return cast(ArtifactViewPort, SimpleNamespace(get=lambda course_id: snapshot))
 
 
-def _context(kind: PrincipalKind, key: str) -> ExecutionContext:
+def _context(
+    kind: PrincipalKind, key: str, session_id: SessionId = SESSION
+) -> ExecutionContext:
     return ExecutionContext(
-        kind, kind.value, COURSE, CorrelationId("corr"), session_id=SESSION, idempotency_key=key
+        kind,
+        kind.value,
+        COURSE,
+        CorrelationId("corr"),
+        session_id=session_id,
+        idempotency_key=key,
     )
 
 
@@ -209,6 +223,22 @@ def test_review_scheduler_runs_before_atomic_review_schedule_append() -> None:
     assert scheduler.requests[-1].history[0].review_id == reviewed.reviews[0].review_id
 
 
+def test_longitudinal_review_can_use_a_later_session_for_same_accepted_revision() -> None:
+    service, clock, _, store = _service()
+    service.enroll(REVISION, _context(PrincipalKind.SERVICE, "enroll"), 0)
+    clock.current = START + timedelta(hours=1)
+    reviewed = service.review(
+        REVISION,
+        RecallRating.GOOD,
+        _context(PrincipalKind.HUMAN, "review-later", SECOND_SESSION),
+        1,
+    )
+    assert reviewed.reviews[0].review_id == review_id_for(
+        COURSE, SECOND_SESSION, REVISION, "review-later"
+    )
+    assert store.events[-2].session_id == SECOND_SESSION
+
+
 def test_authority_and_revision_validation_are_fail_closed() -> None:
     service, _, _, _ = _service()
     with pytest.raises(RecallCommandError):
@@ -224,6 +254,19 @@ def test_scheduler_fingerprint_drift_fails_before_append() -> None:
     with pytest.raises(RecallCommandError):
         service.enroll(REVISION, _context(PrincipalKind.SERVICE, "enroll"), 0)
     assert store.events == []
+
+
+def test_retry_policy_is_resolved_even_when_argument_is_omitted() -> None:
+    custom = replace(SchedulingPolicyConfigV1(), target_retention_bps=8500)
+    service, _, _, _ = _service()
+    service.enroll(
+        REVISION,
+        _context(PrincipalKind.SERVICE, "enroll-custom"),
+        0,
+        policy=custom,
+    )
+    with pytest.raises(RecallConflictError, match="another policy"):
+        service.enroll(REVISION, _context(PrincipalKind.SERVICE, "enroll-custom"), 0)
 
 
 def test_race_without_commit_is_typed_retryable_and_atomic_batch_never_partially_writes() -> None:

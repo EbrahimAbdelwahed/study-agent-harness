@@ -261,3 +261,19 @@ def test_reducer_rejects_forged_history_and_result_fingerprints() -> None:
     forged = replace(schedule, payload=forged_payload)
     with pytest.raises(ValueError):
         apply_event(after_review, forged, registry)
+
+
+def test_reducer_recomputes_review_identity_from_trusted_scope() -> None:
+    enrollment = _enrollment_event()
+    review_event, _review = _review_event()
+    forged = replace(
+        review_event,
+        payload={
+            **review_event.payload,
+            "review_id": str(review_id_for(COURSE, SESSION, REVISION, "other-key")),
+        },
+    )
+    registry = _registry()
+    after_enrollment = apply_event(Projection(COURSE, 0, _state()), enrollment, registry)
+    with pytest.raises(ValueError, match="trusted scope"):
+        apply_event(after_enrollment, forged, registry)

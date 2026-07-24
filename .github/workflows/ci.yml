@@ -45,3 +45,34 @@ jobs:
           clean-install/example-project
         env:
           STUDY_AGENT_BIN: ${{ github.workspace }}/clean-install/bin/study-agent
+
+  recall:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --disable-pip-version-check -e '.[dev,recall]'
+      - run: >-
+          python -m pytest
+          tests/unit/adapters/scheduling/test_py_fsrs.py
+          tests/architecture/test_fsrs_adapter_boundaries.py
+      - run: python -m pip install --disable-pip-version-check build
+      - run: python -m build --wheel --outdir dist
+      - run: python -m venv clean-recall-install
+      - run: >-
+          clean-recall-install/bin/python -m pip install
+          --disable-pip-version-check dist/*.whl fsrs==6.3.1
+      - run: >-
+          clean-recall-install/bin/python -c
+          'from datetime import UTC, datetime;
+          from study_agent.adapters.scheduling.py_fsrs import PyFsrsSchedulingPolicy;
+          from study_agent.domain import ArtifactRevisionId;
+          from study_agent.recall.contracts import SchedulingPolicyConfigV1, SchedulingRequest;
+          request = SchedulingRequest(ArtifactRevisionId("clean-wheel"), datetime(2026, 7, 24, tzinfo=UTC), (), SchedulingPolicyConfigV1());
+          result = PyFsrsSchedulingPolicy().decide(request);
+          assert result.implementation_version == "6.3.1"'

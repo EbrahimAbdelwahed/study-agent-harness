@@ -141,7 +141,9 @@ def decode_schedule_applied(event: DomainEvent) -> ScheduleApplied:
         raise ValueError("policy must be an object")
     policy = SchedulingPolicyConfigV1.from_json(policy_raw)
     review_raw = payload["review_id"]
-    review_id = ReviewId(_text(review_raw, "review_id")) if isinstance(review_raw, str) else None
+    if review_raw is not None and not isinstance(review_raw, str):
+        raise ValueError("review_id must be text or null")
+    review_id = ReviewId(_text(review_raw, "review_id")) if review_raw is not None else None
     schedule = AppliedSchedule(
         ScheduleDecisionId(_text(payload["decision_id"], "decision_id")),
         ArtifactRevisionId(_text(payload["revision_id"], "revision_id")),
