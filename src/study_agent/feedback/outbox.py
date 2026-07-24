@@ -217,7 +217,7 @@ class GapOutboxRecord:
         }
 
     def to_bytes(self) -> bytes:
-        return cast(bytes, canonical_json_bytes(cast(Any, self.to_json())))
+        return canonical_json_bytes(cast(Any, self.to_json()))
 
     @classmethod
     def from_bytes(cls, data: bytes) -> GapOutboxRecord:
@@ -315,7 +315,7 @@ class GapOutboxBundle:
         }
 
     def to_bytes(self) -> bytes:
-        payload = cast(bytes, canonical_json_bytes(cast(Any, self.to_json())))
+        payload = canonical_json_bytes(cast(Any, self.to_json()))
         if len(payload) > _MAX_OUTBOX_BYTES:
             raise GapOutboxValidationError("outbox_too_large")
         return payload

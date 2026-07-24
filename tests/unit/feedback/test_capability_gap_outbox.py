@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -92,11 +93,11 @@ def test_unknown_fields_tamper_and_key_mismatch_fail_closed(tmp_path: Path) -> N
     raw = record.to_json()
     raw["learner_text"] = "secret"
     with pytest.raises(GapOutboxCorruptionError):
-        GapOutboxRecord.from_bytes(canonical_json_bytes(raw))
+        GapOutboxRecord.from_bytes(canonical_json_bytes(cast(Any, raw)))
     tampered = record.to_json()
     tampered["gap_key"] = "b" * 64
     with pytest.raises(RuntimeError):
-        GapOutboxRecord.from_bytes(canonical_json_bytes(tampered))
+        GapOutboxRecord.from_bytes(canonical_json_bytes(cast(Any, tampered)))
     with pytest.raises(GapOutboxCorruptionError):
         GapOutboxRecord.from_bytes(record.to_bytes().replace(b",", b", ", 1))
 
