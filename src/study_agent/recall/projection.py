@@ -195,7 +195,43 @@ def _parts(state: JsonObject) -> dict[str, Mapping[str, JsonValue]]:
     expected = {"enrollments", "reviews", "schedules", "commands"}
     if raw and set(raw) != expected:
         raise ValueError("recall projection fields are corrupt")
-    return {key: _mapping(raw.get(key, {})) for key in expected}
+    parts = {key: _mapping(raw.get(key, {})) for key in expected}
+    _validate_prior(parts)
+    return parts
+
+
+def _validate_prior(parts: Mapping[str, Mapping[str, JsonValue]]) -> None:
+    """Fail closed when a discardable recall projection was tampered with."""
+    for key, raw in parts["reviews"].items():
+        if not isinstance(key, str) or not isinstance(raw, Mapping):
+            raise ValueError("recall review projection is corrupt")
+        if raw.get("review_id") != key or type(raw.get("course_sequence")) is not int:
+            raise ValueError("recall review identity or sequence is corrupt")
+        if raw.get("session_id") is None:
+            raise ValueError("recall review session is corrupt")
+        _review_from_json(raw)
+    for key, raw in parts["schedules"].items():
+        if not isinstance(key, str) or not isinstance(raw, Mapping):
+            raise ValueError("recall schedule projection is corrupt")
+        if raw.get("decision_id") != key or type(raw.get("course_sequence")) is not int:
+            raise ValueError("recall schedule identity or sequence is corrupt")
+        if raw.get("session_id") is None:
+            raise ValueError("recall schedule session is corrupt")
+        _schedule_from_json(raw)
+    for key, raw in parts["enrollments"].items():
+        if not isinstance(key, str) or not isinstance(raw, Mapping):
+            raise ValueError("recall enrollment projection is corrupt")
+        if raw.get("revision_id") != key:
+            raise ValueError("recall enrollment identity is corrupt")
+        _schedule_from_json(raw)
+    for key, raw in parts["commands"].items():
+        if not isinstance(key, str) or not isinstance(raw, Mapping):
+            raise ValueError("recall command projection is corrupt")
+        if set(raw) != {"command_fingerprint", "result_id"}:
+            raise ValueError("recall command projection fields are corrupt")
+        fingerprint = raw.get("command_fingerprint")
+        if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+            raise ValueError("recall command fingerprint is corrupt")
 
 
 def _replace(

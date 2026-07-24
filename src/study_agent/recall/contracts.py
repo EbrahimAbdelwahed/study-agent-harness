@@ -175,6 +175,9 @@ class SchedulingRequest:
         object.__setattr__(self, "history", tuple(self.history))
         if any(item.revision_id != self.revision_id for item in self.history):
             raise ValueError("history contains another revision")
+        review_ids = tuple(item.review_id for item in self.history)
+        if len(set(review_ids)) != len(review_ids):
+            raise ValueError("history contains a duplicate review")
         if any(item.occurred_at < self.enrollment_at for item in self.history):
             raise ValueError("review occurred before enrollment")
 
@@ -286,6 +289,8 @@ class AppliedSchedule:
         object.__setattr__(self, "due_at", _utc(self.due_at, "due_at"))
         if self.due_at < self.enrollment_at:
             raise ValueError("due_at cannot precede enrollment")
+        if self.policy.fingerprint != self.policy_fingerprint:
+            raise ValueError("policy_fingerprint does not match exact configuration")
         receipt = SchedulingResult(
             self.due_at,
             self.policy_id,
@@ -398,6 +403,10 @@ def result_fingerprint(
             result.implementation_version,
         )
         policy_fingerprint, history_fp = result.policy_fingerprint, result.history_fingerprint
+        if history_fp != request.history_fingerprint:
+            raise ValueError("scheduler result history fingerprint does not match request")
+        if policy_fingerprint != request.policy.fingerprint:
+            raise ValueError("scheduler result policy fingerprint does not match request")
     else:
         policy_fingerprint, history_fp = request.policy.fingerprint, request.history_fingerprint
     if (

@@ -13,7 +13,6 @@ from study_agent.domain import (
     CorrelationId,
     CourseId,
     DomainEvent,
-    EventId,
     PrincipalKind,
     ReviewId,
     ScheduleDecisionId,
@@ -66,6 +65,8 @@ def encode_review_recorded(
 def encode_schedule_applied(
     schedule: AppliedSchedule, *, course_id: CourseId, session_id: SessionId
 ) -> JsonObject:
+    if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
+        raise TypeError("recall event scope is invalid")
     return {"course_id": str(course_id), "session_id": str(session_id), **schedule.to_json()}
 
 
@@ -163,9 +164,12 @@ def decode_schedule_applied(event: DomainEvent) -> ScheduleApplied:
 
 
 def decode_review_recorded_payload(payload: JsonObject, *, occurred_at: datetime) -> ReviewRecorded:
+    key = _text(payload.get("idempotency_key"), "idempotency_key")
+    course_id = CourseId(_text(payload.get("course_id"), "course_id"))
+    session_id = SessionId(_text(payload.get("session_id"), "session_id"))
     event = DomainEvent(
-        EventId("decode-placeholder"),
-        CourseId(_text(payload.get("course_id"), "course_id")),
+        recall_event_id_for(course_id, session_id, key, REVIEW_RECORDED),
+        course_id,
         1,
         REVIEW_RECORDED,
         1,
@@ -173,7 +177,7 @@ def decode_review_recorded_payload(payload: JsonObject, *, occurred_at: datetime
         occurred_at,
         CorrelationId("decode"),
         payload,
-        SessionId(_text(payload.get("session_id"), "session_id")),
+        session_id,
     )
     return decode_review_recorded(event)
 
