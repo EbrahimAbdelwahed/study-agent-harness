@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.metadata
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -43,9 +42,6 @@ from tests.contract.export.test_artifact_export_v2 import (
 
 COURSE = CourseId("course-export")
 SESSION = SessionId("session-export")
-NOW = datetime(2026, 7, 12, 12, 34, 56, 789012, tzinfo=UTC)
-
-
 def _fsrs_available() -> bool:
     try:
         return importlib.metadata.version("fsrs") == "6.3.1"
@@ -99,7 +95,7 @@ def test_real_fsrs_recall_lifecycle_replays_and_exports_without_scheduler_on_reo
             "session.interaction_recorded",
             1,
             Actor(PrincipalKind.HUMAN, "e2e"),
-            NOW,
+            stream[-1].occurred_at,
             CorrelationId("recall-interaction"),
             interaction_recorded_payload(
                 InteractionId("interaction-recall"),

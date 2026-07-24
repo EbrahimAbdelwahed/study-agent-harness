@@ -48,6 +48,11 @@ invoke FSRS.
   imports through the provider-neutral ports package.
 - Full repository suite after those fixes: 1,754 passed, 11 skipped (only
   optional/network tests); Ruff, strict mypy, and `git diff --check`: passed.
+- The first remote matrix run exposed two CI-only gaps: tests imported lazy
+  composition exports in a way mypy 3.13 could not type, and the real-FSRS
+  fixture used a timestamp older than the repository's system-clock session
+  event. Both fixtures were corrected without weakening either gate; full
+  configured mypy now checks all 461 source and test files successfully.
 
 ## Notes
 
