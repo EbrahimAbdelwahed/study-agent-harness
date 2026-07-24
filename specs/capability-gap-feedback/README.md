@@ -260,6 +260,7 @@ GAP-05B + GAP-05D → GAP-07B hosted transport closure
 GAP-07 → GAP-08 optional GitHub adapter
 ```
 
-Ready now: `GAP-01` and optional parallel `GAP-04A`. All other beads are
-approved but dependency-blocked. `GAP-04B`, `GAP-05D`, `GAP-07B`, and `GAP-08`
-also require the named concrete adapter decision before dispatch.
+Completed: `GAP-00`, `GAP-01`, `GAP-02`, `GAP-03`, `GAP-04A`, and `GAP-05A`.
+The next dependency-ready bead is `GAP-05B`, which belongs in the private
+devkit repository. `GAP-04B`, `GAP-05D`, `GAP-07B`, and `GAP-08` also require
+the named concrete adapter decision before dispatch.

@@ -1,6 +1,6 @@
 # Task Bead: TUT-07C optional py-fsrs adapter
 
-Status: In Progress — implementation checkpoint; parent integration pending
+Status: Done — optional py-fsrs adapter and 3.12/3.13 CI lane verified 2026-07-24
 Priority: P1
 Type: expand
 Depends On: TUT-07B

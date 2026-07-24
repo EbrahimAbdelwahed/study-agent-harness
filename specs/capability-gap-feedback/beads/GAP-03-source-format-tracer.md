@@ -1,6 +1,6 @@
 # Task Bead: GAP-03 unsupported source-format tracer
 
-Status: In progress — P1 trust hardening implemented; end-to-end closure remains
+Status: Done — host-trusted source-format tracer verified 2026-07-24
 Priority: P1
 Type: tracer-bullet
 Depends On: GAP-02, TUT-06

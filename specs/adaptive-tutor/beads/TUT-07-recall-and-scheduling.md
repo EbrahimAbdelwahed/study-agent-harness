@@ -1,6 +1,6 @@
 # Task Bead: TUT-07 recall and scheduling
 
-Status: Refined; blocked on TUT-05
+Status: In progress — TUT-07A/B/C complete; TUT-07D closure in progress
 Priority: P1
 Type: tracer-bullet
 Depends On: TUT-04, TUT-05

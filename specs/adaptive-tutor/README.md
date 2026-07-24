@@ -1,13 +1,14 @@
 # Adaptive Tutor
 
 Status: Approved — implementation in progress
-Last updated: 2026-07-20
+Last updated: 2026-07-24
 
 ## Next Agent Prompt
 
-Read this README and the TUT-07 recall beads. TUT-04 through TUT-06 are
-complete. The next adaptive-tutor core pickup is TUT-07A; the Build Week product
-shell in TUT-08 is independently dependency-ready after TUT-06. Preserve the
+Read this README and the TUT-07 recall beads. TUT-04 through TUT-06 and
+TUT-07A/B/C are complete. The current adaptive-tutor core pickup is TUT-07D;
+the Build Week product shell in TUT-08 has terminal/browser reference surfaces
+and still needs the configured GPT/submission gates. Preserve the
 per-course event stream as canonical, keep next-action selection in the
 external tutor host, and do not add Anki behavior, arbitrary model memory, or a
 global learner aggregate.

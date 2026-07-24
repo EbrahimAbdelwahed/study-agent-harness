@@ -1,6 +1,6 @@
 # Task Bead: GAP-04A allowlisted workaround registry and receipts
 
-Status: In progress — P1 execution/approval hardening implemented; closure remains
+Status: Done — allowlisted registry, approval, executor, and receipts verified 2026-07-24
 Priority: P2
 Type: expand
 Depends On: GAP-00

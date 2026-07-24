@@ -1,6 +1,6 @@
 # Task Bead: GAP-05A strict redacted harness outbox
 
-Status: Implemented — P1 outbox CAS/redaction hardening complete
+Status: Done — redacted schema v2, atomic claim, and CAS finalization verified 2026-07-24
 Priority: P1
 Type: tracer-bullet
 Depends On: GAP-02
