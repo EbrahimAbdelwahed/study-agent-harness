@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from study_agent.domain import ArtifactRevisionId, CourseId, ReviewId, ScheduleDecisionId
 from study_agent.domain._validation import JsonValue
@@ -16,6 +17,9 @@ from .contracts import (
     ReviewRecord,
     SchedulingPolicyConfigV1,
 )
+
+if TYPE_CHECKING:
+    from .due import DueRecallView
 
 ProjectionLoader = Callable[[CourseId], Projection]
 
@@ -35,10 +39,17 @@ class ProjectionRecallView:
         reviews_raw = _mapping(raw.get("reviews", {}))
         schedules_raw = _mapping(raw.get("schedules", {}))
         enrollments = tuple(
-            schedule_from_json(_mapping(value)) for value in enrollments_raw.values()
+            schedule_from_json(_mapping(value))
+            for _, value in sorted(enrollments_raw.items(), key=lambda item: str(item[0]))
         )
-        reviews = tuple(review_record_from_json(_mapping(value)) for value in reviews_raw.values())
-        schedules = tuple(schedule_from_json(_mapping(value)) for value in schedules_raw.values())
+        reviews = tuple(
+            review_record_from_json(_mapping(value))
+            for _, value in sorted(reviews_raw.items(), key=_course_order)
+        )
+        schedules = tuple(
+            schedule_from_json(_mapping(value))
+            for _, value in sorted(schedules_raw.items(), key=_course_order)
+        )
         return RecallSnapshot(course_id, projection.sequence, enrollments, reviews, schedules)
 
     def command_fingerprint(self, course_id: CourseId, event_id: str) -> str | None:
@@ -96,6 +107,15 @@ def _mapping(value: object) -> Mapping[str, JsonValue]:
     return value
 
 
+def _course_order(item: tuple[object, JsonValue]) -> tuple[int, str]:
+    key, value = item
+    raw = _mapping(value)
+    sequence = raw.get("course_sequence")
+    if type(sequence) is not int:
+        raise ValueError("recall view course sequence is corrupt")
+    return sequence, str(key)
+
+
 def _text(value: object) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError("recall view text is corrupt")
@@ -117,4 +137,17 @@ def _time(value: object) -> datetime:
     return datetime.fromisoformat(text[:-1] + "+00:00").astimezone(UTC)
 
 
-__all__ = ["ProjectionRecallView", "review_record_from_json", "schedule_from_json"]
+__all__ = [
+    "DueRecallView",
+    "ProjectionRecallView",
+    "review_record_from_json",
+    "schedule_from_json",
+]
+
+
+def __getattr__(name: str) -> object:
+    if name == "DueRecallView":
+        from .due import DueRecallView
+
+        return DueRecallView
+    raise AttributeError(name)

@@ -13,6 +13,7 @@ from .contracts import (
     history_fingerprint,
     result_fingerprint,
 )
+from .due import DueRecallView
 from .events import (
     RECALL_EVENT_TYPES,
     RECALL_SCHEMA_VERSION,
@@ -26,6 +27,12 @@ from .events import (
     encode_schedule_applied,
 )
 from .projection import reduce_review_recorded, reduce_schedule_applied, register_recall_events
+from .service import (
+    RecallCommandError,
+    RecallConflictError,
+    RecallService,
+    RetryableRecallConflictError,
+)
 from .view import ProjectionRecallView
 
 __all__ = [
@@ -34,10 +41,15 @@ __all__ = [
     "REVIEW_RECORDED",
     "SCHEDULE_APPLIED",
     "AppliedSchedule",
+    "DueRecallView",
     "ProjectionRecallView",
+    "RecallCommandError",
+    "RecallConflictError",
     "RecallRating",
+    "RecallService",
     "RecallSnapshot",
     "RecallViewRow",
+    "RetryableRecallConflictError",
     "ReviewHistoryEntry",
     "ReviewRecord",
     "ReviewRecorded",
@@ -55,3 +67,31 @@ __all__ = [
     "register_recall_events",
     "result_fingerprint",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load application-layer B consumers without importing artifact adapters."""
+    if name == "DueRecallView":
+        from .due import DueRecallView
+
+        return DueRecallView
+    if name in {
+        "RecallCommandError",
+        "RecallConflictError",
+        "RecallService",
+        "RetryableRecallConflictError",
+    }:
+        from .service import (
+            RecallCommandError,
+            RecallConflictError,
+            RecallService,
+            RetryableRecallConflictError,
+        )
+
+        return {
+            "RecallCommandError": RecallCommandError,
+            "RecallConflictError": RecallConflictError,
+            "RecallService": RecallService,
+            "RetryableRecallConflictError": RetryableRecallConflictError,
+        }[name]
+    raise AttributeError(name)
