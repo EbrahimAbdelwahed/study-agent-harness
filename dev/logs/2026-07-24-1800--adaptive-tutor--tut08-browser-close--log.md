@@ -29,6 +29,8 @@ journey; it does not own canonical tutor state.
   boundary documentation.
 - `specs/adaptive-tutor/beads/TUT-08-build-week-product-shell.md`: acceptance
   status and remaining release gates.
+- `specs/adaptive-tutor/assets/tut08-browser-final.jpg`: post-submit desktop
+  browser evidence after the visual correction.
 
 ## Verification
 
@@ -46,13 +48,23 @@ journey; it does not own canonical tutor state.
 - Escalated `uv build`: passed; wheel included `browser.html` and the
   `study-agent-shell-web` entry point. Generated `dist/` and egg-info files
   were removed after the smoke.
+- In-app browser `POST /api/entry` smoke: passed with a bounded free-form
+  learner entry and recovered deterministic host trace.
+- Independent screenshot critique: found a high-confidence SHA-256 overflow;
+  `overflow-wrap: anywhere` was applied to metadata and pinned by a static-page
+  regression assertion.
+- Desktop post-fix DOM geometry: no right-edge overflow; the only negative
+  position is the intentional off-screen skip link before focus.
+- Mobile 390 px DOM geometry: `scrollWidth == clientWidth == 390`; panels
+  collapse to one column. The in-app browser had a non-default visual zoom, so
+  geometry rather than that zoomed screenshot is the responsive evidence.
 - `ruff format --check` reports one pre-existing formatting difference in
   `src/study_agent/demo/anatomy.py`; no unrelated file was reformatted.
 
 ## Remaining
 
-- TUT-08 is not marked Done: fresh production-route screenshot/visual critique
-  evidence and the provisioned full quality gates are still missing.
+- TUT-08 is not marked Done: the configured GPT host journey and final Build
+  Week submission artifacts are still missing.
 - The browser server deliberately has no implicit GPT-5.6 mode. A configured
   provider may be composed by an embedding host through the existing public
   host port; no credentials are accepted or exposed by this local reference

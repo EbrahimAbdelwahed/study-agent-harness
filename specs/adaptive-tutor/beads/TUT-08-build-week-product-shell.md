@@ -1,6 +1,6 @@
 # Task Bead: TUT-08 Build Week product shell
 
-Status: In progress — terminal and localhost browser reference surfaces implemented; final visual/GPT host gates remain
+Status: In progress — terminal/browser surfaces and visual gate complete; configured GPT host/submission gates remain
 Priority: P1
 Type: product tracer-bullet
 Depends On: TUT-06
@@ -31,6 +31,7 @@ duplicating behavior or persistence.
 
 - Browser journey, accessibility, visual diff/critique, deterministic demo,
   packaging, and full core gates. The deterministic HTTP journey and static
-  accessibility markers are covered in TUT-08 tests; fresh production-route
-  screenshots/critique and the provisioned full environment gates remain
-  release evidence to collect.
+  accessibility markers are covered in TUT-08 tests. Fresh localhost browser
+  screenshots, an independent critique, the resulting overflow fix, and a
+  mobile no-overflow DOM check are recorded; the configured GPT host journey
+  and final submission package remain release evidence to collect.

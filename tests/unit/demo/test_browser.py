@@ -79,6 +79,7 @@ def test_browser_page_bytes_are_static_and_accessible() -> None:
         'id="entry-form"',
     ):
         assert marker in decoded
+    assert ".meta { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }" in decoded
 
 
 def test_browser_payload_is_json_deterministic() -> None:
