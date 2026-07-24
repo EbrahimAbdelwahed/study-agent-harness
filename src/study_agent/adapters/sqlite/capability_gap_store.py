@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -213,7 +213,11 @@ class SQLiteCapabilityGapStore:
                     last_seen=proposal.last_seen,
                     occurrence_count=current.occurrence_count + 1,
                     resolution=current.resolution,
-                    export_state=current.export_state,
+                    export_state=(
+                        GapExportState.PENDING
+                        if current.export_state is GapExportState.EXPORTED
+                        else current.export_state
+                    ),
                     resolution_authority_fingerprint=current.resolution_authority_fingerprint,
                     resolved_at=current.resolved_at,
                 )
@@ -307,6 +311,154 @@ class SQLiteCapabilityGapStore:
                 result.append(bytes(payload))
         return tuple(result)
 
+    def claim_export_batch(self) -> tuple[bytes, ...]:
+        """Claim one deterministic batch and return its post-PENDING bytes.
+
+        The claim and every state transition are performed under one
+        ``BEGIN IMMEDIATE`` transaction.  Consequently the publisher only
+        receives bytes that correspond exactly to rows claimed by this call.
+        """
+
+        claimable = frozenset(
+            {GapExportState.LOCAL, GapExportState.PENDING, GapExportState.FAILED}
+        )
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._validate_schema(connection)
+                rows = connection.execute(
+                    "SELECT gap_key, payload, typeof(payload) "
+                    "FROM capability_gap_aggregates ORDER BY gap_key ASC"
+                ).fetchall()
+                claimed: list[bytes] = []
+                for key, payload, payload_type in rows:
+                    if payload_type != "blob" or not isinstance(payload, bytes):
+                        raise CapabilityGapCorruptionError("gap_store_corrupt")
+                    current = CapabilityGapAggregate.from_bytes(bytes(payload))
+                    if current.gap_key.value != key:
+                        raise CapabilityGapCollisionError("gap_key_collision")
+                    if current.export_state not in claimable:
+                        continue
+                    if current.export_state is GapExportState.PENDING:
+                        claimed.append(bytes(payload))
+                        continue
+                    updated = CapabilityGapAggregate(
+                        gap_key=current.gap_key,
+                        dimensions=current.dimensions,
+                        verification_kind=current.verification_kind,
+                        impact_kind=current.impact_kind,
+                        first_seen=current.first_seen,
+                        last_seen=current.last_seen,
+                        occurrence_count=current.occurrence_count,
+                        resolution=current.resolution,
+                        export_state=GapExportState.PENDING,
+                        resolution_authority_fingerprint=current.resolution_authority_fingerprint,
+                        resolved_at=current.resolved_at,
+                    )
+                    encoded = updated.to_bytes()
+                    connection.execute(
+                        "UPDATE capability_gap_aggregates SET payload = ? "
+                        "WHERE gap_key = ? AND payload = ?",
+                        (encoded, key, payload),
+                    )
+                    if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                        raise CapabilityGapCorruptionError("gap_store_claim_lost")
+                    claimed.append(encoded)
+                connection.commit()
+                return tuple(claimed)
+            except (
+                CapabilityGapValidationError,
+                CapabilityGapCollisionError,
+                CapabilityGapCorruptionError,
+            ):
+                connection.rollback()
+                raise
+            except sqlite3.DatabaseError:
+                connection.rollback()
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def finalize_export_batch(
+        self, expected: Mapping[str, bytes], state: GapExportState
+    ) -> tuple[str, ...]:
+        """CAS-finalize exactly the unchanged rows from a claimed batch.
+
+        Rows whose aggregate changed after the claim are intentionally left
+        pending.  They will be picked up by a later export with fresh bytes.
+        """
+
+        if not isinstance(expected, Mapping) or any(
+            not isinstance(key, str) or not isinstance(payload, bytes)
+            for key, payload in expected.items()
+        ):
+            raise CapabilityGapValidationError("invalid_export_expectations")
+        if state not in {GapExportState.EXPORTED, GapExportState.FAILED}:
+            raise CapabilityGapValidationError("invalid_export_final_state")
+        items = tuple(sorted(expected.items()))
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._validate_schema(connection)
+                finalized: list[str] = []
+                for key, expected_payload in items:
+                    _validate_digest(key, "gap_key")
+                    expected_aggregate = CapabilityGapAggregate.from_bytes(expected_payload)
+                    if expected_aggregate.gap_key.value != key:
+                        raise CapabilityGapCollisionError("gap_key_collision")
+                    row = connection.execute(
+                        "SELECT payload, typeof(payload) FROM capability_gap_aggregates "
+                        "WHERE gap_key = ?",
+                        (key,),
+                    ).fetchone()
+                    if row is None:
+                        continue
+                    if row[1] != "blob" or not isinstance(row[0], bytes):
+                        raise CapabilityGapCorruptionError("gap_store_corrupt")
+                    current_payload = bytes(row[0])
+                    if current_payload != expected_payload:
+                        continue
+                    current = CapabilityGapAggregate.from_bytes(current_payload)
+                    if current.export_state is not GapExportState.PENDING:
+                        continue
+                    updated = CapabilityGapAggregate(
+                        gap_key=current.gap_key,
+                        dimensions=current.dimensions,
+                        verification_kind=current.verification_kind,
+                        impact_kind=current.impact_kind,
+                        first_seen=current.first_seen,
+                        last_seen=current.last_seen,
+                        occurrence_count=current.occurrence_count,
+                        resolution=current.resolution,
+                        export_state=state,
+                        resolution_authority_fingerprint=current.resolution_authority_fingerprint,
+                        resolved_at=current.resolved_at,
+                    )
+                    encoded = updated.to_bytes()
+                    connection.execute(
+                        "UPDATE capability_gap_aggregates SET payload = ? "
+                        "WHERE gap_key = ? AND payload = ?",
+                        (encoded, key, expected_payload),
+                    )
+                    if connection.execute("SELECT changes()").fetchone()[0] == 1:
+                        finalized.append(key)
+                connection.commit()
+                return tuple(finalized)
+            except (
+                CapabilityGapValidationError,
+                CapabilityGapCollisionError,
+                CapabilityGapCorruptionError,
+            ):
+                connection.rollback()
+                raise
+            except sqlite3.DatabaseError:
+                connection.rollback()
+                raise CapabilityGapCorruptionError("gap_store_corrupt") from None
+            except BaseException:
+                connection.rollback()
+                raise
+
     # The explicit aliases keep the storage port readable to adapters without
     # introducing a second implementation or a new persistence schema.
     snapshot = list_aggregates
@@ -356,7 +508,11 @@ class SQLiteCapabilityGapStore:
                         last_seen=current.last_seen,
                         occurrence_count=current.occurrence_count,
                         resolution=resolution.kind,
-                        export_state=current.export_state,
+                        export_state=(
+                            GapExportState.PENDING
+                            if current.export_state is GapExportState.EXPORTED
+                            else current.export_state
+                        ),
                         resolution_authority_fingerprint=resolution.authority_fingerprint,
                         resolved_at=resolution.resolved_at,
                     )

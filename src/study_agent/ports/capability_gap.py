@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -35,6 +35,12 @@ class CapabilityGapStore(Protocol):
     def list_aggregates(
         self, *, states: Collection[GapExportState] | None = None
     ) -> tuple[bytes, ...]: ...
+
+    def claim_export_batch(self) -> tuple[bytes, ...]: ...
+
+    def finalize_export_batch(
+        self, expected: Mapping[str, bytes], state: GapExportState
+    ) -> tuple[str, ...]: ...
 
 
 class GapOutboxPublisher(Protocol):

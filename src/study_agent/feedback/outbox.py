@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Protocol, cast
@@ -24,15 +24,22 @@ from .contracts import (
     CapabilityGapCorruptionError,
     CapabilityGapDimensions,
     CapabilityGapValidationError,
+    GapCategory,
     GapExportState,
     GapKeyV1,
     GapResolutionKind,
     ImpactKind,
+    RequestedOperationKind,
+    SafeTargetKind,
+    TrustedLimitationCode,
     VerificationKind,
 )
 
-OUTBOX_SCHEMA_VERSION = 1
-_OUTBOX_DOMAIN = b"study-agent-gap-outbox-v1\0"
+OUTBOX_SCHEMA_VERSION = 2
+_OUTBOX_DOMAIN = b"study-agent-gap-outbox-v2\0"
+_OUTBOX_KEY_DOMAIN = b"study-agent-gap-outbox-key-binding-v1\0"
+_OUTBOX_HARNESS_DOMAIN = b"study-agent-gap-outbox-harness-v1\0"
+_OUTBOX_IDENTITY_DOMAIN = b"study-agent-gap-contract-identity-v1\0"
 _MAX_OUTBOX_BYTES = 512 * 1024
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -65,6 +72,107 @@ def _digest(value: object, field: str) -> str:
     if not isinstance(value, str) or _HEX64.fullmatch(value) is None:
         raise GapOutboxValidationError(f"invalid_{field}")
     return value
+
+
+def _fingerprint(value: str, domain: bytes) -> str:
+    return sha256(domain + value.encode("utf-8")).hexdigest()
+
+
+def _harness_fingerprint(value: str) -> str:
+    _version(value)
+    return _fingerprint(value, _OUTBOX_HARNESS_DOMAIN)
+
+
+@dataclass(frozen=True, slots=True)
+class GapOutboxDimensions:
+    """Closed, redacted dimensions used by the portable outbox.
+
+    The host-facing contract identity is deliberately reduced to a
+    domain-separated digest before it crosses the publication boundary.
+    """
+
+    category: GapCategory
+    requested_operation_kind: RequestedOperationKind
+    safe_target_kind: SafeTargetKind
+    limitation_code: TrustedLimitationCode
+    contract_major: int
+    contract_identity_fingerprint: str
+    schema_version: int = 1
+
+    @classmethod
+    def from_dimensions(cls, dimensions: CapabilityGapDimensions) -> GapOutboxDimensions:
+        if not isinstance(dimensions, CapabilityGapDimensions):
+            raise GapOutboxValidationError("invalid_dimensions")
+        return cls(
+            category=dimensions.category,
+            requested_operation_kind=dimensions.requested_operation_kind,
+            safe_target_kind=dimensions.safe_target_kind,
+            limitation_code=dimensions.limitation_code,
+            contract_major=dimensions.contract_major,
+            contract_identity_fingerprint=_fingerprint(
+                dimensions.relevant_contract_identity, _OUTBOX_IDENTITY_DOMAIN
+            ),
+        )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise GapOutboxValidationError("invalid_dimensions_schema_version")
+        for value, enum_type, field_name in (
+            (self.category, GapCategory, "category"),
+            (self.requested_operation_kind, RequestedOperationKind, "requested_operation_kind"),
+            (self.safe_target_kind, SafeTargetKind, "safe_target_kind"),
+        ):
+            if not isinstance(value, enum_type):
+                raise GapOutboxValidationError(f"invalid_{field_name}")
+        if not isinstance(self.limitation_code, TrustedLimitationCode):
+            raise GapOutboxValidationError("invalid_limitation_code")
+        if type(self.contract_major) is not int or self.contract_major < 1:
+            raise GapOutboxValidationError("invalid_contract_major")
+        _digest(self.contract_identity_fingerprint, "contract_identity_fingerprint")
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "category": self.category.value,
+            "contract_identity_fingerprint": self.contract_identity_fingerprint,
+            "contract_major": self.contract_major,
+            "limitation_code": self.limitation_code.value,
+            "requested_operation_kind": self.requested_operation_kind.value,
+            "safe_target_kind": self.safe_target_kind.value,
+            "schema_version": self.schema_version,
+        }
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, object]) -> GapOutboxDimensions:
+        fields = (
+            "schema_version",
+            "category",
+            "requested_operation_kind",
+            "safe_target_kind",
+            "limitation_code",
+            "contract_major",
+            "contract_identity_fingerprint",
+        )
+        if tuple(sorted(value)) != tuple(sorted(fields)):
+            raise GapOutboxCorruptionError("outbox_dimensions_invalid")
+        try:
+            return cls(
+                schema_version=cast(int, value["schema_version"]),
+                category=GapCategory(cast(str, value["category"])),
+                requested_operation_kind=RequestedOperationKind(
+                    cast(str, value["requested_operation_kind"])
+                ),
+                safe_target_kind=SafeTargetKind(cast(str, value["safe_target_kind"])),
+                limitation_code=TrustedLimitationCode(cast(str, value["limitation_code"])),
+                contract_major=cast(int, value["contract_major"]),
+                contract_identity_fingerprint=cast(
+                    str, value["contract_identity_fingerprint"]
+                ),
+            )
+        except (KeyError, TypeError, ValueError, GapOutboxValidationError):
+            raise GapOutboxCorruptionError("outbox_dimensions_invalid") from None
+
+    def to_bytes(self) -> bytes:
+        return canonical_json_bytes(cast(Any, self.to_json()))
 
 
 def _version(value: object, field: str = "harness_version") -> str:
@@ -115,7 +223,7 @@ class GapOutboxRecord:
     """One immutable, credential-free projection of a local aggregate."""
 
     gap_key: GapKeyV1
-    dimensions: CapabilityGapDimensions
+    dimensions: GapOutboxDimensions
     verification_kind: VerificationKind
     impact_kind: ImpactKind
     first_seen: datetime
@@ -126,18 +234,24 @@ class GapOutboxRecord:
     resolution_authority_fingerprint: str | None = None
     resolved_at: datetime | None = None
     schema_version: int = OUTBOX_SCHEMA_VERSION
+    _source_dimensions: CapabilityGapDimensions | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != OUTBOX_SCHEMA_VERSION:
             raise GapOutboxValidationError("invalid_schema_version")
         if not isinstance(self.gap_key, GapKeyV1):
             raise GapOutboxValidationError("invalid_gap_key")
-        if not isinstance(self.dimensions, CapabilityGapDimensions):
+        if not isinstance(self.dimensions, GapOutboxDimensions):
             raise GapOutboxValidationError("invalid_dimensions")
-        try:
-            self.gap_key.verify(self.dimensions)
-        except CapabilityGapCollisionError:
-            raise
+        _digest(
+            _fingerprint(
+                self.gap_key.value + self.dimensions.to_bytes().decode("utf-8"),
+                _OUTBOX_KEY_DOMAIN,
+            ),
+            "key_binding",
+        )
         if not isinstance(self.verification_kind, VerificationKind):
             raise GapOutboxValidationError("invalid_verification_kind")
         if not isinstance(self.impact_kind, ImpactKind):
@@ -173,7 +287,7 @@ class GapOutboxRecord:
             raise GapOutboxValidationError("invalid_aggregate")
         return cls(
             gap_key=aggregate.gap_key,
-            dimensions=aggregate.dimensions,
+            dimensions=GapOutboxDimensions.from_dimensions(aggregate.dimensions),
             verification_kind=aggregate.verification_kind,
             impact_kind=aggregate.impact_kind,
             first_seen=aggregate.first_seen,
@@ -183,12 +297,15 @@ class GapOutboxRecord:
             export_state=aggregate.export_state,
             resolution_authority_fingerprint=aggregate.resolution_authority_fingerprint,
             resolved_at=aggregate.resolved_at,
+            _source_dimensions=aggregate.dimensions,
         )
 
     def to_aggregate(self) -> CapabilityGapAggregate:
+        if self._source_dimensions is None:
+            raise GapOutboxValidationError("redacted_record_not_aggregate")
         return CapabilityGapAggregate(
             gap_key=self.gap_key,
-            dimensions=self.dimensions,
+            dimensions=self._source_dimensions,
             verification_kind=self.verification_kind,
             impact_kind=self.impact_kind,
             first_seen=self.first_seen,
@@ -214,6 +331,10 @@ class GapOutboxRecord:
             "resolved_at": None if self.resolved_at is None else _timestamp(self.resolved_at),
             "schema_version": self.schema_version,
             "verification_kind": self.verification_kind.value,
+            "key_binding": _fingerprint(
+                self.gap_key.value + self.dimensions.to_bytes().decode("utf-8"),
+                _OUTBOX_KEY_DOMAIN,
+            ),
         }
 
     def to_bytes(self) -> bytes:
@@ -236,18 +357,24 @@ class GapOutboxRecord:
                 "export_state",
                 "resolution_authority_fingerprint",
                 "resolved_at",
+                "key_binding",
             ),
         )
         try:
             nested = value["dimensions"]
             if not isinstance(nested, Mapping):
                 raise ValueError
+            dimensions = GapOutboxDimensions.from_json(nested)
+            expected_binding = _fingerprint(
+                str(value["gap_key"]) + dimensions.to_bytes().decode("utf-8"),
+                _OUTBOX_KEY_DOMAIN,
+            )
+            if value["key_binding"] != expected_binding:
+                raise CapabilityGapCollisionError("outbox_key_collision")
             record = cls(
                 schema_version=value["schema_version"],
                 gap_key=GapKeyV1(value["gap_key"]),
-                dimensions=CapabilityGapDimensions.from_bytes(
-                    canonical_json_bytes(cast(Any, nested))
-                ),
+                dimensions=dimensions,
                 verification_kind=VerificationKind(value["verification_kind"]),
                 impact_kind=ImpactKind(value["impact_kind"]),
                 first_seen=_parse_timestamp(value["first_seen"], "first_seen"),
@@ -281,14 +408,14 @@ class GapOutboxRecord:
 class GapOutboxBundle:
     """Versioned deterministic bundle containing only sorted gap records."""
 
-    harness_version: str
+    harness_fingerprint: str
     records: tuple[GapOutboxRecord, ...]
     schema_version: int = OUTBOX_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != OUTBOX_SCHEMA_VERSION:
             raise GapOutboxValidationError("invalid_schema_version")
-        _version(self.harness_version)
+        _digest(self.harness_fingerprint, "harness_fingerprint")
         if not isinstance(self.records, tuple):
             raise GapOutboxValidationError("records_must_be_tuple")
         if any(not isinstance(item, GapOutboxRecord) for item in self.records):
@@ -301,15 +428,9 @@ class GapOutboxBundle:
     def bundle_fingerprint(self) -> str:
         return sha256(_OUTBOX_DOMAIN + self.to_bytes()).hexdigest()
 
-    @property
-    def harness_fingerprint(self) -> str:
-        return sha256(
-            b"study-agent-gap-harness-v1\0" + self.harness_version.encode("ascii")
-        ).hexdigest()
-
     def to_json(self) -> dict[str, object]:
         return {
-            "harness_version": self.harness_version,
+            "harness_fingerprint": self.harness_fingerprint,
             "records": tuple(item.to_json() for item in self.records),
             "schema_version": self.schema_version,
         }
@@ -322,7 +443,7 @@ class GapOutboxBundle:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> GapOutboxBundle:
-        value = _exact_object(data, ("schema_version", "harness_version", "records"))
+        value = _exact_object(data, ("schema_version", "harness_fingerprint", "records"))
         try:
             raw_records = value["records"]
             if not isinstance(raw_records, Sequence) or isinstance(raw_records, (str, bytes)):
@@ -332,7 +453,7 @@ class GapOutboxBundle:
                 for item in raw_records
             )
             bundle = cls(
-                harness_version=value["harness_version"],
+                harness_fingerprint=value["harness_fingerprint"],
                 records=records,
                 schema_version=value["schema_version"],
             )
@@ -377,15 +498,15 @@ class GapOutboxExportService:
         harness_version: str,
     ) -> None:
         _version(harness_version)
-        if not callable(getattr(store, "list_aggregates", None)):
-            raise GapOutboxValidationError("store_snapshot_unsupported")
-        if not callable(getattr(store, "set_export_state", None)):
-            raise GapOutboxValidationError("store_export_unsupported")
+        if not callable(getattr(store, "claim_export_batch", None)):
+            raise GapOutboxValidationError("store_claim_unsupported")
+        if not callable(getattr(store, "finalize_export_batch", None)):
+            raise GapOutboxValidationError("store_finalize_unsupported")
         if not callable(getattr(publisher, "publish", None)):
             raise GapOutboxValidationError("publisher_unsupported")
         self._store = store
         self._publisher = publisher
-        self._harness_version = harness_version
+        self._harness_fingerprint = _harness_fingerprint(harness_version)
 
     def snapshot(self, *, include_exported: bool = False) -> GapOutboxBundle:
         states = (
@@ -405,7 +526,7 @@ class GapOutboxExportService:
                 key=lambda item: item.gap_key.value,
             )
         )
-        return GapOutboxBundle(self._harness_version, records)
+        return GapOutboxBundle(self._harness_fingerprint, records)
 
     def export_pending(self) -> GapOutboxPublication:
         """Publish a stable local snapshot and then mark its source rows.
@@ -415,34 +536,28 @@ class GapOutboxExportService:
         explicit call publishes the same bytes again.
         """
 
-        initial = self.snapshot()
-        keys = tuple(record.gap_key for record in initial.records)
-        self._set_export_states(keys, GapExportState.PENDING)
-        bundle = self.snapshot()
+        payloads = self._store.claim_export_batch()
+        claimed = sorted(
+            [
+                (GapOutboxRecord.from_aggregate(_decode_aggregate(payload)), payload)
+                for payload in payloads
+            ],
+            key=lambda item: item[0].gap_key.value,
+        )
+        records = tuple(item[0] for item in claimed)
+        bundle = GapOutboxBundle(self._harness_fingerprint, records)
         payload = bundle.to_bytes()
+        expected = {record.gap_key.value: source for record, source in claimed}
         try:
             self._publisher.publish(payload)
         except Exception as error:
             with suppress(Exception):
-                self._set_export_states(
-                    tuple(record.gap_key for record in bundle.records), GapExportState.FAILED
-                )
+                self._store.finalize_export_batch(expected, GapExportState.FAILED)
             raise GapOutboxPublicationError("outbox_publish_failed") from error
-        self._set_export_states(
-            tuple(record.gap_key for record in bundle.records), GapExportState.EXPORTED
-        )
+        finalized = self._store.finalize_export_batch(expected, GapExportState.EXPORTED)
+        if len(finalized) != len(expected):
+            raise GapOutboxPublicationError("outbox_snapshot_changed")
         return GapOutboxPublication(bundle, payload, tuple(item.gap_key for item in bundle.records))
-
-    def _set_export_states(
-        self, keys: tuple[GapKeyV1, ...], state: GapExportState
-    ) -> None:
-        values = tuple(key.value for key in keys)
-        bulk = getattr(self._store, "set_export_states", None)
-        if callable(bulk):
-            bulk(values, state)
-            return
-        for value in values:
-            self._store.set_export_state(value, state)
 
     # Concise aliases make the explicit action convenient without introducing
     # a second semantic path.
@@ -471,6 +586,7 @@ __all__ = [
     "GapOutboxBundle",
     "GapOutboxBundleV1",
     "GapOutboxCorruptionError",
+    "GapOutboxDimensions",
     "GapOutboxExportReceipt",
     "GapOutboxExportService",
     "GapOutboxPublication",
