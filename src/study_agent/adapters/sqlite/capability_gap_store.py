@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS capability_gap_aggregates (
 
 CREATE TABLE IF NOT EXISTS capability_gap_reports (
     report_id TEXT PRIMARY KEY,
-    gap_key TEXT NOT NULL
+    gap_key TEXT NOT NULL,
+    observed_at TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS capability_gap_reports_gap_key_idx
@@ -104,6 +105,7 @@ class SQLiteCapabilityGapStore:
             "capability_gap_reports": (
                 (0, "report_id", "TEXT", 1, None, 1, 0),
                 (1, "gap_key", "TEXT", 1, None, 0, 0),
+                (2, "observed_at", "TEXT", 1, None, 0, 0),
             ),
         }
         for table, expected in expected_columns.items():
@@ -146,6 +148,59 @@ class SQLiteCapabilityGapStore:
     def create_or_increment(
         self, gap_key: str, report_id: str, payload: bytes
     ) -> tuple[bytes, bool]:
+        encoded, created, _ = self._create_or_increment(
+            gap_key, report_id, payload, rate_limit=None
+        )
+        return encoded, created
+
+    def create_or_increment_rate_limited(
+        self,
+        gap_key: str,
+        report_id: str,
+        payload: bytes,
+        *,
+        max_occurrences: int,
+        window_start: datetime,
+        observed_at: datetime,
+    ) -> tuple[bytes, bool, bool]:
+        """Atomically enforce a per-key window and record one report.
+
+        Idempotency is checked before the rate gate in the same transaction so
+        an exact retry remains ``DEDUPLICATED`` even when the window is full.
+        The window count is derived from report timestamps, never the lifetime
+        aggregate occurrence count.
+        """
+
+        if type(max_occurrences) is not int or max_occurrences < 1:
+            raise CapabilityGapValidationError("invalid_rate_policy")
+        if not isinstance(window_start, datetime) or not isinstance(observed_at, datetime):
+            raise CapabilityGapValidationError("invalid_rate_policy")
+        if (
+            window_start.tzinfo is None
+            or window_start.utcoffset() is None
+            or observed_at.tzinfo is None
+            or observed_at.utcoffset() is None
+        ):
+            raise CapabilityGapValidationError("invalid_rate_policy")
+        return self._create_or_increment(
+            gap_key,
+            report_id,
+            payload,
+            rate_limit=(
+                max_occurrences,
+                window_start.astimezone(UTC),
+                observed_at.astimezone(UTC),
+            ),
+        )
+
+    def _create_or_increment(
+        self,
+        gap_key: str,
+        report_id: str,
+        payload: bytes,
+        *,
+        rate_limit: tuple[int, datetime, datetime] | None,
+    ) -> tuple[bytes, bool, bool]:
         _validate_digest(gap_key, "gap_key")
         _validate_digest(report_id, "report_id")
         if not isinstance(payload, bytes):
@@ -164,7 +219,8 @@ class SQLiteCapabilityGapStore:
                 connection.execute("BEGIN IMMEDIATE")
                 self._validate_schema(connection)
                 report = connection.execute(
-                    "SELECT gap_key FROM capability_gap_reports WHERE report_id = ?",
+                    "SELECT gap_key, observed_at FROM capability_gap_reports "
+                    "WHERE report_id = ?",
                     (report_id,),
                 ).fetchone()
                 if report is not None:
@@ -180,7 +236,7 @@ class SQLiteCapabilityGapStore:
                     current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
                     _assert_aggregate_matches_proposal(current, proposal)
                     connection.commit()
-                    return bytes(row[0]), False
+                    return bytes(row[0]), False, False
 
                 row = connection.execute(
                     "SELECT payload, typeof(payload) "
@@ -193,17 +249,28 @@ class SQLiteCapabilityGapStore:
                         (gap_key, payload),
                     )
                     connection.execute(
-                        "INSERT INTO capability_gap_reports (report_id, gap_key) VALUES (?, ?)",
-                        (report_id, gap_key),
+                        "INSERT INTO capability_gap_reports "
+                        "(report_id, gap_key, observed_at) VALUES (?, ?, ?)",
+                        (report_id, gap_key, _timestamp(proposal.first_seen)),
                     )
                     connection.commit()
-                    return payload, True
+                    return payload, True, False
                 if row[1] != "blob" or not isinstance(row[0], bytes):
                     raise CapabilityGapCorruptionError("gap_store_corrupt")
                 current = CapabilityGapAggregate.from_bytes(bytes(row[0]))
                 _assert_aggregate_matches_proposal(current, proposal)
                 if current.resolution is not GapResolutionKind.UNRESOLVED:
                     raise CapabilityGapValidationError("resolution_closed")
+                if rate_limit is not None:
+                    max_occurrences, window_start, observed_at = rate_limit
+                    window_count = connection.execute(
+                        "SELECT COUNT(*) FROM capability_gap_reports "
+                        "WHERE gap_key = ? AND observed_at >= ? AND observed_at <= ?",
+                        (gap_key, _timestamp(window_start), _timestamp(observed_at)),
+                    ).fetchone()[0]
+                    if int(window_count) >= max_occurrences:
+                        connection.commit()
+                        return bytes(row[0]), False, True
                 updated = CapabilityGapAggregate(
                     gap_key=current.gap_key,
                     dimensions=current.dimensions,
@@ -227,11 +294,12 @@ class SQLiteCapabilityGapStore:
                     (encoded, gap_key),
                 )
                 connection.execute(
-                    "INSERT INTO capability_gap_reports (report_id, gap_key) VALUES (?, ?)",
-                    (report_id, gap_key),
+                    "INSERT INTO capability_gap_reports "
+                    "(report_id, gap_key, observed_at) VALUES (?, ?, ?)",
+                    (report_id, gap_key, _timestamp(proposal.last_seen)),
                 )
                 connection.commit()
-                return encoded, True
+                return encoded, True, False
             except (
                 CapabilityGapValidationError,
                 CapabilityGapCollisionError,
@@ -758,6 +826,10 @@ def _validate_digest(value: object, field: str) -> None:
 
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise CapabilityGapValidationError(f"invalid_{field}")
+
+
+def _timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _assert_aggregate_matches_proposal(

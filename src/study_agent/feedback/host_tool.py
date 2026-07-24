@@ -27,7 +27,10 @@ from study_agent.feedback.contracts import (
     TrustedLimitationReceipt,
 )
 from study_agent.feedback.view import CapabilityGapCompactView
-from study_agent.ports.capability_gap import FeatureGapSink
+from study_agent.ports.capability_gap import (
+    CapabilityGapReportDispatcher,
+    FeatureGapSink,
+)
 from study_agent.state import canonical_json_bytes, canonical_json_object
 from study_agent.tools.schema import validate_schema_definition
 
@@ -302,8 +305,14 @@ class CapabilityGapHostTool:
 
     manifest = CapabilityGapHostToolManifest()
 
-    def __init__(self, sink: FeatureGapSink) -> None:
+    def __init__(
+        self,
+        sink: FeatureGapSink,
+        *,
+        dispatcher: CapabilityGapReportDispatcher | None = None,
+    ) -> None:
         self._sink = sink
+        self._dispatcher = dispatcher
 
     def report(
         self,
@@ -345,13 +354,29 @@ class CapabilityGapHostTool:
         self,
         proposal: CapabilityGapProposal,
         context: CapabilityGapHostContext,
-    ) -> CapabilityGapReportResult | None:
-        """Best-effort host integration hook; learner flow need not await storage."""
+    ) -> None:
+        """Try bounded host dispatch without touching sink/storage.
 
-        try:
-            return self.report(proposal, context)
-        except CapabilityGapHostToolError:
+        The dispatcher is injected by the host and must implement a bounded,
+        non-blocking ``try_submit``.  With no dispatcher this is an explicit
+        fail-soft no-op; synchronous persistence remains available through
+        :meth:`report`.
+        """
+
+        if not isinstance(proposal, CapabilityGapProposal) or not isinstance(
+            context, CapabilityGapHostContext
+        ):
             return None
+        dispatcher = self._dispatcher
+        if dispatcher is None:
+            return None
+        try:
+            dispatcher.try_submit(proposal, context)
+        except Exception:
+            # Queue-full, closed, and host integration failures must never
+            # interrupt the learner thread or fall back to synchronous I/O.
+            return None
+        return None
 
 
 __all__ = [

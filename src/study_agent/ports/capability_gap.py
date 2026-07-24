@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
         CapabilityGapWriteContext,
         GapExportState,
     )
+    from study_agent.feedback.host_tool import CapabilityGapHostContext, CapabilityGapProposal
     from study_agent.feedback.view import CapabilityGapCompactView
 
 
@@ -21,6 +23,17 @@ class CapabilityGapStore(Protocol):
     def create_or_increment(
         self, gap_key: str, report_id: str, payload: bytes
     ) -> tuple[bytes, bool]: ...
+
+    def create_or_increment_rate_limited(
+        self,
+        gap_key: str,
+        report_id: str,
+        payload: bytes,
+        *,
+        max_occurrences: int,
+        window_start: datetime,
+        observed_at: datetime,
+    ) -> tuple[bytes, bool, bool]: ...
 
     def load(self, gap_key: str) -> bytes: ...
 
@@ -59,4 +72,21 @@ class FeatureGapSink(Protocol):
     ) -> CapabilityGapCompactView: ...
 
 
-__all__ = ["CapabilityGapStore", "FeatureGapSink", "GapOutboxPublisher"]
+class CapabilityGapReportDispatcher(Protocol):
+    """Host-injected bounded inward dispatch for learner-thread reporting.
+
+    ``try_submit`` must be bounded and non-blocking.  The core does not own a
+    worker, queue, or thread pool; the host chooses those operational details.
+    """
+
+    def try_submit(
+        self, proposal: CapabilityGapProposal, context: CapabilityGapHostContext
+    ) -> bool: ...
+
+
+__all__ = [
+    "CapabilityGapReportDispatcher",
+    "CapabilityGapStore",
+    "FeatureGapSink",
+    "GapOutboxPublisher",
+]

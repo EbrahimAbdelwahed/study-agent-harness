@@ -79,25 +79,42 @@ class CapabilityGapService:
         prune = getattr(self._store, "prune", None)
         if callable(prune):
             prune(context.observed_at - self._retention_policy.max_age)
-        try:
-            existing = self.get(proposed.gap_key)
-        except CapabilityGapUnavailableError:
-            existing = None
-        if (
-            existing is not None
-            and existing.last_seen
-            >= (context.observed_at.astimezone(UTC) - self._rate_policy.window)
-            and existing.occurrence_count >= self._rate_policy.max_occurrences
-        ):
-            return CapabilityGapCompactView(
-                report_id=report_id,
-                gap_key=existing.gap_key,
-                occurrence_count=existing.occurrence_count,
-                disposition=GapDisposition.RATE_LIMITED,
+        rate_limited = False
+        atomic_record = getattr(self._store, "create_or_increment_rate_limited", None)
+        if callable(atomic_record):
+            payload, created, rate_limited = atomic_record(
+                proposed.gap_key.value,
+                report_id,
+                proposed.to_bytes(),
+                max_occurrences=self._rate_policy.max_occurrences,
+                window_start=(
+                    context.observed_at.astimezone(UTC) - self._rate_policy.window
+                ),
+                observed_at=context.observed_at,
             )
-        payload, created = self._store.create_or_increment(
-            proposed.gap_key.value, report_id, proposed.to_bytes()
-        )
+        else:
+            # Custom stores predating the rate-aware inward port retain the
+            # conservative local guard.  The reference SQLite adapter uses
+            # the atomic path above, including exact-retry precedence.
+            try:
+                existing = self.get(proposed.gap_key)
+            except CapabilityGapUnavailableError:
+                existing = None
+            if (
+                existing is not None
+                and existing.last_seen
+                >= (context.observed_at.astimezone(UTC) - self._rate_policy.window)
+                and existing.occurrence_count >= self._rate_policy.max_occurrences
+            ):
+                return CapabilityGapCompactView(
+                    report_id=report_id,
+                    gap_key=existing.gap_key,
+                    occurrence_count=existing.occurrence_count,
+                    disposition=GapDisposition.RATE_LIMITED,
+                )
+            payload, created = self._store.create_or_increment(
+                proposed.gap_key.value, report_id, proposed.to_bytes()
+            )
         try:
             aggregate = CapabilityGapAggregate.from_bytes(payload)
         except Exception as error:
@@ -120,7 +137,11 @@ class CapabilityGapService:
             report_id=report_id,
             gap_key=aggregate.gap_key,
             occurrence_count=aggregate.occurrence_count,
-            disposition=(GapDisposition.RECORDED if created else GapDisposition.DEDUPLICATED),
+            disposition=(
+                GapDisposition.RATE_LIMITED
+                if rate_limited
+                else (GapDisposition.RECORDED if created else GapDisposition.DEDUPLICATED)
+            ),
         )
 
     def resolve(

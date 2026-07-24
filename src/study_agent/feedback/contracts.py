@@ -585,89 +585,6 @@ class CapabilityGapAggregate:
         return aggregate
 
 
-@dataclass(frozen=True, slots=True)
-class CapabilityGapReport:
-    """One portable report envelope, without learner or provider text."""
-
-    report_id: str
-    gap_key: GapKeyV1
-    observation: CapabilityGapObservation
-    verification_kind: VerificationKind
-    impact_kind: ImpactKind
-    observed_at: datetime
-
-    def __post_init__(self) -> None:
-        _digest(self.report_id, field="report_id")
-        if not isinstance(self.gap_key, GapKeyV1):
-            raise CapabilityGapValidationError("invalid_gap_key")
-        if not isinstance(self.observation, CapabilityGapObservation):
-            raise CapabilityGapValidationError("invalid_observation")
-        _enum(self.verification_kind, VerificationKind, field="verification_kind")
-        _enum(self.impact_kind, ImpactKind, field="impact_kind")
-        _utc(self.observed_at, field="observed_at")
-
-    def to_json(self) -> dict[str, object]:
-        return {
-            "gap_key": self.gap_key.value,
-            "impact_kind": self.impact_kind.value,
-            "observation": self.observation.to_json(),
-            "observed_at": _timestamp(self.observed_at),
-            "report_id": self.report_id,
-            "schema_version": 1,
-            "verification_kind": self.verification_kind.value,
-        }
-
-    def to_bytes(self) -> bytes:
-        return canonical_json_bytes(cast(Any, self.to_json()))
-
-    @classmethod
-    def from_bytes(cls, data: bytes) -> CapabilityGapReport:
-        value = _exact_object(
-            data,
-            (
-                "schema_version",
-                "report_id",
-                "gap_key",
-                "observation",
-                "verification_kind",
-                "impact_kind",
-                "observed_at",
-            ),
-        )
-        try:
-            observation_value = value["observation"]
-            if value["schema_version"] != 1 or not isinstance(observation_value, Mapping):
-                raise ValueError
-            result = cls(
-                value["report_id"],
-                GapKeyV1(value["gap_key"]),
-                CapabilityGapObservation.from_bytes(
-                    canonical_json_bytes(cast(Any, observation_value))
-                ),
-                VerificationKind(value["verification_kind"]),
-                ImpactKind(value["impact_kind"]),
-                _parse_timestamp(value["observed_at"], field="observed_at"),
-            )
-            result.gap_key.verify(
-                CapabilityGapDimensions(
-                    1,
-                    result.observation.category,
-                    result.observation.requested_operation_kind,
-                    result.observation.safe_target_kind,
-                    TrustedLimitationCode.MISSING_CAPABILITY,
-                    _UNVERIFIED_CONTRACT,
-                    _UNVERIFIED_MAJOR,
-                )
-            ) if result.verification_kind is VerificationKind.UNVERIFIED_REQUEST else None
-        except CapabilityGapCollisionError:
-            raise
-        except (KeyError, TypeError, ValueError, CapabilityGapValidationError):
-            raise CapabilityGapCorruptionError("gap_payload_invalid") from None
-        if result.to_bytes() != data:
-            raise CapabilityGapCorruptionError("gap_payload_noncanonical")
-        return result
-
-
 def report_id_for(gap_key: GapKeyV1, idempotency_fingerprint: str) -> str:
     if not isinstance(gap_key, GapKeyV1):
         raise CapabilityGapValidationError("invalid_gap_key")
@@ -725,7 +642,6 @@ __all__ = [
     "CapabilityGapDimensions",
     "CapabilityGapFailureEvidence",
     "CapabilityGapObservation",
-    "CapabilityGapReport",
     "CapabilityGapResolution",
     "CapabilityGapUnavailableError",
     "CapabilityGapValidationError",
