@@ -9,10 +9,10 @@ Implemented the optional local `pypdf==6.14.2` workaround for text-bearing
 PDFs. The default harness remains dependency-free. The adapter binds a
 host-trusted input/output pair, captures the exact PDF by descriptor, parses
 only in a resource-limited worker, renders deterministic loss-marked Markdown,
-and publishes without replacing an existing destination. Candidate fix commit
-The current candidate closes destination-finalization races, recovers deterministic staging
-links after interrupted publication, and exercises real clean-wheel worker
-conversion; exact post-fix CI evidence is pending.
+and publishes without replacing an existing destination. Commit `951cc58`
+closes destination-finalization races, recovers deterministic staging links
+after interrupted publication, detects Linux inode-reuse rebinding, and
+exercises real clean-wheel worker conversion.
 
 Security and correctness reviews hardened input and output rebinding,
 hardlink/race reconciliation, portable paths, optional-import boundaries, and
@@ -39,13 +39,13 @@ Linux-only; other platforms fail closed.
 
 ## Verification
 
-- Focused local workaround suite: 42 passed, 1 expected macOS containment skip.
-- Local Ruff on the changed surface: passed.
-- Local strict mypy on the changed surface: passed.
-- Full local suite: 1,795 passed, 13 skipped, with one sandbox-only browser
-  socket-bind failure; the same full suite passed in GitHub Actions.
-- Exact post-fix GitHub Actions run for the current candidate is pending;
-  no post-fix CI result is claimed here.
+- Focused local workaround suite: 38 passed, 1 expected macOS containment
+  skip.
+- Local Ruff on the full repository: passed.
+- Local strict mypy: 472 source files, no issues.
+- GitHub Actions runs `30218592022` and `30218593481`: all Python 3.12/3.13,
+  PDF, recall, Ruff, mypy, clean-wheel, and real-conversion jobs passed; the
+  full suite reported 1,806 passed and 12 expected skips per Python lane.
 
 ## Notes
 
