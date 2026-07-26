@@ -14,7 +14,8 @@ SDK dependency.
 ## API seam
 
 - `EvidenceRow`/`EvidencePacket` include canonical text, separate expansion,
-  flags, revision status, figures, scores, retriever/projection provenance, and
+  flags, selection status, explicit succession, figures, scores,
+  retriever/projection provenance, and
   derived-content labels.
 - Ports for `manifest`, `search`, `search_lexical`, `outline`, `unit`, `expand`,
   `resolve`, `figures`, `items`, `concepts`, and `lineage`.

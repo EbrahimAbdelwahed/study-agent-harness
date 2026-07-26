@@ -8,7 +8,8 @@ Parent coverage: §§4.1–5, 10.4, 12–14
 ## Outcome
 
 Text and figure citations resolve mechanically from canonical bytes, expose
-revision status, and cannot be forged by an index or derived artifact.
+selection status and explicit succession, and cannot be forged by an index or
+derived artifact.
 
 ## API seam
 
@@ -16,7 +17,7 @@ revision status, and cannot be forged by an index or derived artifact.
   on the KB-00 identity decision.
 - One citation verifier port/owner for substrate spans and figure blobs.
 - Exact result/failure vocabulary for missing, corrupt, out-of-unit,
-  superseded, mismatched-checksum, and unsupported-version cases.
+  inactive-with-successor, mismatched-checksum, and unsupported-version cases.
 - Explicit v0.1 citation decode/upgrade behavior.
 
 ## Acceptance criteria
@@ -28,7 +29,8 @@ revision status, and cannot be forged by an index or derived artifact.
 - [ ] Derived text is always labeled and carries a canonical subject citation;
   it is never accepted as a citation.
 - [ ] Index text/snippets cannot override canonical bytes.
-- [ ] Superseded citations resolve with status and successor information.
+- [ ] Inactive citations resolve with selection status and explicit successor
+  information.
 - [ ] Unknown versions, cross-source/revision/unit mismatches, tampering, and
   malformed offsets fail closed.
 

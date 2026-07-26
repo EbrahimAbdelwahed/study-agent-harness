@@ -1,30 +1,22 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Draft decomposition — parent architecture remains Proposed
+Status: Active — KB-00 accepted; KB-01 dependency-ready
 Last updated: 2026-07-26
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
 ## Next Agent Prompt
 
-Read the parent spec and start with
-[KB-00](beads/KB-00-architecture-closure.md). Do not implement substrate,
-unit, citation, or incremental schemas until KB-00 has an accepted ADR.
-Preserve the existing v0.1 ingestion and retrieval behavior with explicit
+Read ADR-0014, the parent spec, and
+[KB-01](beads/KB-01-canonical-substrate.md). Implement only the frozen
+substrate/event tracer before advancing the dependency graph. Preserve v0.1
+ingestion and retrieval behavior through versioned successors and explicit
 migration tests; do not add model, vector, OCR, vision, transport, UI, or tutor
-behavior to the offline trunk. Before ending a pass, update this section,
-the owning bead status, and the checklist below.
+behavior to the offline trunk. Before ending a pass, update this section, the
+owning bead status, and the checklist below.
 
-Current pickup: KB-00 architecture closure.
+Current pickup: KB-01 canonical substrate and provenance.
 
-Active blockers:
-
-- The proposed `unit_id` derivation includes `revision_id`, but §11 says an
-  unchanged unit retains its identity across source revisions.
-- “Conformance never blocks ingestion” must be separated from safety,
-  corruption, and canonical-integrity rejection.
-- Byte-identical replay for deletable model artifacts needs an exact retention
-  and regeneration contract.
-- The parent spec is Proposed; this decomposition does not approve it.
+Active blockers: none for KB-01.
 
 ## Goal
 
@@ -38,8 +30,8 @@ offline with no keys, network, model, vector, OCR, or vision dependency.
 - Existing `BlobStore` remains the sole content-addressed byte owner.
 - The event stream remains the sole canonical mutation authority.
 - One substrate owner defines frozen normalized text and page maps.
-- One unitizer owns generic `RetrievableUnit` creation and identity; connectors
-  translate source dialects but do not create parallel retrieval models.
+- One unitizer owns revision-local `RetrievableUnit` occurrence creation and
+  identity; connectors translate source dialects into bounded drafts.
 - One citation verifier resolves text and figure evidence from canonical bytes.
 - One projection owner defines searchable handles; indexes only consume it.
 - One retriever registry owns candidate discovery; fusion never enumerates
@@ -88,17 +80,17 @@ KB-00 architecture closure
                   ├─ KB-15B PDF profile
                   └─ KB-15C study-material/doctor (also requires KB-15A)
 
-KB-02 + KB-05 + KB-14 ──> KB-10 scopes and manifest
+KB-02 + KB-05 ───────────> KB-10 scopes and manifest
 KB-09B + KB-10 ─────────> KB-11 retriever registry
 KB-05 + KB-07 + KB-11 ──> KB-12 fusion pipeline
 KB-03 + KB-04 + KB-10 + KB-12 ──> KB-13 agent primitives
-KB-02 + KB-05 + KB-08 + KB-09B + KB-15C ──> KB-16 incrementality
+KB-02 + KB-05 + KB-08 + KB-09B ──> KB-16 incrementality
 
 KB-03 + KB-05 + KB-14 + KB-16 ──> KB-17A figure units/structural anchors
 KB-15B + KB-17A ─────────────────> KB-17B derived PDF anchors
 KB-02 + KB-17A + KB-17B ─────────> KB-17C review/correspondence
 KB-12 + KB-13 + KB-17C ─────────> KB-18 figure retrieval
-KB-05 + KB-12 + KB-14 + KB-15A ─> KB-19 exam items/link graph
+KB-05 + KB-12 + KB-14 ──────────> KB-19 exam items/link graph
 KB-17C + KB-18 ─────────────────> KB-20 OCR labels
 KB-18 + KB-20 ──────────────────> KB-21 figure cards/surrogates
 KB-08 + KB-11 + KB-16 ──────────> KB-22A embedding/vector adapters
@@ -113,14 +105,16 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 - Canonical events and blobs are append-only; projections and indexes rebuild.
 - Canonical citations never target generated summaries, handles, embeddings,
   OCR text, figure cards, or surrogates.
-- A result always carries flags, revision status, retriever provenance, and
+- A result always carries flags, selection status, explicit succession,
+  retriever provenance, and
   projection provenance.
 - Literal query compilation remains injection-safe and model-free.
 - Supersession is structural; no recency score is introduced.
 - Cross-document figure anchors require a declared correspondence.
 - Reviewed figure anchors survive extractor reruns.
-- Structural conformance warnings may degrade unitization; malformed bytes,
-  forged IDs, invalid spans, unsafe paths, and integrity failures still reject.
+- Structural conformance findings may degrade unitization; admission failures
+  for malformed bytes, forged IDs, invalid spans, unsafe paths, unsupported
+  media, and integrity failures still reject.
 - Default tests are offline and credential-free.
 - External dependencies require a separate adapter/dependency decision and
   their own CI lane.
@@ -137,7 +131,7 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 
 ## Global TODO
 
-- [ ] [KB-00 architecture closure](beads/KB-00-architecture-closure.md)
+- [x] [KB-00 architecture closure](beads/KB-00-architecture-closure.md)
 - [ ] [KB-01 canonical substrate](beads/KB-01-canonical-substrate.md)
 - [ ] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
 - [ ] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)

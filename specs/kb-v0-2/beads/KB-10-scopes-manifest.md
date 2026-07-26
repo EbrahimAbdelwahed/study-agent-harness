@@ -2,7 +2,7 @@
 
 Status: Proposed
 Risk: High
-Depends On: KB-02, KB-05, KB-14
+Depends On: KB-02, KB-05
 Parent coverage: §§10.3, 12
 
 ## Outcome
@@ -14,8 +14,8 @@ machine-readable manifest an agent can inspect before planning.
 
 - Event-authorized scope membership and versioned per-scope defaults.
 - `CorpusManifest` read contract with sources/classes, counts, projection
-  coverage, retrievers, adapter availability, conformance, and declared
-  “good at answering” hints.
+  coverage, retrievers, adapter availability, conformance, and optional
+  connector-declared “good at answering” hints when available.
 - Scope policy supplies source-class priors, diversity caps, aliases, and
   fragment thresholds without tutoring behavior.
 
