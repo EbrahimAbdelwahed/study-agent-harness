@@ -1,6 +1,6 @@
 # Task Bead: GAP-04B first source-format workaround adapter
 
-Status: Ready — PDF-to-Markdown adapter approved 2026-07-26
+Status: Done — local PDF-to-Markdown adapter verified 2026-07-26
 Priority: P2
 Type: tracer-bullet
 Depends On: GAP-03, GAP-04A
@@ -36,15 +36,17 @@ Rationale: PDF/OCR/audio have materially different dependencies and safety.
 
 ## Acceptance Criteria
 
-- [ ] The optional pinned dependency, process isolation, file/page/output
+- [x] The optional pinned dependency, process isolation, file/page/output
   limits, race/symlink behavior, quality warning, and provenance are tested.
-- [ ] Failure returns a truthful workaround receipt and preserves the gap report.
-- [ ] The derived Markdown is byte-deterministic and can be ingested explicitly
+- [x] Failure returns a truthful workaround receipt and preserves the gap report.
+- [x] The derived Markdown is byte-deterministic and can be ingested explicitly
   through the existing text path without treating the PDF as native support.
 
 ## Verification
 
 - Adapter-specific hostile-file, quality, provenance, and offline tests.
+- GitHub Actions run 30204462815: Python 3.12/3.13 base, recall, and real
+  `pypdf==6.14.2` lanes all passed.
 
 ## Out Of Scope
 
