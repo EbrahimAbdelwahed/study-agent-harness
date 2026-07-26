@@ -67,6 +67,12 @@ def _executor(root: Path, pdf: bytes, *, output: str = "derived.md") -> PdfMarkd
         r"nested\\input.pdf",
         "input.PDF",
         "input.pdf\x00suffix",
+        "input?.pdf",
+        "input*.pdf",
+        "input<.pdf",
+        "input>.pdf",
+        'input".pdf',
+        "input|.pdf",
         "CON.pdf",
         "input.pdf ",
         "input.pdf.",
@@ -267,7 +273,7 @@ def test_executor_uses_identity_captured_with_the_bytes_without_reopening_input(
     task = _task(pdf)
     (tmp_path / "input.pdf").write_bytes(pdf)
     root, root_identity = capture_root_identity(tmp_path)
-    captured_identity = (1, 2, 3, 4, 5, 6, 7)
+    captured_identity = (1, 2)
     monkeypatch.setattr(
         "study_agent.adapters.workarounds.pdf_markdown.capture_pdf",
         lambda *_: CapturedPdf(pdf, captured_identity),
@@ -289,6 +295,47 @@ def test_executor_uses_identity_captured_with_the_bytes_without_reopening_input(
     assert observed["input_identity"] == captured_identity
     assert root == tmp_path
     assert root_identity[0] > 0
+
+
+def test_portable_path_rejects_oversized_utf8_components() -> None:
+    with pytest.raises(PdfMarkdownFilesystemError, match="invalid_portable_path"):
+        validate_portable_path("é" * 128 + ".pdf", suffix=".pdf")
+
+
+def test_directory_rebound_before_link_fails_without_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, root_identity = capture_root_identity(tmp_path)
+    calls = 0
+    original_verify = __import__(
+        "study_agent.adapters.workarounds.filesystem", fromlist=["_verify_parent_binding"]
+    )._verify_parent_binding
+
+    def verify(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise PdfMarkdownFilesystemError("output_path_rebound")
+        original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "study_agent.adapters.workarounds.filesystem._verify_parent_binding", verify
+    )
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_path_rebound"):
+        publish_markdown(root, root_identity, "derived.md", b"stable\n", output_limit=100)
+    assert calls == 2
+    assert not (tmp_path / "derived.md").exists()
+
+
+def test_hardlink_destination_is_rejected_without_overwrite(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    destination = tmp_path / "derived.md"
+    source.write_bytes(b"user-owned\n")
+    os.link(source, destination)
+    root, root_identity = capture_root_identity(tmp_path)
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_collision"):
+        publish_markdown(root, root_identity, "derived.md", b"generated\n", output_limit=100)
+    assert destination.read_bytes() == b"user-owned\n"
 
 
 def test_collision_reconciliation_is_byte_exact_and_never_overwrites(
