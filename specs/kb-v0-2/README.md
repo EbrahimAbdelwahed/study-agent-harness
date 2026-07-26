@@ -1,22 +1,23 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Active — KB-00 accepted; KB-01 dependency-ready
+Status: Active — KB-00 and KB-01 complete; KB-02 and KB-04 dependency-ready
 Last updated: 2026-07-26
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
 ## Next Agent Prompt
 
-Read ADR-0014, the parent spec, and
-[KB-01](beads/KB-01-canonical-substrate.md). Implement only the frozen
-substrate/event tracer before advancing the dependency graph. Preserve v0.1
-ingestion and retrieval behavior through versioned successors and explicit
-migration tests; do not add model, vector, OCR, vision, transport, UI, or tutor
-behavior to the offline trunk. Before ending a pass, update this section, the
-owning bead status, and the checklist below.
+Read ADR-0014, the parent spec, and either
+[KB-02](beads/KB-02-supersession-lineage.md) or
+[KB-04](beads/KB-04-document-tree.md). These are the two independent
+dependency-ready continuations after the canonical substrate tracer. Preserve
+v0.1 ingestion and retrieval behavior through versioned successors and
+explicit migration tests; do not add model, vector, OCR, vision, transport,
+UI, or tutor behavior to the offline trunk. Before ending a pass, update this
+section, the owning bead status, and the checklist below.
 
-Current pickup: KB-01 canonical substrate and provenance.
+Current pickup: KB-02 supersession/lineage and KB-04 document tree.
 
-Active blockers: none for KB-01.
+Active blockers: none for KB-02 or KB-04.
 
 ## Goal
 
@@ -132,7 +133,7 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 ## Global TODO
 
 - [x] [KB-00 architecture closure](beads/KB-00-architecture-closure.md)
-- [ ] [KB-01 canonical substrate](beads/KB-01-canonical-substrate.md)
+- [x] [KB-01 canonical substrate](beads/KB-01-canonical-substrate.md)
 - [ ] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
 - [ ] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
 - [ ] [KB-04 document tree](beads/KB-04-document-tree.md)

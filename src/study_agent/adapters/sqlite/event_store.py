@@ -195,9 +195,11 @@ class SQLiteEventStore:
         ).fetchone()
         return int(row[0]) if row else 0
 
-    @staticmethod
     def _load_projection(
-        connection: sqlite3.Connection, course_id: CourseId, stream_sequence: int
+        self,
+        connection: sqlite3.Connection,
+        course_id: CourseId,
+        stream_sequence: int,
     ) -> Projection:
         row = connection.execute(
             "SELECT course_sequence, state FROM projections WHERE course_id = ?",
@@ -215,7 +217,14 @@ class SQLiteEventStore:
                 f"projection for course {course_id} is at {sequence}, "
                 f"stream is at {stream_sequence}"
             )
-        return Projection(course_id, sequence, canonical_json_object(bytes(row[1])))
+        raw_state = canonical_json_object(bytes(row[1]))
+        state = self._registry.migrate_projection(raw_state)
+        if state != raw_state and not self._read_only:
+            connection.execute(
+                "UPDATE projections SET state = ? WHERE course_id = ?",
+                (canonical_json_bytes(state), str(course_id)),
+            )
+        return Projection(course_id, sequence, state)
 
     def append(
         self, course_id: CourseId, expected_sequence: int, events: Sequence[DomainEvent]

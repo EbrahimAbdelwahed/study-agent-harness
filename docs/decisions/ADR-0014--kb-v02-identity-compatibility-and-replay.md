@@ -26,12 +26,20 @@ them in place would make old event streams and exports ambiguous.
   identity. Unitizer and projector versions remain excluded.
 - `substrate_id` is namespaced as `substrate:sha256:<lowercase hex>`, where the
   digest covers the exact frozen normalized UTF-8 bytes and no metadata.
-- `substrate_production_id` hashes the repository's strict canonical JSON
+- `substrate_production_id` is namespaced as
+  `substrate-production:sha256:<lowercase hex>`. Its digest hashes the
+  repository's strict canonical JSON
   encoding of source identity, trusted original blob binding, substrate
   identity, converter name/version, normalization version, page-map contract,
-  and admission-policy version under the
+  page-map policy version, and admission-policy version under the
   `study-agent/substrate-production/v1` domain separator. `produced_at` is not
   identity-bearing; an exact retry retains the first committed timestamp.
+
+The page-map JSON contract is an ordered array of closed objects with exactly
+`offset` and `page` integer fields. The production identity object uses exactly
+`source_id`, `original_blob`, `substrate_id`, `converter_name`,
+`converter_version`, `normalization_version`, `page_map_policy_version`,
+`page_count`, `page_map`, and `admission_policy_version`.
 - `unit_id` identifies one revision-local occurrence. It commits to revision,
   unit kind, granularity, canonical reference, placement key, and unitizer
   version. Duplicate passages therefore remain distinct.
@@ -81,6 +89,11 @@ resolve regardless of selection. No timestamp or recency score participates.
   operational state, not canonical domain events.
 
 ### Admission and conformance
+
+`source.substrate_produced@1` is service-authorized. Its application seam
+accepts only source-bound host receipts for both original and converter output;
+human/model execution contexts and unbound raw blob references cannot author
+converter or policy provenance.
 
 `ConformanceFinding` describes non-blocking structural quality and may select a
 weaker deterministic fallback. `AdmissionFailure` blocks unsafe or unsupported

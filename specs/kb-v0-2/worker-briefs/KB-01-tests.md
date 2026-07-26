@@ -27,7 +27,9 @@ Use `knowledge-base-core-worker`.
 ## Acceptance Criteria
 
 - Golden identities pin the substrate namespace and the domain-separated
-  canonical production encoding. Revision identity is explicitly absent.
+  canonical production namespace/encoding, including the closed
+  `offset`/`page` map and page-map policy version. Revision identity is
+  explicitly absent.
 - Strict codecs reject missing/extra fields, bool-as-int, invalid UTF-8,
   forged hashes/IDs, bad blob bindings, invalid timestamps, and malformed page
   maps.

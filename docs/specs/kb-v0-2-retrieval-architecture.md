@@ -107,7 +107,8 @@ Derived mechanically, then **frozen and content-addressed with the tool that pro
 ```
 substrate_id  = "substrate:sha256:" + sha256(normalized_text_bytes)
 substrate_meta = { source_blob_sha256, converter_name, converter_version,
-                   normalization_version, produced_at, page_count?, page_map }
+                   normalization_version, page_map_policy_version,
+                   produced_at, page_count?, page_map }
 ```
 
 `page_map` is either absent (`page_count = None`, empty entries) when the source
@@ -201,7 +202,7 @@ work:
 |---|---|
 | `revision_id` | exact v0.2 manifest fields and canonical encoding are owned by KB-02 |
 | `substrate_id` | `substrate:sha256:<sha256(exact frozen normalized UTF-8 bytes)>` |
-| `substrate_production_id` | domain-separated canonical JSON of trusted source/blob/substrate/converter/normalization/page-map/admission bindings; excludes `produced_at` |
+| `substrate_production_id` | `substrate-production:sha256:<digest>` over domain-separated canonical JSON of trusted source/blob/substrate/converter/normalization/page-map-policy/page-map/admission bindings; excludes `produced_at` |
 | `unit_id` | `(revision_id, structural path/placement key, unit_kind, granularity, canonical_ref, unitizer_version)` |
 | `lineage_key` | optional stable authored anchor; navigation only, never citation identity |
 | `figure_id` | `sha256(image_bytes)` — identity is the image itself |

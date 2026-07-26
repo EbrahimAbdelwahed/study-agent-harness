@@ -39,10 +39,13 @@ Use `knowledge-base-core-worker`.
   offset-zero first entry, strictly increasing in-bounds Unicode-code-point
   offsets, and strictly increasing positive page numbers bounded by the count.
 - The service accepts trusted blob/converter receipts and verifies bytes and
-  hashes before append. It never accepts caller-authored final identities.
+  hashes before append. Both receipts bind source and original blob; only
+  service authority may append. Raw blob references and human/model authority
+  are rejected.
 - Repeated exact identity-bearing production is idempotent and retains the
-  first committed timestamp. Policy/page-map changes create a new production;
-  byte changes create a new substrate.
+  first committed timestamp. Converter, normalization, admission, page-map
+  policy, or page-map changes create a new production; byte changes create a
+  new substrate.
 - The v0.1 normalized blob has a deterministic legacy-substrate mapping in the
   existing source-event reducer/registration path without rewriting or adding
   events and without changing append behavior.
