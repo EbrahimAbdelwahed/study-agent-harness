@@ -1,7 +1,8 @@
 # ADR-0012: Select bounded reference adapters for deferred gap lanes
 
 Date: 2026-07-21
-Status: Proposed
+Status: Superseded by ADR-0013 for GAP-04B and by the private devkit
+GitHub-publication ADR for GAP-08
 
 ## Context
 
@@ -10,6 +11,11 @@ selection. Closing them without a named dependency, effect boundary, and threat
 model would turn scripted ports into false production claims. The reference
 implementations should remain optional, offline-testable, and narrower than the
 provider-neutral contracts they demonstrate.
+
+This proposal was not accepted. On 2026-07-26 the user selected PDF-to-Markdown
+instead of HTML for GAP-04B, selected accepted-only branch plus draft pull
+request instead of issue synchronization for GAP-08, and left GAP-05D/GAP-07B
+deferred. The decisions below are retained only as historical alternatives.
 
 ## Decision
 

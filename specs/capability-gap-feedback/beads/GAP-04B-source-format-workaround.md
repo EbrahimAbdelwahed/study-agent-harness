@@ -1,6 +1,6 @@
 # Task Bead: GAP-04B first source-format workaround adapter
 
-Status: Scope approved — deferred; blocked on GAP-03, GAP-04A and adapter selection
+Status: Ready — PDF-to-Markdown adapter approved 2026-07-26
 Priority: P2
 Type: tracer-bullet
 Depends On: GAP-03, GAP-04A
@@ -22,22 +22,25 @@ Fresh Context Fit: yes
 
 ## Grilling Evidence
 
-- Session/artifact: future adapter-specific dependency/security decision.
-- Decision state: feature scope approved 2026-07-18; concrete adapter/dependency
-  selection intentionally remains a bead-level decision.
-- ADR/glossary changes: required if new dependency/effect is approved.
+- Session/artifact: user decision 2026-07-26 and ADR-0013.
+- Decision state: local PDF-to-Markdown only; `pypdf==6.14.2` is an optional
+  adapter dependency and the core remains dependency-free.
+- ADR/glossary changes: ADR-0013 records dependency, effects, provenance,
+  isolation, and explicit no-OCR limitations.
 
 ## Worker Profile
 
-create adapter-specific profile only after selection
+create `local-pdf-workaround` implementation profile
 
 Rationale: PDF/OCR/audio have materially different dependencies and safety.
 
 ## Acceptance Criteria
 
-- [ ] Dependency, sandbox, file limits, race/symlink behavior, quality warning,
-  and provenance are explicitly approved and tested.
+- [ ] The optional pinned dependency, process isolation, file/page/output
+  limits, race/symlink behavior, quality warning, and provenance are tested.
 - [ ] Failure returns a truthful workaround receipt and preserves the gap report.
+- [ ] The derived Markdown is byte-deterministic and can be ingested explicitly
+  through the existing text path without treating the PDF as native support.
 
 ## Verification
 
@@ -45,4 +48,5 @@ Rationale: PDF/OCR/audio have materially different dependencies and safety.
 
 ## Out Of Scope
 
-- Selecting the converter in advance or claiming general format support.
+- OCR, native/general PDF support, automatic ingestion, images, layout/table
+  reconstruction, models, network conversion, and hosted transport.
