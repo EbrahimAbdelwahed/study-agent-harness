@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
 from hashlib import sha256
 from pathlib import Path
+
+import pytest
 
 from study_agent.adapters.workarounds import PDF_MARKDOWN_MANIFEST, PdfMarkdownExecutor
 from study_agent.feedback import (
@@ -10,6 +13,11 @@ from study_agent.feedback import (
     WorkaroundOutputKind,
     WorkaroundReceiptStatus,
     WorkaroundTask,
+)
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("pypdf") is None,
+    reason="install the optional pdf extra to run the real pypdf integration test",
 )
 
 

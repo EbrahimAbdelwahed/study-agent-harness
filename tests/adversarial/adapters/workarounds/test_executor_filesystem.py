@@ -338,6 +338,67 @@ def test_hardlink_destination_is_rejected_without_overwrite(tmp_path: Path) -> N
     assert destination.read_bytes() == b"user-owned\n"
 
 
+def test_identical_existing_output_rechecks_parent_before_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"stable\n"
+    (tmp_path / "derived.md").write_bytes(output)
+    root, root_identity = capture_root_identity(tmp_path)
+    calls = 0
+    filesystem = __import__(
+        "study_agent.adapters.workarounds.filesystem", fromlist=["_verify_parent_binding"]
+    )
+    original_verify = filesystem._verify_parent_binding
+
+    def verify(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise PdfMarkdownFilesystemError("output_path_rebound")
+        original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "study_agent.adapters.workarounds.filesystem._verify_parent_binding", verify
+    )
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_path_rebound"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert calls == 2
+
+
+def test_identical_raced_output_rechecks_parent_before_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"stable\n"
+    root, root_identity = capture_root_identity(tmp_path)
+    calls = 0
+    filesystem = __import__(
+        "study_agent.adapters.workarounds.filesystem", fromlist=["_verify_parent_binding"]
+    )
+    original_verify = filesystem._verify_parent_binding
+
+    def verify(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise PdfMarkdownFilesystemError("output_path_rebound")
+        original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "study_agent.adapters.workarounds.filesystem._verify_parent_binding", verify
+    )
+    original_link = os.link
+
+    def race_link(*args: object, **kwargs: object) -> None:
+        (tmp_path / "derived.md").write_bytes(output)
+        raise FileExistsError
+
+    monkeypatch.setattr(os, "link", race_link)
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_path_rebound"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert calls == 2
+    monkeypatch.setattr(os, "link", original_link)
+
+
 def test_collision_reconciliation_is_byte_exact_and_never_overwrites(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

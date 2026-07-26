@@ -353,6 +353,7 @@ def publish_markdown(
             if input_identity is not None and existing_identity == input_identity:
                 raise PdfMarkdownFilesystemError("input_output_alias")
             if existing_bytes == output:
+                _verify_parent_binding(root, root_identity, parts, directory_chain)
                 return existing_bytes
             raise PdfMarkdownFilesystemError("output_collision")
 
@@ -387,6 +388,7 @@ def publish_markdown(
                     if input_identity is not None and raced[1] == input_identity:
                         raise PdfMarkdownFilesystemError("input_output_alias") from None
                     if raced[0] == output:
+                        _verify_parent_binding(root, root_identity, parts, directory_chain)
                         return raced[0]
                 raise PdfMarkdownFilesystemError("output_collision") from None
             except OSError:
