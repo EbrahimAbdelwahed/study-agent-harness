@@ -95,6 +95,18 @@ class GradeId(Identifier):
     pass
 
 
+class ReviewId(Identifier):
+    """Stable identity of one learner review of one artifact revision."""
+
+    pass
+
+
+class ScheduleDecisionId(Identifier):
+    """Stable identity of one applied scheduling decision."""
+
+    pass
+
+
 def artifact_event_id_for(
     course_id: CourseId,
     session_id: SessionId,
@@ -155,6 +167,79 @@ def grade_id_for(
         "grade-sha256:"
         f"{_assessment_digest(course_id, session_id, attempt_id, retry_identity, 'grade')}"
     )
+
+
+def review_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    revision_id: ArtifactRevisionId,
+    retry_identity: str,
+) -> ReviewId:
+    """Derive review identity from trusted scope and retry inputs only."""
+    if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
+        raise TypeError("review identity requires typed course and session ids")
+    if not isinstance(revision_id, ArtifactRevisionId):
+        raise TypeError("review identity requires ArtifactRevisionId")
+    require_text(retry_identity, "retry_identity")
+    raw = f"recall-review@1\0{course_id}\0{session_id}\0{revision_id}\0{retry_identity}".encode()
+    return ReviewId(f"review-sha256:{sha256(raw).hexdigest()}")
+
+
+def schedule_decision_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    revision_id: ArtifactRevisionId,
+    trigger: str,
+    identity: str,
+) -> ScheduleDecisionId:
+    """Derive an enrollment/review decision identity without scheduler output."""
+    if not isinstance(course_id, CourseId) or not isinstance(session_id, SessionId):
+        raise TypeError("schedule identity requires typed course and session ids")
+    if not isinstance(revision_id, ArtifactRevisionId):
+        raise TypeError("schedule identity requires ArtifactRevisionId")
+    require_text(trigger, "trigger")
+    require_text(identity, "identity")
+    raw = (
+        f"recall-schedule@1\0{course_id}\0{session_id}\0"
+        f"{revision_id}\0{trigger}\0{identity}"
+    ).encode()
+    return ScheduleDecisionId(f"schedule-sha256:{sha256(raw).hexdigest()}")
+
+
+def enrollment_decision_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    revision_id: ArtifactRevisionId,
+    retry_identity: str,
+) -> ScheduleDecisionId:
+    return schedule_decision_id_for(
+        course_id, session_id, revision_id, "enrollment", retry_identity
+    )
+
+
+def review_decision_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    revision_id: ArtifactRevisionId,
+    review_id: ReviewId,
+) -> ScheduleDecisionId:
+    if not isinstance(review_id, ReviewId):
+        raise TypeError("review decision identity requires ReviewId")
+    return schedule_decision_id_for(
+        course_id, session_id, revision_id, "review", str(review_id)
+    )
+
+
+def recall_event_id_for(
+    course_id: CourseId,
+    session_id: SessionId,
+    retry_identity: str,
+    event_type: str,
+) -> EventId:
+    require_text(retry_identity, "retry_identity")
+    require_text(event_type, "event_type")
+    raw = f"recall-event@1\0{course_id}\0{session_id}\0{retry_identity}\0{event_type}".encode()
+    return EventId(f"event-sha256:{sha256(raw).hexdigest()}")
 
 
 def assessment_event_id_for(

@@ -23,6 +23,7 @@ from study_agent.lifecycle import (
     RepositoryObservationState,
 )
 from study_agent.ports.retrieval import RetrievalDocument
+from study_agent.recall import register_recall_events
 from study_agent.repository_config import LocalRepositoryConfig
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import register_session_events
@@ -100,6 +101,7 @@ def observe_local_repository(
                 register_study_context_events(registry)
                 register_artifact_events(registry)
                 register_assessment_events(registry)
+                register_recall_events(registry)
                 events = SQLiteEventStore(events_path, registry, read_only=True)
                 course_ids = events.list_course_ids()
                 projections = {

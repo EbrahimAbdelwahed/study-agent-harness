@@ -372,7 +372,7 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
         ),
         _registration(
             "export",
-            "Write deterministic export v1 or v2.",
+            "Write deterministic export v1, v2, or v3.",
             OperationEffect.LOCAL_WRITE,
             RepositoryRequirement.REQUIRED,
             NetworkRequirement.NEVER,
@@ -389,7 +389,7 @@ def command_registrations() -> tuple[CommandRegistration, ...]:
                     default_json="1",
                 ),
             ),
-            "study-agent --json --repository REPOSITORY export COURSE_ID --output PATH --version 2",
+            "study-agent --json --repository REPOSITORY export COURSE_ID --output PATH --version 3",
             _add_export,
             commands.handle_export,
         ),
@@ -777,11 +777,12 @@ def _add_session_resume(topology: _ParserTopology) -> None:
 
 def _add_export(topology: _ParserTopology) -> None:
     parser = _leaf(
-        topology.root.add_parser("export", help="write deterministic export v1 or v2"), "export"
+        topology.root.add_parser("export", help="write deterministic export v1, v2, or v3"),
+        "export",
     )
     parser.add_argument("course_id")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--version", choices=("1", "2"), default="1")
+    parser.add_argument("--version", choices=("1", "2", "3"), default="1")
 
 
 def _add_doctor(topology: _ParserTopology) -> None:
