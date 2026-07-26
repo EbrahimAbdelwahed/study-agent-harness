@@ -15,6 +15,7 @@ type TypedEventReducer[PayloadT] = Callable[
     [JsonObject, DomainEvent, PayloadT], Mapping[str, JsonValue]
 ]
 type _ErasedReducer = Callable[[JsonObject, DomainEvent, object], Mapping[str, JsonValue]]
+type ProjectionMigrator = Callable[[JsonObject], Mapping[str, JsonValue]]
 
 
 class ReducerRegistrationError(ValueError):
@@ -40,6 +41,24 @@ class EventRegistry:
 
     def __init__(self) -> None:
         self._registrations: dict[tuple[str, int], _Registration] = {}
+        self._projection_migrations: list[ProjectionMigrator] = []
+
+    def register_projection_migration(self, migrator: ProjectionMigrator) -> None:
+        """Register one deterministic, projection-only state migration.
+
+        Migrations are applied lazily when a persisted projection is opened;
+        canonical event envelopes are never rewritten.
+        """
+        if migrator in self._projection_migrations:
+            return
+        self._projection_migrations.append(migrator)
+
+    def migrate_projection(self, state: JsonObject) -> JsonObject:
+        """Apply registered migrations in registration order."""
+        migrated = state
+        for migrator in self._projection_migrations:
+            migrated = freeze_object(migrator(migrated))
+        return migrated
 
     def register[PayloadT](
         self,

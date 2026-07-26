@@ -41,6 +41,8 @@ from .identifiers import (
     SessionId,
     SourceId,
     StatementId,
+    SubstrateId,
+    SubstrateProductionId,
     answer_id_for,
     artifact_event_id_for,
     assessment_event_id_for,
@@ -59,6 +61,9 @@ from .identifiers import (
     session_turn_event_id_for,
     statement_id_for,
     study_context_event_id_for,
+    substrate_id_for,
+    substrate_production_event_id_for,
+    substrate_production_id_for,
 )
 from .provenance import (
     AnswerProvenance,
@@ -95,6 +100,14 @@ from .study_context import (
     StudyContextStatement,
     StudyStatementInput,
     StudyStatementKind,
+)
+from .substrate import (
+    NormalizedTextSubstrate,
+    PageMapEntry,
+    Substrate,
+    SubstrateProduction,
+    SubstrateProductionReceipt,
+    validate_page_map,
 )
 from .tutor_snapshot import (
     TUTOR_SNAPSHOT_SCHEMA_VERSION,
@@ -159,6 +172,8 @@ __all__ = [
     "MorphologyCognitiveFunction",
     "MorphologyFamily",
     "MorphologyFlashcardRole",
+    "NormalizedTextSubstrate",
+    "PageMapEntry",
     "PresentationId",
     "PrincipalKind",
     "PromptProvenance",
@@ -191,6 +206,11 @@ __all__ = [
     "StudySessionRecord",
     "StudyStatementInput",
     "StudyStatementKind",
+    "Substrate",
+    "SubstrateId",
+    "SubstrateProduction",
+    "SubstrateProductionId",
+    "SubstrateProductionReceipt",
     "SummaryExchange",
     "TerminologyEntry",
     "TerminologyPolicy",
@@ -228,4 +248,8 @@ __all__ = [
     "session_turn_event_id_for",
     "statement_id_for",
     "study_context_event_id_for",
+    "substrate_id_for",
+    "substrate_production_event_id_for",
+    "substrate_production_id_for",
+    "validate_page_map",
 ]

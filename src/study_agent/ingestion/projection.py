@@ -8,6 +8,7 @@ from typing import cast
 
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import DomainEvent
+from study_agent.domain.identifiers import BlobId, SubstrateId
 from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument
 from study_agent.state import EventRegistry
 
@@ -24,6 +25,12 @@ from .events import (
     decode_source_revision_selected_event,
 )
 from .identity import CHUNK_MAX_CHARACTERS, CHUNKER_POLICY_VERSION
+from .substrate_events import (
+    SOURCE_SUBSTRATE_PRODUCED,
+    SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION,
+    decode_substrate_produced_event,
+)
+from .substrate_projection import reduce_substrate_produced
 
 
 def _timestamp(value: datetime) -> str:
@@ -103,6 +110,76 @@ def _mapping(value: JsonValue | None, name: str) -> Mapping[str, JsonValue]:
     return value
 
 
+def _legacy_substrate_manifest(
+    normalized_blob: BlobRef, character_length: int
+) -> JsonObject:
+    """Return the bytes-only substrate view shared by v0.1 and v0.2."""
+    return {
+        "blob": _blob(normalized_blob),
+        "character_length": character_length,
+        "substrate_id": f"substrate:sha256:{normalized_blob.checksum_sha256}",
+    }
+
+
+def ensure_legacy_substrates(state: JsonObject) -> Mapping[str, JsonValue]:
+    """Materialize legacy substrates in a persisted v0.1 projection.
+
+    This migration is projection-only: the append-only event stream remains
+    unchanged and the operation is deterministic from the existing source
+    manifests.
+    """
+    sources = _mapping(state.get("sources", {}), "sources")
+    substrates = dict(_mapping(state.get("substrates", {}), "substrates"))
+    changed = False
+    for source_id, source_value in sources.items():
+        source = _mapping(source_value, f"sources.{source_id}")
+        revisions = _mapping(
+            source.get("revisions", {}), f"sources.{source_id}.revisions"
+        )
+        for revision_id, revision_value in revisions.items():
+            revision = _mapping(
+                revision_value,
+                f"sources.{source_id}.revisions.{revision_id}",
+            )
+            manifest = _mapping(
+                revision.get("source"),
+                f"sources.{source_id}.revisions.{revision_id}.source",
+            )
+            normalized = _mapping(
+                manifest.get("normalized_blob"),
+                "normalized_blob",
+            )
+            checksum = normalized.get("checksum_sha256")
+            blob_id = normalized.get("id")
+            byte_length = normalized.get("byte_length")
+            character_length = revision.get("normalized_character_length")
+            if (
+                not isinstance(checksum, str)
+                or not isinstance(blob_id, str)
+                or blob_id != f"sha256:{checksum}"
+                or type(byte_length) is not int
+                or type(character_length) is not int
+                or character_length < 1
+            ):
+                raise ValueError("legacy normalized blob manifest is invalid")
+            substrate_ref = BlobRef(
+                BlobId(blob_id),
+                checksum,
+                byte_length,
+            )
+            substrate_id = f"substrate:sha256:{checksum}"
+            candidate = _legacy_substrate_manifest(substrate_ref, character_length)
+            existing = substrates.get(substrate_id)
+            if existing is not None and existing != candidate:
+                raise ValueError("legacy substrate id already exists with different bytes")
+            if existing is None:
+                substrates[substrate_id] = candidate
+                changed = True
+    if not changed:
+        return state
+    return {**state, "substrates": substrates}
+
+
 def reduce_source_revision(
     state: JsonObject, _: DomainEvent, payload: SourceRevisionIngested
 ) -> Mapping[str, JsonValue]:
@@ -157,7 +234,23 @@ def reduce_source_revision(
         "revisions": revisions,
         "current_revision_id": revision_id,
     }
-    return {**state, "sources": sources, "chunks": chunks}
+    # v0.1 events remain untouched.  Their normalized blob is already a
+    # verified canonical UTF-8 artifact, so the v0.2 substrate view can expose
+    # a deterministic legacy mapping without emitting a second event.
+    normalized_blob = payload.source.normalized_blob
+    legacy_substrate_id = SubstrateId(
+        f"substrate:sha256:{normalized_blob.checksum_sha256}"
+    )
+    substrates = dict(_mapping(state.get("substrates", {}), "substrates"))
+    substrate_key = str(legacy_substrate_id)
+    legacy_manifest = _legacy_substrate_manifest(
+        normalized_blob, payload.source.normalized_character_length
+    )
+    existing_legacy = substrates.get(substrate_key)
+    if existing_legacy is not None and existing_legacy != legacy_manifest:
+        raise ValueError("legacy substrate id already exists with different metadata")
+    substrates[substrate_key] = legacy_manifest
+    return {**state, "sources": sources, "chunks": chunks, "substrates": substrates}
 
 
 def reduce_source_revision_selected(
@@ -187,6 +280,7 @@ def reduce_source_revision_selected(
 
 
 def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoader) -> None:
+    registry.register_projection_migration(ensure_legacy_substrates)
     registry.register_event(
         SOURCE_REVISION_INGESTED,
         SOURCE_REVISION_SCHEMA_VERSION,
@@ -198,4 +292,10 @@ def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoad
         SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
         decode_source_revision_selected_event,
         reduce_source_revision_selected,
+    )
+    registry.register_event(
+        SOURCE_SUBSTRATE_PRODUCED,
+        SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION,
+        lambda event: decode_substrate_produced_event(event, load_blob),
+        reduce_substrate_produced,
     )
