@@ -1,6 +1,6 @@
 # Feature Spec: Knowledge Base v0.2 — Retrieval Architecture
 
-Status: Proposed
+Status: Approved — ADR-0014 accepted
 Owner: Ebrahim
 Date: 2026-07-26
 Parent spec: `docs/specs/oss-study-agent-harness-v0-1.md`
@@ -65,8 +65,11 @@ key could have established.
 correctable by an event. Re-running an extractor with a newer model must never silently discard a
 human correction.
 
-**P9 — Incremental by content hash.** Unit identity is content-derived, so re-ingestion diffs at unit
-level and only changed units are re-indexed and re-embedded (§11).
+**P9 — Incremental by exact input fingerprint.** Unit occurrences remain
+revision-local so citations and duplicate placements are unambiguous.
+Projection input fingerprints identify byte-for-byte reusable derived work
+across revisions, so only changed effective inputs are re-indexed and
+re-embedded (§11 and ADR-0014).
 
 ## 4. Layers
 
@@ -79,8 +82,8 @@ CANONICAL   (immutable, event-authorized, citable)
 
 PROJECTED   (rebuildable from events; not authoritative)
   DocumentTree       document → chapter → section → passage, typed regions
-  RetrievableUnit    the uniform row (§5)
-  UnitLinks          parent/child, anchored figures, item↔unit, prerequisite
+  RetrievableUnit    revision-local canonical occurrence (§5)
+  UnitRelations      typed, provenance-bearing links between known occurrences
   ScopeMembership    named bundles of sources
 
 DERIVED     (model or tool output; cache-keyed; deletable; non-citable)
@@ -92,7 +95,8 @@ DERIVED     (model or tool output; cache-keyed; deletable; non-citable)
   Embedding          vectors over any projection
 
 OPERATIONAL (discardable)
-  FTS5 indexes, vector index, sync state, caches, run checkpoints
+  FTS5 indexes, vector index, scope eligibility, signals, sync state, caches,
+  run checkpoints
 ```
 
 ### 4.1 Substrate
@@ -101,24 +105,36 @@ PDFs have no stable character offsets, so the locally converted Markdown is the 
 Derived mechanically, then **frozen and content-addressed with the tool that produced it**:
 
 ```
-substrate_id  = sha256(normalized_text_bytes)
+substrate_id  = "substrate:sha256:" + sha256(normalized_text_bytes)
 substrate_meta = { source_blob_sha256, converter_name, converter_version,
-                   normalization_version, produced_at, page_map }
+                   normalization_version, page_map_policy_version,
+                   produced_at, page_count?, page_map }
 ```
 
-`page_map` is an ordered list of `(char_offset, page_number)` breakpoints so any span reports a
-human-verifiable page hint without the page being part of citation identity.
+`page_map` is either absent (`page_count = None`, empty entries) when the source
+has no trustworthy pagination, or an ordered list of `(char_offset,
+page_number)` breakpoints. A present map has a positive `page_count`, starts at
+Unicode-code-point offset zero, uses strictly increasing offsets within the
+non-empty substrate and strictly increasing positive page numbers bounded by
+`page_count`. It lets any span report a human-verifiable page hint without the
+page being part of citation identity.
 
-Re-converting produces a **new substrate and revision**. The old one is retained while any citation,
-anchor, or artifact references it. Garbage collection is manual and event-recorded.
+Changed frozen bytes produce a **new substrate**. Changed converter,
+normalization, admission, or page-map policy produces a new immutable
+production receipt even when the bytes match. KB-02 decides when either change
+creates a new revision. Old productions are retained while any citation,
+anchor, or artifact references them. Garbage collection is manual and
+event-recorded.
 
-### 4.2 Supersession
+### 4.2 Selection and succession
 
-A new revision of a `source_id` supersedes earlier ones; default retrieval excludes superseded
-revisions while their citations still resolve, so past answers stay verifiable. Cross-source
-succession (a new textbook edition under a new file) is an explicit `source.superseded_by@1` event.
-Citation migration across editions is never automatic: the KB reports "superseded, successor exists"
-and the agent decides.
+Selecting the current revision of a `source_id` is reversible. Default
+retrieval includes only the current selection while citations into inactive
+revisions still resolve, so past answers stay verifiable. Cross-source
+succession (a new textbook edition under a new file) is a distinct explicit
+`source.superseded_by@1` relation. Citation migration across editions is never
+automatic: the KB reports selection status and any explicit successor, and the
+agent decides.
 
 **There is no recency scoring.** Staleness in a study corpus is edition supersession — structural,
 not a scoring heuristic. A ten-year-old anatomy chapter is not stale.
@@ -131,7 +147,7 @@ retrieval path.
 ```python
 @dataclass(frozen=True, slots=True)
 class RetrievableUnit:
-    unit_id: UnitId                  # content-derived (§5.3)
+    unit_id: UnitId                  # revision-local occurrence (§5.3)
     source_id: SourceId
     revision_id: RevisionId
 
@@ -141,17 +157,15 @@ class RetrievableUnit:
     structural_path: tuple[str, ...] # authored anchors or derived slugs, root → self
 
     canonical_ref: CanonicalRef      # TextSpan(substrate_id, start, end) | BlobRef(sha256)
-    index_projection: ProjectionRef  # derived; what is actually indexed (§7)
-
     meta: UnitMeta                   # source_class, role, trust, review_status,
                                      # flags, ordinal, page_hint, language
-    links: UnitLinks                 # parent, children, figures, items, prerequisites
-    signal: UnitSignal               # rarity, length, structural weight, retrieval frequency
 ```
 
 `canonical_text` is never stored on the unit. It is loaded from the substrate on demand and
 checksum-verified, which is what keeps the index discardable and prevents a tampered index from
-producing unsupported citations.
+producing unsupported citations. Projection assignments, typed relations,
+per-scope index eligibility, and operational signals are separate projections;
+none is required to reconstruct a canonical unit occurrence.
 
 ### 5.1 Unit kinds
 
@@ -174,29 +188,38 @@ both multi-level code chunking (a file emitting file-level *and* function-level 
 message-level promotion inside a long thread: **coarse units win topical queries, fine units win
 specific-term queries, and fusion decides.**
 
-Fine units are not emitted exhaustively. A fragment is promoted to its own unit only if it clears a
-signal gate (§8.4), which keeps the index from filling with low-information rows.
+Typed fragment occurrences are emitted once from canonical structure.
+Per-scope index eligibility applies the signal gate (§8.4), which keeps an
+index from filling with low-information rows without making unit identity
+scope-dependent.
 
 ### 5.3 Identity
 
-Content-derived, consistent with v0.1:
+ADR-0014 separates revision-local occurrence identity from reusable derived
+work:
 
 | Id | Derivation |
 |---|---|
-| `revision_id` | `(source_id, source_blob_sha256, substrate_id, ingest_policy_version)` |
-| `unit_id` | `(revision_id, structural_path, unit_kind, granularity, canonical_ref, unitizer_version)` |
+| `revision_id` | exact v0.2 manifest fields and canonical encoding are owned by KB-02 |
+| `substrate_id` | `substrate:sha256:<sha256(exact frozen normalized UTF-8 bytes)>` |
+| `substrate_production_id` | `substrate-production:sha256:<digest>` over domain-separated canonical JSON of trusted source/blob/substrate/converter/normalization/page-map-policy/page-map/admission bindings; excludes `produced_at` |
+| `unit_id` | `(revision_id, structural path/placement key, unit_kind, granularity, canonical_ref, unitizer_version)` |
+| `lineage_key` | optional stable authored anchor; navigation only, never citation identity |
 | `figure_id` | `sha256(image_bytes)` — identity is the image itself |
 | `anchor_id` | `(figure_id, revision_id, unit_id, char_offset, anchor_policy_version)` |
-| `projection_id` | `(unit_id, projector_name, projector_version, model_id?)` |
-| `artifact_id` | `(kind, input_hash, model_id, prompt_version)` |
+| `projection_input_fingerprint` | `(canonical input bytes, structural context, flags, supplied scope policy, producer policy)` |
+| `projection_id` | `(unit_id, projection_input_fingerprint, producer identity/version, output hash)` |
+| `artifact_id` | `(kind, input hash, producer identity/version, policy/prompt version, output hash)` |
 
 Content-hash figure identity means duplicate figures across editions, lectures, and handouts collapse
-into one record with several anchors, for free.
+into one record with several anchors, for free. Duplicate text passages do not
+collapse: their revision-local placement remains part of `unit_id`.
 
 ## 6. Connectors
 
 The only ingestion extension point. A connector declares what a source is, how to read it, and how to
-emit units — nothing else in the stack changes when one is added.
+emit bounded generic drafts. The canonical unitizer owns final unit identity — nothing else in the
+stack changes when one is added.
 
 ```python
 class SourceConnector(Protocol):
@@ -208,7 +231,7 @@ class SourceConnector(Protocol):
         # "good at answering" hints for the corpus manifest (§12)
     def substrate(self, blob: Blob) -> SubstrateProduction: ...
         # frozen normalized text + page_map, or BlobRef for non-text
-    def units(self, substrate: Substrate, tree: DocumentTree) -> Iterable[UnitDraft]: ...
+    def drafts(self, substrate: Substrate, tree: DocumentTree) -> Iterable[UnitDraft]: ...
     def conformance(self, substrate: Substrate) -> ConformanceReport: ...
 ```
 
@@ -222,10 +245,12 @@ which means "summary", which inline markers set uncertainty flags. Appendix A is
 
 ### 6.1 Conformance, not rejection
 
-Connectors report findings at `error` / `warning` / `info` and **never block ingestion**. A
-non-conformant document ingests with weaker structural guarantees (falling back to window chunking)
-and its findings are recorded on the revision. A corpus that rejects imperfect documents is a corpus
-nobody uses. `doctor` aggregates conformance per scope, which is how dialect drift gets noticed.
+Connectors report non-blocking `ConformanceFinding` values at `error` / `warning` / `info`. A
+non-conformant but safe document ingests with weaker structural guarantees (falling back to window
+chunking) and its findings are recorded on the revision. `AdmissionFailure` is separate and blocks
+unsafe or corrupt inputs: unsupported media, size/path violations, invalid UTF-8, forged hashes or
+identifiers, malformed schemas, corrupt page maps or invalid spans. `doctor` aggregates conformance
+per scope, which is how dialect drift gets noticed.
 
 ## 7. Index projections
 
@@ -239,6 +264,7 @@ quoted, cited, and verified.
 @dataclass(frozen=True, slots=True)
 class IndexProjection:
     unit_id: UnitId
+    input_fingerprint: str          # exact canonical bytes + effective structural/policy context
     handle: str                     # one-line searchable statement of what this unit answers
     summary: str | None             # 1–3 sentences
     key_terms: tuple[str, ...]      # rare/technical tokens — lexically extracted, no model
@@ -248,6 +274,7 @@ class IndexProjection:
     projector_name: str
     projector_version: str
     model_id: str | None            # None ⇒ produced offline
+    output_sha256: str
 ```
 
 Why this beats indexing raw text: raw passages vary wildly in information density and phrasing, short
@@ -259,8 +286,10 @@ are usually bought for.
 
 ### 7.1 Projectors, in cost order
 
-Every unit gets a projection. Which projector produced it is recorded, and quality degrades
-gracefully:
+Every unit gets a projection. `projection_id` binds the occurrence assignment, input fingerprint,
+opaque producer identity/version, and output hash. Cross-revision cache reuse is keyed by
+`input_fingerprint`, never by `unit_id`. Which projector produced it is recorded, and quality
+degrades gracefully:
 
 | Projector | Cost | `handle` source |
 |---|---|---|
@@ -333,8 +362,9 @@ precisely the failure the flag system exists to prevent.
 
 ### 8.4 Fragment promotion gate
 
-Fine-grained units are emitted only when they carry signal, so the index does not fill with
-low-information rows. A fragment is promoted when it clears a weighted threshold over:
+Fine-grained fragment occurrences are materialized deterministically once. Per-scope index
+eligibility is enabled only when a fragment carries signal, so indexes do not fill with
+low-information rows. A fragment becomes eligible when it clears a weighted threshold over:
 
 - contains at least one high-IDF term relative to the scope corpus;
 - meets a minimum length;
@@ -342,6 +372,7 @@ low-information rows. A fragment is promoted when it clears a weighted threshold
 - is referenced by an exam item or a figure anchor.
 
 Thresholds are per-scope configuration with defaults, and the gate is evaluated with no model calls.
+Scope membership therefore never changes canonical fragment identity.
 
 ## 9. Figures
 
@@ -559,7 +590,8 @@ class EvidenceRow:
     figures: tuple[FigureAttachment, ...]
     retriever_provenance: tuple[str, ...]  # which retrievers produced this candidate
     scores: Mapping[str, float]            # per-retriever, fused, rerank
-    revision_status: str                   # current | superseded
+    selection_status: str                  # current | inactive
+    successor_source_id: str | None        # explicit succession, independent of selection
     projection_provenance: str             # which projector produced the matched handle
     derived_content: tuple[str, ...]       # names of derived artifacts included in this row
 ```
@@ -573,15 +605,17 @@ how each row was found.
 
 Re-ingesting a 500-page textbook or a regenerated study document must not re-embed the corpus.
 
-- Unit identity is content-derived (§5.3), so a new revision diffs against the previous one at unit
-  level: unchanged units keep their `unit_id`, their projections, and their embeddings.
+- Unit identity is a revision-local occurrence (§5.3), so a new revision receives new `unit_id`
+  values. Unchanged derived work is reused by `projection_input_fingerprint`, which covers the exact
+  canonical bytes plus effective structural, scope, and producer-policy context.
 - Sync state lives in the same SQLite database as the indexes, so index state and content state cannot
   disagree after a crash.
-- Only added or changed units are projected, embedded, and indexed. Removed units are unindexed; their
-  citations still resolve against the superseded revision.
+- Only added or changed effective inputs are projected, embedded, and indexed. Removed occurrences
+  are unindexed; their citations still resolve against the inactive revision.
 - Projector or embedding-model upgrades invalidate projections by `projection_id` without touching
   unit identity, so the reprocessing scope is exactly the affected derived layer.
-- `derived.artifact_invalidated@1` records every invalidation, so a rebuild is replayable.
+- Cache validity and invalidation audit are operational state derived from fingerprints; they are not
+  canonical domain events.
 
 This is what makes a regenerate-often producer affordable: a study document rewritten with two changed
 sections costs two units of work, not a full reindex.
@@ -622,8 +656,9 @@ degrades exactly the way a shared undifferentiated index degrades.
 ## 13. Citations and verification
 
 ```python
-TextCitation   = (source_id, revision_id, unit_id, substrate_id, start, end, quoted_checksum)
-FigureCitation = (figure_id, blob_sha256, anchor_id?, origin_page?)
+TextCitationV2 = (source_id, revision_id, unit_id, substrate_id,
+                  unicode_codepoint_start, unicode_codepoint_end, utf8_quote_checksum)
+FigureCitationV1 = (figure_id, blob_sha256, anchor_id?, origin_page?)
 DerivedRef     = (artifact_id, kind, projector_or_model, version, subject_citation)
 ```
 
@@ -637,7 +672,7 @@ Verification is mechanical and offline:
 3. Assert the span lies within its declared unit.
 4. Figures: load blob by `blob_sha256`; recompute; compare. `origin_page` is a human-checkable hint,
    never identity.
-5. Report `revision_status`, and whether a successor exists if superseded.
+5. Report `selection_status` and any explicit successor independently.
 
 Any mismatch is an explicit failure, never a silent fallback. A tampered or stale index cannot produce
 a citation the canonical bytes do not support.
@@ -667,12 +702,14 @@ that looked reasonable:
   precision and recall by `anchor_kind` and confidence bucket. **Anchor precision, not similarity
   score, is the metric that governs figure work.**
 - **Figure retrieval eval** — expected figures per query, in inheritance and direct mode.
-- **Citation integrity eval** — corruption, tampering, out-of-unit spans, superseded revisions,
+- **Citation integrity eval** — corruption, tampering, out-of-unit spans, inactive revisions,
   post-reconversion resolution.
 - **Incrementality eval** — change two sections of a large document; assert only affected units are
   reprojected, re-embedded, and reindexed.
-- **Replay eval** — delete every projection and index, replay events, assert byte-identical
-  reconstruction.
+- **Replay eval** — replay canonical events byte-identically; delete deterministic tree, unit,
+  projection and index outputs and assert byte-identical reconstruction for pinned inputs and
+  algorithm/config versions. Retained model/tool output blobs remain exact; after deletion,
+  regeneration promises schema and lineage equivalence and creates a new artifact receipt.
 
 ## 15. Implementation sequence
 
@@ -699,8 +736,9 @@ caps, post-rank expansion, `link_graph`, and the full primitive set including `m
 `concepts`. **At the end of M5 the offline baseline is complete and materially better than today, with
 no model anywhere in the KB.**
 
-**M6 — Incremental maintenance.** Unit-level diffing, sync state colocated with indexes, invalidation
-events. Deliberately before the expensive derived layer, so that layer is affordable when it lands.
+**M6 — Incremental maintenance.** Unit-level diffing, sync state colocated with indexes, and
+fingerprint-derived operational invalidation audit. Deliberately before the expensive derived layer,
+so that layer is affordable when it lands.
 
 **M7 — Figures, structural half.** Figure units, content-hash identity, `exact` and `generated`
 anchors, `derived` anchors from page geometry with computed confidence, duplicate merging, review
