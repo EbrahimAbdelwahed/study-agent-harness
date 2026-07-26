@@ -14,6 +14,7 @@ from study_agent.adapters.workarounds import (
 from study_agent.adapters.workarounds.filesystem import (
     MAX_PDF_BYTES,
     CapturedPdf,
+    _staging_name,
     capture_root_identity,
     publish_markdown,
     validate_portable_path,
@@ -26,6 +27,8 @@ from study_agent.feedback import (
     WorkaroundReceiptStatus,
     WorkaroundTask,
 )
+
+type _PathValue = str | bytes | os.PathLike[str] | os.PathLike[bytes]
 
 
 def _task(pdf: bytes) -> WorkaroundTask:
@@ -365,6 +368,36 @@ def test_identical_existing_output_rechecks_parent_before_success(
     assert calls == 2
 
 
+def test_final_parent_verification_rejects_destination_rebind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"stable\n"
+    destination = tmp_path / "derived.md"
+    destination.write_bytes(output)
+    root, root_identity = capture_root_identity(tmp_path)
+    filesystem = __import__(
+        "study_agent.adapters.workarounds.filesystem", fromlist=["_verify_parent_binding"]
+    )
+    original_verify = filesystem._verify_parent_binding
+    calls = 0
+
+    def verify(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        original_verify(*args, **kwargs)
+        if calls == 2:
+            destination.unlink()
+            destination.write_bytes(output)
+
+    monkeypatch.setattr(
+        "study_agent.adapters.workarounds.filesystem._verify_parent_binding", verify
+    )
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_rebound"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert calls == 2
+    assert destination.read_bytes() == output
+
+
 def test_identical_raced_output_rechecks_parent_before_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -388,7 +421,23 @@ def test_identical_raced_output_rechecks_parent_before_success(
     )
     original_link = os.link
 
-    def race_link(*args: object, **kwargs: object) -> None:
+    def race_link(
+        src: _PathValue,
+        dst: _PathValue,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        if dst != "derived.md":
+            original_link(
+                src,
+                dst,
+                src_dir_fd=src_dir_fd,
+                dst_dir_fd=dst_dir_fd,
+                follow_symlinks=follow_symlinks,
+            )
+            return
         (tmp_path / "derived.md").write_bytes(output)
         raise FileExistsError
 
@@ -456,7 +505,23 @@ def test_publish_reconciles_identical_race_without_replacement(tmp_path: Path) -
     output = b"stable\n"
     original_link = os.link
 
-    def race_link(*args: object, **kwargs: object) -> None:
+    def race_link(
+        src: _PathValue,
+        dst: _PathValue,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        if dst != "derived.md":
+            original_link(
+                src,
+                dst,
+                src_dir_fd=src_dir_fd,
+                dst_dir_fd=dst_dir_fd,
+                follow_symlinks=follow_symlinks,
+            )
+            return
         destination = tmp_path / "derived.md"
         destination.write_bytes(output)
         raise FileExistsError
@@ -469,3 +534,150 @@ def test_publish_reconciles_identical_race_without_replacement(tmp_path: Path) -
     finally:
         os.link = original_link
     assert (tmp_path / "derived.md").read_bytes() == output
+
+
+def test_deterministic_staging_recovers_before_link_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"recoverable\n"
+    root, root_identity = capture_root_identity(tmp_path)
+    staging = tmp_path / _staging_name("derived.md", output)
+    staging.write_bytes(output)
+    original_link = os.link
+
+    def crash_link(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated process loss")
+
+    monkeypatch.setattr(os, "link", crash_link)
+    with pytest.raises(RuntimeError, match="simulated process loss"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert staging.read_bytes() == output
+    assert not (tmp_path / "derived.md").exists()
+
+    monkeypatch.setattr(os, "link", original_link)
+    assert publish_markdown(root, root_identity, "derived.md", output, output_limit=100) == output
+    assert not staging.exists()
+
+
+def test_deterministic_staging_recovers_after_private_link_before_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"recoverable\n"
+    root, root_identity = capture_root_identity(tmp_path)
+    staging = tmp_path / _staging_name("derived.md", output)
+    filesystem = __import__(
+        "study_agent.adapters.workarounds.filesystem", fromlist=["_cleanup_private_temp"]
+    )
+    original_link = os.link
+    original_cleanup = filesystem._cleanup_private_temp
+
+    def crash_after_stage_link(
+        src: _PathValue,
+        dst: _PathValue,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        if dst == staging.name:
+            original_link(
+                src,
+                dst,
+                src_dir_fd=src_dir_fd,
+                dst_dir_fd=dst_dir_fd,
+                follow_symlinks=follow_symlinks,
+            )
+            raise RuntimeError("simulated process loss")
+        original_link(
+            src,
+            dst,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
+
+    monkeypatch.setattr(filesystem, "_cleanup_private_temp", lambda *_: None)
+    monkeypatch.setattr(os, "link", crash_after_stage_link)
+    with pytest.raises(RuntimeError, match="simulated process loss"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert staging.read_bytes() == output
+    assert staging.stat().st_nlink == 2
+    assert not (tmp_path / "derived.md").exists()
+
+    monkeypatch.setattr(filesystem, "_cleanup_private_temp", original_cleanup)
+    monkeypatch.setattr(os, "link", original_link)
+    assert publish_markdown(root, root_identity, "derived.md", output, output_limit=100) == output
+    assert not staging.exists()
+
+
+def test_partial_private_write_never_creates_deterministic_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"recoverable\n"
+    root, root_identity = capture_root_identity(tmp_path)
+    staging = tmp_path / _staging_name("derived.md", output)
+    original_write = os.write
+    wrote_partial = False
+
+    def partial_write(descriptor: int, data: bytes) -> int:
+        nonlocal wrote_partial
+        if not wrote_partial:
+            wrote_partial = True
+            return original_write(descriptor, data[:1])
+        raise OSError("simulated crash during write")
+
+    monkeypatch.setattr(os, "write", partial_write)
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_write_failed"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert wrote_partial
+    assert not staging.exists()
+    assert not (tmp_path / "derived.md").exists()
+
+
+def test_deterministic_staging_recovers_after_link_before_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = b"recoverable\n"
+    root, root_identity = capture_root_identity(tmp_path)
+    staging = tmp_path / _staging_name("derived.md", output)
+    original_unlink = os.unlink
+    failed = False
+
+    def crash_unlink(path: _PathValue, *, dir_fd: int | None = None) -> None:
+        nonlocal failed
+        if path == staging.name and not failed:
+            failed = True
+            raise OSError("simulated process loss")
+        original_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", crash_unlink)
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_publish_failed"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert failed
+    assert (tmp_path / "derived.md").read_bytes() == output
+    assert staging.exists()
+    assert staging.stat().st_nlink == 2
+
+    monkeypatch.setattr(os, "unlink", original_unlink)
+    assert publish_markdown(root, root_identity, "derived.md", output, output_limit=100) == output
+    assert not staging.exists()
+
+
+@pytest.mark.parametrize("kind", ["partial", "mismatched", "unrelated_hardlink"])
+def test_deterministic_staging_rejects_attacker_collisions(
+    tmp_path: Path, kind: str
+) -> None:
+    output = b"expected\n"
+    root, root_identity = capture_root_identity(tmp_path)
+    staging = tmp_path / _staging_name("derived.md", output)
+    if kind == "partial":
+        staging.write_bytes(output[:1])
+    elif kind == "mismatched":
+        staging.write_bytes(b"attacker\n")
+    else:
+        source = tmp_path / "attacker.tmp"
+        source.write_bytes(output)
+        os.link(source, staging)
+    with pytest.raises(PdfMarkdownFilesystemError, match="output_collision"):
+        publish_markdown(root, root_identity, "derived.md", output, output_limit=100)
+    assert not (tmp_path / "derived.md").exists()

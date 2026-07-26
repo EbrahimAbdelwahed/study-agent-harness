@@ -9,7 +9,10 @@ Implemented the optional local `pypdf==6.14.2` workaround for text-bearing
 PDFs. The default harness remains dependency-free. The adapter binds a
 host-trusted input/output pair, captures the exact PDF by descriptor, parses
 only in a resource-limited worker, renders deterministic loss-marked Markdown,
-and publishes without replacing an existing destination.
+and publishes without replacing an existing destination. Candidate fix commit
+The current candidate closes destination-finalization races, recovers deterministic staging
+links after interrupted publication, and exercises real clean-wheel worker
+conversion; exact post-fix CI evidence is pending.
 
 Security and correctness reviews hardened input and output rebinding,
 hardlink/race reconciliation, portable paths, optional-import boundaries, and
@@ -27,18 +30,22 @@ Linux-only; other platforms fail closed.
   lanes.
 - `docs/decisions/ADR-0013--local-pdf-markdown-workaround.md`: recorded the
   accepted boundary.
+- `src/study_agent/adapters/workarounds/filesystem.py`: closed destination
+  finalization races and deterministic staging recovery.
+- `tests/adversarial/adapters/workarounds/test_executor_filesystem.py`:
+  added final-rebind, interrupted-publication, and staging-collision coverage.
+- `.github/workflows/ci.yml`: made the clean-wheel PDF lane perform real
+  spawned-worker conversion from `/tmp`.
 
 ## Verification
 
-- Focused local workaround suite: 41 passed, 1 expected macOS containment skip.
+- Focused local workaround suite: 42 passed, 1 expected macOS containment skip.
 - Local Ruff on the changed surface: passed.
 - Local strict mypy on the changed surface: passed.
 - Full local suite: 1,795 passed, 13 skipped, with one sandbox-only browser
   socket-bind failure; the same full suite passed in GitHub Actions.
-- GitHub Actions run 30204462815 on commit
-  `2329689b7c7f86646cf65d36365ea78c58b60d79`: all six Python 3.12/3.13 base,
-  recall, and PDF jobs passed, including real `pypdf` conversion, Ruff, mypy,
-  package builds, and clean-wheel installs.
+- Exact post-fix GitHub Actions run for the current candidate is pending;
+  no post-fix CI result is claimed here.
 
 ## Notes
 

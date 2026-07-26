@@ -1,6 +1,6 @@
 # Task Bead: GAP-04B first source-format workaround adapter
 
-Status: Done — local PDF-to-Markdown adapter verified 2026-07-26
+Status: Done — local PDF-to-Markdown adapter verified 2026-07-26; post-fix CI pending
 Priority: P2
 Type: tracer-bullet
 Depends On: GAP-03, GAP-04A
@@ -45,8 +45,7 @@ Rationale: PDF/OCR/audio have materially different dependencies and safety.
 ## Verification
 
 - Adapter-specific hostile-file, quality, provenance, and offline tests.
-- GitHub Actions run 30204462815: Python 3.12/3.13 base, recall, and real
-  `pypdf==6.14.2` lanes all passed.
+- Current candidate fix commit; exact post-fix GitHub Actions run is pending.
 
 ## Out Of Scope
 

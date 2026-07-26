@@ -101,8 +101,6 @@ jobs:
           clean-pdf-install/bin/python -m pip install
           --disable-pip-version-check dist/*.whl pypdf==6.14.2
       - run: >-
-          clean-pdf-install/bin/python -c
-          'import pypdf;
-          from study_agent.adapters.workarounds.worker import parse_in_worker;
-          assert pypdf.__version__ == "6.14.2";
-          assert parse_in_worker.__module__ == "study_agent.adapters.workarounds.worker"'
+          cd /tmp &&
+          ${{ github.workspace }}/clean-pdf-install/bin/python -c
+          'import base64,pypdf; from study_agent.adapters.workarounds.worker import parse_in_worker; output=parse_in_worker(base64.b64decode("JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0MSA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDcyIDcyMCBUZCAoSGVsbG8gUERGKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMzMSAwMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDEKJSVFT0YK"),5.0); assert b"Hello PDF" in output and pypdf.__version__=="6.14.2" and parse_in_worker.__module__=="study_agent.adapters.workarounds.worker"'

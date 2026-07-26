@@ -8,6 +8,7 @@ import stat
 import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
+from hashlib import sha256
 from pathlib import Path
 from typing import NamedTuple
 
@@ -61,6 +62,20 @@ class CapturedPdf(NamedTuple):
 
     content: bytes
     identity: _StableIdentity
+
+
+class _StagingState(NamedTuple):
+    content: bytes
+    metadata: os.stat_result
+
+
+class _ExistingOutput(NamedTuple):
+    content: bytes
+    identity: _Identity
+
+    @property
+    def stable_identity(self) -> _StableIdentity:
+        return self.identity[0], self.identity[1]
 
 
 def validate_portable_path(path: str, *, suffix: str) -> tuple[str, ...]:
@@ -301,9 +316,124 @@ def _stable_identity(metadata: os.stat_result) -> _StableIdentity:
     return metadata.st_dev, metadata.st_ino
 
 
+def _staging_name(destination: str, output: bytes) -> str:
+    """Derive a bounded, destination- and content-specific staging name."""
+
+    destination_digest = sha256(destination.encode("utf-8")).hexdigest()
+    output_digest = sha256(output).hexdigest()
+    return f".{destination_digest}.{output_digest}.tmp"
+
+
+def _read_staging(
+    parent: int, name: str, limit: int
+) -> _StagingState | None:
+    """Read a deterministic staging link without following symlinks."""
+
+    try:
+        bound = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise PdfMarkdownFilesystemError("output_unavailable") from None
+    if not stat.S_ISREG(bound.st_mode) or bound.st_nlink not in (1, 2):
+        raise PdfMarkdownFilesystemError("output_collision")
+    try:
+        descriptor = os.open(name, _READ_OPEN_FLAGS, dir_fd=parent)
+    except OSError:
+        raise PdfMarkdownFilesystemError("output_collision") from None
+    try:
+        metadata = os.fstat(descriptor)
+        if _file_identity(metadata) != _file_identity(bound):
+            raise PdfMarkdownFilesystemError("output_rebound")
+        content = _read_bounded(descriptor, limit)
+        if _file_identity(os.fstat(descriptor)) != _file_identity(bound):
+            raise PdfMarkdownFilesystemError("output_rebound")
+        try:
+            final = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except OSError:
+            raise PdfMarkdownFilesystemError("output_rebound") from None
+        if (
+            not stat.S_ISREG(final.st_mode)
+            or final.st_nlink not in (1, 2)
+            or _file_identity(final) != _file_identity(bound)
+        ):
+            raise PdfMarkdownFilesystemError("output_rebound")
+        return _StagingState(content, final)
+    finally:
+        with suppress(OSError):
+            os.close(descriptor)
+
+
+def _unlink_staging(parent: int, name: str) -> None:
+    try:
+        os.unlink(name, dir_fd=parent)
+        os.fsync(parent)
+    except OSError:
+        raise PdfMarkdownFilesystemError("output_publish_failed") from None
+
+
+def _cleanup_private_temp(
+    parent: int, name: str | None, identity: _StableIdentity | None
+) -> None:
+    """Remove only the private inode created by this publication attempt."""
+
+    if name is None or identity is None:
+        return
+    try:
+        metadata = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except OSError:
+        return
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink not in (1, 2)
+        or _stable_identity(metadata) != identity
+    ):
+        return
+    try:
+        os.unlink(name, dir_fd=parent)
+        os.fsync(parent)
+    except OSError:
+        return
+
+
+def _find_reserved_private(
+    parent: int, staging_name: str, identity: _StableIdentity
+) -> str | None:
+    """Find the sole private link reserved for a deterministic stage inode."""
+
+    prefix = f"{staging_name}."
+    suffix = ".private"
+    try:
+        entries = os.listdir(parent)
+    except OSError:
+        raise PdfMarkdownFilesystemError("output_unavailable") from None
+    matches: list[str] = []
+    for entry in entries:
+        if not entry.startswith(prefix) or not entry.endswith(suffix):
+            continue
+        token = entry[len(prefix) : -len(suffix)]
+        if len(token) != 24 or any(character not in "0123456789abcdef" for character in token):
+            continue
+        try:
+            metadata = os.stat(entry, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise PdfMarkdownFilesystemError("output_unavailable") from None
+        if (
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_nlink == 2
+            and _stable_identity(metadata) == identity
+        ):
+            matches.append(entry)
+    if len(matches) > 1:
+        raise PdfMarkdownFilesystemError("output_collision")
+    return matches[0] if matches else None
+
+
 def _read_existing_output(
     parent: int, name: str, limit: int
-) -> tuple[bytes, _StableIdentity] | None:
+) -> _ExistingOutput | None:
     try:
         bound = os.stat(name, dir_fd=parent, follow_symlinks=False)
     except FileNotFoundError:
@@ -325,7 +455,17 @@ def _read_existing_output(
         content = _read_bounded(descriptor, limit)
         if _file_identity(os.fstat(descriptor)) != _file_identity(bound):
             raise PdfMarkdownFilesystemError("output_rebound")
-        return content, _stable_identity(bound)
+        try:
+            final = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except OSError:
+            raise PdfMarkdownFilesystemError("output_rebound") from None
+        if (
+            not stat.S_ISREG(final.st_mode)
+            or final.st_nlink != 1
+            or _file_identity(final) != _file_identity(bound)
+        ):
+            raise PdfMarkdownFilesystemError("output_rebound")
+        return _ExistingOutput(content, _file_identity(bound))
     finally:
         with suppress(OSError):
             os.close(descriptor)
@@ -347,72 +487,223 @@ def publish_markdown(
     parts = validate_portable_path(relative_path, suffix=".md")
     with _open_parent(root, root_identity, parts) as (parent, directory_chain):
         _verify_parent_binding(root, root_identity, parts, directory_chain)
-        existing = _read_existing_output(parent, parts[-1], output_limit)
-        if existing is not None:
-            existing_bytes, existing_identity = existing
-            if input_identity is not None and existing_identity == input_identity:
-                raise PdfMarkdownFilesystemError("input_output_alias")
-            if existing_bytes == output:
-                _verify_parent_binding(root, root_identity, parts, directory_chain)
-                return existing_bytes
-            raise PdfMarkdownFilesystemError("output_collision")
-
-        temp_name = f".{parts[-1]}.{secrets.token_hex(12)}.tmp"
-        descriptor: int | None = None
-        try:
-            descriptor = os.open(temp_name, _OUTPUT_OPEN_FLAGS, 0o600, dir_fd=parent)
-            written = 0
-            while written < len(output):
+        destination_name = parts[-1]
+        staging_name = _staging_name(destination_name, output)
+        staging = _read_staging(parent, staging_name, output_limit)
+        staging_identity: _StableIdentity | None = None
+        if staging is not None:
+            if staging.content != output:
+                raise PdfMarkdownFilesystemError("output_collision")
+            staging_identity = _stable_identity(staging.metadata)
+            if staging.metadata.st_nlink == 2:
                 try:
-                    count = os.write(descriptor, output[written:])
+                    destination = os.stat(
+                        destination_name, dir_fd=parent, follow_symlinks=False
+                    )
+                except FileNotFoundError:
+                    private = _find_reserved_private(
+                        parent, staging_name, staging_identity
+                    )
+                    if private is None:
+                        raise PdfMarkdownFilesystemError("output_collision") from None
+                    _cleanup_private_temp(parent, private, staging_identity)
+                    staging = _read_staging(parent, staging_name, output_limit)
+                    if (
+                        staging is None
+                        or staging.content != output
+                        or staging.metadata.st_nlink != 1
+                        or _stable_identity(staging.metadata) != staging_identity
+                    ):
+                        raise PdfMarkdownFilesystemError("output_rebound") from None
                 except OSError:
-                    raise PdfMarkdownFilesystemError("output_write_failed") from None
-                if count <= 0:
-                    raise PdfMarkdownFilesystemError("output_write_failed")
-                written += count
-            os.fsync(descriptor)
-            os.close(descriptor)
-            descriptor = None
+                    raise PdfMarkdownFilesystemError("output_unavailable") from None
+                else:
+                    if (
+                        not stat.S_ISREG(destination.st_mode)
+                        or destination.st_nlink != 2
+                        or _stable_identity(destination) != staging_identity
+                    ):
+                        raise PdfMarkdownFilesystemError("output_collision")
+                    _unlink_staging(parent, staging_name)
+                    recovered = _read_existing_output(
+                        parent, destination_name, output_limit
+                    )
+                    if (
+                        recovered is None
+                        or recovered.stable_identity != staging_identity
+                        or recovered.content != output
+                    ):
+                        raise PdfMarkdownFilesystemError("output_publish_failed")
+                    if (
+                        input_identity is not None
+                        and recovered.stable_identity == input_identity
+                    ):
+                        raise PdfMarkdownFilesystemError("input_output_alias")
+                    _verify_parent_binding(root, root_identity, parts, directory_chain)
+                    final = _read_existing_output(parent, destination_name, output_limit)
+                    if (
+                        final is None
+                        or final.identity != recovered.identity
+                        or final.content != output
+                    ):
+                        raise PdfMarkdownFilesystemError("output_rebound")
+                    return final.content
+            existing = _read_existing_output(parent, destination_name, output_limit)
+            if existing is not None:
+                if (
+                    input_identity is not None
+                    and existing.stable_identity == input_identity
+                ):
+                    raise PdfMarkdownFilesystemError("input_output_alias")
+                if existing.content != output:
+                    raise PdfMarkdownFilesystemError("output_collision")
+                _unlink_staging(parent, staging_name)
+                _verify_parent_binding(root, root_identity, parts, directory_chain)
+                final = _read_existing_output(parent, destination_name, output_limit)
+                if (
+                    final is None
+                    or final.identity != existing.identity
+                    or final.content != output
+                ):
+                    raise PdfMarkdownFilesystemError("output_rebound")
+                return final.content
+        else:
+            existing = _read_existing_output(parent, destination_name, output_limit)
+            if existing is not None:
+                existing_bytes = existing.content
+                if (
+                    input_identity is not None
+                    and existing.stable_identity == input_identity
+                ):
+                    raise PdfMarkdownFilesystemError("input_output_alias")
+                if existing_bytes == output:
+                    _verify_parent_binding(root, root_identity, parts, directory_chain)
+                    final = _read_existing_output(parent, destination_name, output_limit)
+                    if (
+                        final is None
+                        or final.identity != existing.identity
+                        or final.content != output
+                    ):
+                        raise PdfMarkdownFilesystemError("output_rebound")
+                    return final.content
+                raise PdfMarkdownFilesystemError("output_collision")
+
+        descriptor: int | None = None
+        private_name: str | None = None
+        private_identity: _StableIdentity | None = None
+        try:
+            if staging is None:
+                private_name = f"{staging_name}.{secrets.token_hex(12)}.private"
+                try:
+                    descriptor = os.open(
+                        private_name, _OUTPUT_OPEN_FLAGS, 0o600, dir_fd=parent
+                    )
+                except FileExistsError:
+                    raise PdfMarkdownFilesystemError("output_publish_failed") from None
+                written = 0
+                while written < len(output):
+                    try:
+                        count = os.write(descriptor, output[written:])
+                    except OSError:
+                        raise PdfMarkdownFilesystemError("output_write_failed") from None
+                    if count <= 0:
+                        raise PdfMarkdownFilesystemError("output_write_failed")
+                    written += count
+                os.fsync(descriptor)
+                os.close(descriptor)
+                descriptor = None
+                private_state = _read_staging(parent, private_name, output_limit)
+                if (
+                    private_state is None
+                    or private_state.content != output
+                    or private_state.metadata.st_nlink != 1
+                ):
+                    raise PdfMarkdownFilesystemError("output_rebound")
+                private_identity = _stable_identity(private_state.metadata)
+                try:
+                    os.link(
+                        private_name,
+                        staging_name,
+                        src_dir_fd=parent,
+                        dst_dir_fd=parent,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    staging = _read_staging(parent, staging_name, output_limit)
+                    if (
+                        staging is None
+                        or staging.content != output
+                        or staging.metadata.st_nlink != 1
+                    ):
+                        raise PdfMarkdownFilesystemError("output_collision") from None
+                    staging_identity = _stable_identity(staging.metadata)
+                else:
+                    staging = _read_staging(parent, staging_name, output_limit)
+                    if (
+                        staging is None
+                        or staging.content != output
+                        or staging.metadata.st_nlink != 2
+                        or _stable_identity(staging.metadata) != private_identity
+                    ):
+                        raise PdfMarkdownFilesystemError("output_rebound")
+                    staging_identity = private_identity
+                _cleanup_private_temp(parent, private_name, private_identity)
+            if staging_identity is None:
+                raise PdfMarkdownFilesystemError("output_publish_failed")
             try:
                 _verify_parent_binding(root, root_identity, parts, directory_chain)
                 os.link(
-                    temp_name,
-                    parts[-1],
+                    staging_name,
+                    destination_name,
                     src_dir_fd=parent,
                     dst_dir_fd=parent,
                     follow_symlinks=False,
                 )
             except FileExistsError:
-                raced = _read_existing_output(parent, parts[-1], output_limit)
+                raced = _read_existing_output(parent, destination_name, output_limit)
                 if raced is not None:
-                    if input_identity is not None and raced[1] == input_identity:
+                    if (
+                        input_identity is not None
+                        and raced.stable_identity == input_identity
+                    ):
                         raise PdfMarkdownFilesystemError("input_output_alias") from None
-                    if raced[0] == output:
+                    if raced.content == output:
+                        _unlink_staging(parent, staging_name)
                         _verify_parent_binding(root, root_identity, parts, directory_chain)
-                        return raced[0]
+                        final = _read_existing_output(
+                            parent, destination_name, output_limit
+                        )
+                        if (
+                            final is None
+                            or final.identity != raced.identity
+                            or final.content != output
+                        ):
+                            raise PdfMarkdownFilesystemError("output_rebound") from None
+                        return final.content
                 raise PdfMarkdownFilesystemError("output_collision") from None
             except OSError:
                 raise PdfMarkdownFilesystemError("output_publish_failed") from None
             try:
-                os.unlink(temp_name, dir_fd=parent)
+                _unlink_staging(parent, staging_name)
             except OSError:
                 raise PdfMarkdownFilesystemError("output_publish_failed") from None
-            os.fsync(parent)
-            published = _read_existing_output(parent, parts[-1], output_limit)
             _verify_parent_binding(root, root_identity, parts, directory_chain)
-            if published is None:
-                raise PdfMarkdownFilesystemError("output_publish_failed")
-            if input_identity is not None and published[1] == input_identity:
+            published = _read_existing_output(parent, destination_name, output_limit)
+            if published is None or published.stable_identity != staging_identity:
+                raise PdfMarkdownFilesystemError("output_rebound")
+            if (
+                input_identity is not None
+                and published.stable_identity == input_identity
+            ):
                 raise PdfMarkdownFilesystemError("input_output_alias")
-            if published[0] != output:
+            if published.content != output:
                 raise PdfMarkdownFilesystemError("output_publish_failed")
-            return published[0]
+            return published.content
         finally:
             if descriptor is not None:
                 with suppress(OSError):
                     os.close(descriptor)
-            with suppress(OSError):
-                os.unlink(temp_name, dir_fd=parent)
+            _cleanup_private_temp(parent, private_name, private_identity)
 
 
 def capture_root_identity(root: str | Path) -> tuple[Path, _DirectoryIdentity]:
