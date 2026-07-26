@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import multiprocessing
 import os
+import sys
 from collections.abc import Callable, Sequence
 from multiprocessing.connection import Connection
 from typing import Any, Final, Protocol, cast
@@ -43,9 +44,9 @@ _PdfReaderFactory = Callable[..., _PdfReader]
 
 
 def containment_supported() -> bool:
-    """Return whether the reference POSIX resource contract is available."""
+    """Return whether the verified Linux resource contract is available."""
 
-    if os.name != "posix":
+    if os.name != "posix" or not sys.platform.startswith("linux"):
         return False
     try:
         import resource

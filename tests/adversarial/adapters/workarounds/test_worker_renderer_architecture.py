@@ -56,6 +56,13 @@ def test_worker_fails_closed_when_containment_is_unavailable(
     assert "pypdf" not in sys.modules
 
 
+def test_worker_does_not_claim_unverified_darwin_containment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert worker.containment_supported() is False
+
+
 def test_workaround_adapter_has_no_network_model_shell_or_dynamic_plugin_imports() -> None:
     root = Path(__file__).parents[4] / "src" / "study_agent" / "adapters" / "workarounds"
     forbidden = {
