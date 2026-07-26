@@ -9,6 +9,7 @@ import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import NamedTuple
 
 MAX_PDF_BYTES = 16 * 1024 * 1024
 PDF_MAGIC = b"%PDF-"
@@ -50,6 +51,13 @@ class PdfMarkdownFilesystemError(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class CapturedPdf(NamedTuple):
+    """Bytes and descriptor identity captured in one binding operation."""
+
+    content: bytes
+    identity: _Identity
 
 
 def validate_portable_path(path: str, *, suffix: str) -> tuple[str, ...]:
@@ -158,7 +166,9 @@ def _read_bounded(descriptor: int, limit: int) -> bytes:
     return content
 
 
-def capture_pdf(root: Path, root_identity: _DirectoryIdentity, relative_path: str) -> bytes:
+def capture_pdf(
+    root: Path, root_identity: _DirectoryIdentity, relative_path: str
+) -> CapturedPdf:
     """Capture an exact regular PDF by descriptor and verify its name binding."""
 
     parts = validate_portable_path(relative_path, suffix=".pdf")
@@ -201,7 +211,7 @@ def capture_pdf(root: Path, root_identity: _DirectoryIdentity, relative_path: st
         _verify_input_binding(
             root, root_identity, parts, tuple(expected_directories), _file_identity(after)
         )
-        return content
+        return CapturedPdf(content, _file_identity(after))
     except PdfMarkdownFilesystemError:
         raise
     except OSError:
@@ -344,35 +354,6 @@ def publish_markdown(
                 os.unlink(temp_name, dir_fd=parent)
 
 
-def input_identity(root: Path, root_identity: _DirectoryIdentity, relative_path: str) -> _Identity:
-    """Return a regular-file identity after a successful input capture."""
-
-    parts = validate_portable_path(relative_path, suffix=".pdf")
-    descriptors: list[int] = []
-    try:
-        root_descriptor = _open_root(root, root_identity)
-        descriptors.append(root_descriptor)
-        parent = root_descriptor
-        for component in parts[:-1]:
-            descriptor = os.open(component, _DIRECTORY_OPEN_FLAGS, dir_fd=parent)
-            descriptors.append(descriptor)
-            parent = descriptor
-        descriptor = os.open(parts[-1], _READ_OPEN_FLAGS, dir_fd=parent)
-        descriptors.append(descriptor)
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise PdfMarkdownFilesystemError("input_not_regular_file")
-        return _file_identity(metadata)
-    except PdfMarkdownFilesystemError:
-        raise
-    except OSError:
-        raise PdfMarkdownFilesystemError("input_unavailable") from None
-    finally:
-        for descriptor in reversed(descriptors):
-            with suppress(OSError):
-                os.close(descriptor)
-
-
 def capture_root_identity(root: str | Path) -> tuple[Path, _DirectoryIdentity]:
     """Normalize a trusted root lexically and capture its descriptor identity."""
 
@@ -395,10 +376,10 @@ def capture_root_identity(root: str | Path) -> tuple[Path, _DirectoryIdentity]:
 __all__ = [
     "MAX_PDF_BYTES",
     "PDF_MAGIC",
+    "CapturedPdf",
     "PdfMarkdownFilesystemError",
     "capture_pdf",
     "capture_root_identity",
-    "input_identity",
     "publish_markdown",
     "validate_portable_path",
 ]

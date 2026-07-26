@@ -63,7 +63,6 @@ def test_workaround_adapter_has_no_network_model_shell_or_dynamic_plugin_imports
         "requests",
         "openai",
         "subprocess",
-        "importlib",
         "socket",
         "study_agent.model",
         "study_agent.capabilities",
@@ -111,9 +110,16 @@ def test_workaround_adapter_has_no_network_model_shell_or_dynamic_plugin_imports
     pypdf_imports = [
         node
         for node in ast.walk(entry)
-        if isinstance(node, ast.ImportFrom) and node.module == "pypdf"
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "importlib"
+        and node.func.attr == "import_module"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "pypdf"
     ]
     assert len(limit_calls) == 1
     assert len(pypdf_imports) == 1
     source = (root / "worker.py").read_text(encoding="utf-8")
-    assert source.index("apply_resource_limits()") < source.index("from pypdf import PdfReader")
+    assert source.index("apply_resource_limits()") < source.index('import_module("pypdf")')

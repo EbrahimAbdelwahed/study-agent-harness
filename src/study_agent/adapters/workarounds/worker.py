@@ -7,10 +7,12 @@ any containment or worker protocol failure as an attempted failure.
 
 from __future__ import annotations
 
+import importlib
 import multiprocessing
 import os
+from collections.abc import Callable, Sequence
 from multiprocessing.connection import Connection
-from typing import Any, Final
+from typing import Any, Final, Protocol, cast
 
 from .renderer import MAX_PDF_MARKDOWN_OUTPUT_BYTES, canonical_pdf_markdown
 
@@ -26,6 +28,18 @@ class PdfWorkerError(RuntimeError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class _PdfPage(Protocol):
+    def extract_text(self) -> str | None: ...
+
+
+class _PdfReader(Protocol):
+    is_encrypted: bool
+    pages: Sequence[_PdfPage]
+
+
+_PdfReaderFactory = Callable[..., _PdfReader]
 
 
 def containment_supported() -> bool:
@@ -48,11 +62,8 @@ def _set_limit(resource_module: Any, name: str, target: int) -> None:
     """Set one soft limit without raising a hard limit on the host."""
 
     constant = getattr(resource_module, name)
-    current_soft, current_hard = resource_module.getrlimit(constant)
-    if current_hard == resource_module.RLIM_INFINITY:
-        hard = target
-    else:
-        hard = min(current_hard, target)
+    _, current_hard = resource_module.getrlimit(constant)
+    hard = target if current_hard == resource_module.RLIM_INFINITY else min(current_hard, target)
     if hard <= 0:
         raise PdfWorkerError("resource_containment_unavailable")
     resource_module.setrlimit(constant, (min(target, hard), hard))
@@ -84,9 +95,9 @@ def _worker_entry(input_bytes: bytes, sender: Connection[Any]) -> None:
         apply_resource_limits()
         import io
 
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(input_bytes), strict=True)
+        pypdf_module = importlib.import_module("pypdf")
+        reader_factory = cast(_PdfReaderFactory, pypdf_module.PdfReader)
+        reader = reader_factory(io.BytesIO(input_bytes), strict=True)
         if reader.is_encrypted:
             raise PdfWorkerError("encrypted_pdf")
         page_count = len(reader.pages)
@@ -104,13 +115,13 @@ def _worker_entry(input_bytes: bytes, sender: Connection[Any]) -> None:
         try:
             sender.send((False, error.code))
         except (BrokenPipeError, EOFError, OSError):
-            pass
+            return
     except Exception:
         # Do not expose parser internals or unbounded exception text over IPC.
         try:
             sender.send((False, "malformed_or_unsupported_pdf"))
         except (BrokenPipeError, EOFError, OSError):
-            pass
+            return
     finally:
         sender.close()
 

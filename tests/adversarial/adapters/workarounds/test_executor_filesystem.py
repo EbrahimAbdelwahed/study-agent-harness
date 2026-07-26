@@ -13,6 +13,8 @@ from study_agent.adapters.workarounds import (
 )
 from study_agent.adapters.workarounds.filesystem import (
     MAX_PDF_BYTES,
+    CapturedPdf,
+    capture_root_identity,
     publish_markdown,
     validate_portable_path,
 )
@@ -256,6 +258,37 @@ def test_input_digest_mismatch_and_source_rebinding_leave_no_output(
     receipt = executor.execute(task, PDF_MARKDOWN_MANIFEST.identity)
     assert receipt.status is WorkaroundReceiptStatus.ATTEMPTED_FAILED
     assert not (tmp_path / "derived.md").exists()
+
+
+def test_executor_uses_identity_captured_with_the_bytes_without_reopening_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = b"%PDF-1.7\ncaptured"
+    task = _task(pdf)
+    (tmp_path / "input.pdf").write_bytes(pdf)
+    root, root_identity = capture_root_identity(tmp_path)
+    captured_identity = (1, 2, 3, 4, 5, 6, 7)
+    monkeypatch.setattr(
+        "study_agent.adapters.workarounds.pdf_markdown.capture_pdf",
+        lambda *_: CapturedPdf(pdf, captured_identity),
+    )
+    monkeypatch.setattr(
+        "study_agent.adapters.workarounds.pdf_markdown.parse_in_worker",
+        lambda *_: b"# derived\n",
+    )
+    observed: dict[str, object] = {}
+
+    def publish(*args: object, **kwargs: object) -> bytes:
+        observed["input_identity"] = kwargs["input_identity"]
+        return b"# derived\n"
+
+    monkeypatch.setattr("study_agent.adapters.workarounds.pdf_markdown.publish_markdown", publish)
+    executor = _executor(tmp_path, pdf)
+    receipt = executor.execute(task, PDF_MARKDOWN_MANIFEST.identity)
+    assert receipt.status is WorkaroundReceiptStatus.ATTEMPTED_SUCCEEDED
+    assert observed["input_identity"] == captured_identity
+    assert root == tmp_path
+    assert root_identity[0] > 0
 
 
 def test_collision_reconciliation_is_byte_exact_and_never_overwrites(

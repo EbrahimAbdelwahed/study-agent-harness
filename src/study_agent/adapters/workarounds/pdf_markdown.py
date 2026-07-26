@@ -20,7 +20,6 @@ from .filesystem import (
     PdfMarkdownFilesystemError,
     capture_pdf,
     capture_root_identity,
-    input_identity,
     publish_markdown,
     validate_portable_path,
 )
@@ -125,19 +124,15 @@ class PdfMarkdownExecutor:
             raise PdfMarkdownExecutionError("approval_task_mismatch")
 
         try:
-            content = capture_pdf(
+            captured = capture_pdf(
                 self._binding.trusted_root,
                 self._root_identity,
                 self._binding.input_relative_path,
             )
+            content = captured.content
             input_fingerprint = sha256(content).hexdigest()
             if input_fingerprint != self._binding.input_fingerprint:
                 return self._failed_receipt("input_digest_mismatch")
-            source_identity = input_identity(
-                self._binding.trusted_root,
-                self._root_identity,
-                self._binding.input_relative_path,
-            )
             output = parse_in_worker(content, self._wall_timeout_seconds)
             if len(output) > MAX_PDF_MARKDOWN_OUTPUT_BYTES:
                 return self._failed_receipt("output_limit_exceeded")
@@ -147,7 +142,7 @@ class PdfMarkdownExecutor:
                 self._binding.output_relative_path,
                 output,
                 output_limit=MAX_PDF_MARKDOWN_OUTPUT_BYTES,
-                input_identity=source_identity,
+                input_identity=captured.identity,
             )
             output_fingerprint = sha256(published).hexdigest()
             provenance = pdf_markdown_provenance_bytes(
