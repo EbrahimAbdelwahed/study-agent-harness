@@ -1,6 +1,6 @@
 # KB-09A: Lexical projector
 
-Status: Proposed
+Status: Complete
 Risk: Medium
 Depends On: KB-08
 Parent: KB-09
@@ -12,14 +12,14 @@ with corpus-IDF key terms and versioned per-scope aliases.
 
 ## Acceptance criteria
 
-- [ ] IDF computation, tokenization, normalization, stop policy, tie-breaking,
+- [x] IDF computation, tokenization, normalization, stop policy, tie-breaking,
   and term caps are versioned and deterministic.
-- [ ] Rare technical identifiers and Unicode medical terms remain searchable.
-- [ ] Alias dictionaries are bounded, canonical, per-scope inputs and cannot
+- [x] Rare technical identifiers and Unicode medical terms remain searchable.
+- [x] Alias dictionaries are bounded, canonical, per-scope inputs and cannot
   inject query syntax.
-- [ ] Empty/small corpora and alias collisions have explicit behavior.
-- [ ] Same unit/corpus/policy produces byte-identical projection.
-- [ ] No model, embedding, external terminology source, or SQLite import enters
+- [x] Empty/small corpora and alias collisions have explicit behavior.
+- [x] Same unit/corpus/policy produces byte-identical projection.
+- [x] No model, embedding, external terminology source, or SQLite import enters
   the projector.
 
 ## Verification
