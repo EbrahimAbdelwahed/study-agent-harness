@@ -215,6 +215,14 @@ def test_materialization_rejects_fragment_from_another_revision() -> None:
         )
 
 
+def test_duplicate_promoted_occurrences_are_rejected() -> None:
+    _, _, fragments = make_context()
+    policy = FragmentPromotionPolicy(minimum_length=1, threshold=0.0)
+    decision = policy.decide(fragments[0])
+    with pytest.raises(ValueError, match="repeat"):
+        promoted_unit_drafts((decision, decision))
+
+
 def test_model_provider_import_firewall_and_no_duplicate_identity_scheme() -> None:
     import ast
     from pathlib import Path

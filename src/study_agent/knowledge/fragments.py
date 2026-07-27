@@ -20,7 +20,7 @@ from study_agent.domain.fragments import (
     FragmentSignals,
     SignalContribution,
 )
-from study_agent.domain.identifiers import RevisionId, SourceId, substrate_id_for
+from study_agent.domain.identifiers import NodeId, RevisionId, SourceId, substrate_id_for
 from study_agent.domain.tree import DialectProfile, DocumentTree, RegionKind
 from study_agent.domain.units import RetrievableUnit, UnitKind, UnitMeta
 
@@ -324,12 +324,17 @@ def promoted_unit_drafts(
     if len(entries) > MAX_FRAGMENTS:
         raise ValueError("promotion decision collection is too large")
     drafts: list[UnitDraft] = []
+    seen: set[tuple[NodeId, FragmentKind, tuple[int, int]]] = set()
     for decision in entries:
         if not isinstance(decision, FragmentPromotionDecision):
             raise TypeError("promotion decisions must be typed values")
         if not decision.promoted:
             continue
         fragment = decision.fragment
+        key = (fragment.node_id, fragment.kind, fragment.span)
+        if key in seen:
+            raise ValueError("promotion decisions must not repeat a fragment occurrence")
+        seen.add(key)
         drafts.append(
             UnitDraft(
                 _FRAGMENT_TO_UNIT[fragment.kind],
