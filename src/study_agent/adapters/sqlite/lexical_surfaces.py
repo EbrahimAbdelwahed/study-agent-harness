@@ -96,6 +96,20 @@ def _expected_table_names() -> set[str]:
     return names
 
 
+def _global_receipt(
+    rows: Sequence[tuple[str, str, str, int, str]],
+) -> tuple[int, str]:
+    """Derive the legacy global schema fields from per-scope authorities."""
+
+    if not rows:
+        return 0, "0" * 64
+    fingerprint = sha256(
+        b"study-agent/lexical-global-catalog/v1\0"
+        + canonical_json_bytes({"scopes": tuple(rows)})
+    ).hexdigest()
+    return _scope_generation(ScopeId("lexical-global"), fingerprint), fingerprint
+
+
 class SQLiteLexicalCapabilityError(RuntimeError):
     """The host SQLite build cannot provide the required FTS5 trigram surface."""
 
@@ -345,6 +359,18 @@ class SQLiteLexicalSurfaces:
         }
 
     @staticmethod
+    def _reserved_table_names(connection: sqlite3.Connection) -> set[str]:
+        names = SQLiteLexicalSurfaces._table_names(connection)
+        surfaces = tuple(_SURFACE_TABLES.values())
+        return {
+            name
+            for name in names
+            if name.startswith("kb_lex_")
+            or name in surfaces
+            or any(name.startswith(f"{surface}_") for surface in surfaces)
+        }
+
+    @staticmethod
     def _columns(connection: sqlite3.Connection, table: str) -> tuple[str, ...]:
         return tuple(
             str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
@@ -352,7 +378,7 @@ class SQLiteLexicalSurfaces:
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
-        names = SQLiteLexicalSurfaces._table_names(connection)
+        names = SQLiteLexicalSurfaces._reserved_table_names(connection)
         if names != _expected_table_names():
             raise LexicalIndexIntegrityError("lexical schema has unknown or missing tables")
         expected_columns = {
@@ -414,6 +440,13 @@ class SQLiteLexicalSurfaces:
             value = str(row[4])
             if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
                 raise LexicalIndexIntegrityError("lexical scope receipt fingerprint is invalid")
+        receipt_state = tuple(
+            (str(row[0]), str(row[1]), str(row[2]), int(row[3]), str(row[4]))
+            for row in receipt_rows
+        )
+        expected_generation, expected_fingerprint = _global_receipt(receipt_state)
+        if int(rows[0][3]) != expected_generation or fingerprint != expected_fingerprint:
+            raise LexicalIndexIntegrityError("lexical global receipt is stale or forged")
 
     @staticmethod
     def _create_surface(connection: sqlite3.Connection, table: str) -> None:
@@ -575,12 +608,17 @@ class SQLiteLexicalSurfaces:
                     fingerprint,
                 ),
             )
-        current = connection.execute(
-            "SELECT generation FROM kb_lex_schema WHERE schema_name = ?",
-            (LEXICAL_SCHEMA_VERSION,),
-        ).fetchone()
-        global_generation = int(current[0]) + 1 if current is not None else 1
-        global_fingerprint = _catalog_fingerprint(bindings)
+        receipt_rows = connection.execute(
+            """
+            SELECT scope_id, schema_version, index_version, generation, catalog_fingerprint
+              FROM kb_lex_receipts ORDER BY scope_id
+            """
+        ).fetchall()
+        receipt_state = tuple(
+            (str(row[0]), str(row[1]), str(row[2]), int(row[3]), str(row[4]))
+            for row in receipt_rows
+        )
+        global_generation, global_fingerprint = _global_receipt(receipt_state)
         connection.execute(
             """
             UPDATE kb_lex_schema

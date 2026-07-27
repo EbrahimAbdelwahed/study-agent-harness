@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from study_agent.adapters.sqlite import (
     LexicalIndexIntegrityError,
+    SQLiteFtsRetrieval,
     SQLiteLexicalSurfaces,
 )
 from study_agent.adapters.sqlite.literal_query import compile_medical_trigram_query
@@ -38,6 +40,12 @@ class Catalog:
 
     def bindings(self, scope_id: ScopeId) -> tuple[LexicalProjectionBinding, ...]:
         return tuple(item for item in self.values if item.scope_id == scope_id)
+
+
+class EmptyRetrievalCatalog:
+    def documents(self, *, include_superseded: bool = False) -> tuple[object, ...]:
+        del include_superseded
+        return ()
 
 
 def binding(
@@ -102,6 +110,8 @@ def test_medical_substrings_and_identifiers_are_literal_and_surface_local(tmp_pa
         LexicalQuery(ScopeId("exam-a"), "il-6", LexicalSurface.TERMS)
     )
     assert [item.unit_id for item in terms.candidates] == [value.unit_id]
+    with pytest.raises(ValueError, match="query_fingerprint"):
+        replace(terms.candidates[0], query_fingerprint="")
     assert compile_medical_trigram_query('OR "NEAR" column:value; DROP TABLE x') == (
         '"or" AND "near" AND "column" AND "value" AND "drop" AND "table" AND "x"'
     )
@@ -170,7 +180,7 @@ def test_scope_receipt_generation_and_fingerprint_are_bound(tmp_path: Path) -> N
             ("exam-a",),
         )
         connection.commit()
-    with pytest.raises(LexicalIndexIntegrityError, match="generation"):
+    with pytest.raises(LexicalIndexIntegrityError, match="stale or forged"):
         retrieval.search(LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL))
 
     (tmp_path / "fingerprint").mkdir()
@@ -181,7 +191,7 @@ def test_scope_receipt_generation_and_fingerprint_are_bound(tmp_path: Path) -> N
             ("f" * 64, "exam-a"),
         )
         connection.commit()
-    with pytest.raises(LexicalIndexIntegrityError, match="fingerprint"):
+    with pytest.raises(LexicalIndexIntegrityError, match="stale or forged"):
         retrieval.search(
             LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL)
         )
@@ -194,7 +204,7 @@ def test_unknown_and_unbound_reserved_schema_fail_closed(tmp_path: Path) -> None
     retrieval = adapter(tmp_path / "ready", (value,))
     del retrieval
     with sqlite3.connect(tmp_path / "ready" / "kb.sqlite3") as connection:
-        connection.execute("CREATE TABLE unexpected_lexical_state(value TEXT)")
+        connection.execute("CREATE TABLE kb_lex_unexpected_state(value TEXT)")
         connection.commit()
     with pytest.raises(LexicalIndexIntegrityError, match="unknown or missing"):
         SQLiteLexicalSurfaces(tmp_path / "ready" / "kb.sqlite3", Catalog((value,)))
@@ -225,6 +235,45 @@ def test_schema_initialization_rolls_back_every_ddl_on_fault(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         ).fetchall()
     assert tables == []
+
+
+def test_schema_rejects_wrong_tokenizer_and_newer_row_but_coexists_with_v01(
+    tmp_path: Path,
+) -> None:
+    value = binding("canonical anatomy")
+    retrieval = adapter(tmp_path, (value,))
+    database = tmp_path / "kb.sqlite3"
+    SQLiteFtsRetrieval(database, EmptyRetrievalCatalog())
+    assert [item.unit_id for item in retrieval.search(
+        LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL)
+    ).candidates] == [value.unit_id]
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA writable_schema = ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = replace(sql, 'trigram', 'unicode61') "
+            "WHERE name = 'lex_projection'"
+        )
+        connection.execute("PRAGMA writable_schema = OFF")
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="FTS configuration"):
+        SQLiteLexicalSurfaces(database, Catalog((value,)), read_only=True).audit(
+            ScopeId("exam-a"), bindings=(value,)
+        )
+
+    (tmp_path / "newer").mkdir()
+    retrieval = adapter(tmp_path / "newer", (value,))
+    newer = tmp_path / "newer" / "kb.sqlite3"
+    with sqlite3.connect(newer) as connection:
+        connection.execute(
+            "UPDATE kb_lex_schema SET schema_version = ? WHERE schema_name = ?",
+            ("sqlite-lexical-schema-v2", "sqlite-lexical-schema-v1"),
+        )
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="schema receipt"):
+        SQLiteLexicalSurfaces(newer, Catalog((value,)), read_only=True).audit(
+            ScopeId("exam-a"), bindings=(value,)
+        )
 
 
 def test_failed_rebuild_preserves_previous_generation(
