@@ -67,6 +67,41 @@ _RECEIPT_COLUMNS = (
     "generation",
     "catalog_fingerprint",
 )
+_BASE_DDL = {
+    "kb_lex_schema": """
+        CREATE TABLE kb_lex_schema (
+            schema_name TEXT PRIMARY KEY,
+            schema_version TEXT NOT NULL,
+            index_version TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            catalog_fingerprint TEXT NOT NULL
+        ) STRICT
+    """,
+    "kb_lex_bindings": """
+        CREATE TABLE kb_lex_bindings (
+            scope_id TEXT NOT NULL,
+            projection_id TEXT NOT NULL,
+            unit_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            revision_id TEXT NOT NULL,
+            substrate_id TEXT NOT NULL,
+            selection_status TEXT NOT NULL,
+            scope_member INTEGER NOT NULL CHECK(scope_member IN (0, 1)),
+            binding_fingerprint TEXT NOT NULL,
+            PRIMARY KEY(scope_id, projection_id),
+            UNIQUE(scope_id, unit_id)
+        ) STRICT
+    """,
+    "kb_lex_receipts": """
+        CREATE TABLE kb_lex_receipts (
+            scope_id TEXT PRIMARY KEY,
+            schema_version TEXT NOT NULL,
+            index_version TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            catalog_fingerprint TEXT NOT NULL
+        ) STRICT
+    """,
+}
 
 
 def _scope_generation(scope_id: ScopeId, catalog_fingerprint: str) -> int:
@@ -94,6 +129,10 @@ def _expected_table_names() -> set[str]:
         for suffix in _FTS_SHADOW_SUFFIXES
     )
     return names
+
+
+def _normalise_sql(sql: str) -> str:
+    return "".join(sql.lower().split())
 
 
 def _global_receipt(
@@ -381,6 +420,25 @@ class SQLiteLexicalSurfaces:
         names = SQLiteLexicalSurfaces._reserved_table_names(connection)
         if names != _expected_table_names():
             raise LexicalIndexIntegrityError("lexical schema has unknown or missing tables")
+        objects = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        reserved_tables = _expected_table_names()
+        for object_type, name, table_name, sql in objects:
+            object_name = str(name)
+            owner = str(table_name)
+            if object_name in _BASE_DDL and (
+                str(object_type) != "table"
+                or _normalise_sql(str(sql)) != _normalise_sql(_BASE_DDL[object_name])
+            ):
+                raise LexicalIndexIntegrityError(
+                    f"lexical base table DDL is invalid: {object_name}"
+                )
+            if owner in reserved_tables and str(object_type) in {"view", "trigger"}:
+                raise LexicalIndexIntegrityError("lexical schema has an unexpected view or trigger")
+            if owner in reserved_tables and str(object_type) == "index":
+                raise LexicalIndexIntegrityError("lexical schema has an unexpected index")
         expected_columns = {
             "kb_lex_schema": _SCHEMA_COLUMNS,
             "kb_lex_bindings": _BINDING_COLUMNS,

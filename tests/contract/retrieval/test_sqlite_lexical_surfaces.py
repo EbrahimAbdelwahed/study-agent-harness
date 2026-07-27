@@ -42,6 +42,22 @@ class Catalog:
         return tuple(item for item in self.values if item.scope_id == scope_id)
 
 
+class FlippingCatalog(Catalog):
+    def __init__(
+        self,
+        initial: tuple[LexicalProjectionBinding, ...],
+        replacement: tuple[LexicalProjectionBinding, ...],
+    ) -> None:
+        super().__init__(initial)
+        self._replacement = replacement
+        self.calls = 0
+
+    def bindings(self, scope_id: ScopeId) -> tuple[LexicalProjectionBinding, ...]:
+        self.calls += 1
+        values = self.values if self.calls <= 2 else self._replacement
+        return tuple(item for item in values if item.scope_id == scope_id)
+
+
 class EmptyRetrievalCatalog:
     def documents(self, *, include_superseded: bool = False) -> tuple[object, ...]:
         del include_superseded
@@ -274,6 +290,93 @@ def test_schema_rejects_wrong_tokenizer_and_newer_row_but_coexists_with_v01(
         SQLiteLexicalSurfaces(newer, Catalog((value,)), read_only=True).audit(
             ScopeId("exam-a"), bindings=(value,)
         )
+
+
+def test_reserved_schema_rejects_forged_ddl_trigger_and_index(tmp_path: Path) -> None:
+    value = binding("canonical anatomy")
+    (tmp_path / "ddl").mkdir()
+    adapter(tmp_path / "ddl", (value,))
+    ddl_database = tmp_path / "ddl" / "kb.sqlite3"
+    with sqlite3.connect(ddl_database) as connection:
+        connection.execute("PRAGMA writable_schema = ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = replace(sql, ' STRICT', '') "
+            "WHERE name = 'kb_lex_receipts'"
+        )
+        connection.execute("PRAGMA writable_schema = OFF")
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="base table DDL"):
+        SQLiteLexicalSurfaces(ddl_database, Catalog((value,)), read_only=True).audit(
+            ScopeId("exam-a"), bindings=(value,)
+        )
+
+    (tmp_path / "trigger").mkdir()
+    adapter(tmp_path / "trigger", (value,))
+    trigger_database = tmp_path / "trigger" / "kb.sqlite3"
+    with sqlite3.connect(trigger_database) as connection:
+        connection.execute(
+            "CREATE TRIGGER kb_lex_receipts_trigger AFTER INSERT ON kb_lex_receipts "
+            "BEGIN SELECT 1; END"
+        )
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="view or trigger"):
+        SQLiteLexicalSurfaces(trigger_database, Catalog((value,)), read_only=True).audit(
+            ScopeId("exam-a"), bindings=(value,)
+        )
+
+    (tmp_path / "index").mkdir()
+    adapter(tmp_path / "index", (value,))
+    index_database = tmp_path / "index" / "kb.sqlite3"
+    with sqlite3.connect(index_database) as connection:
+        connection.execute(
+            "CREATE INDEX kb_lex_receipts_index ON kb_lex_receipts(catalog_fingerprint)"
+        )
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="unexpected index"):
+        SQLiteLexicalSurfaces(index_database, Catalog((value,)), read_only=True).audit(
+            ScopeId("exam-a"), bindings=(value,)
+        )
+
+
+def test_search_revalidates_after_first_canonical_catalog_read(tmp_path: Path) -> None:
+    initial = binding("canonical anatomy")
+    replacement = binding("changed anatomy", revision="revision-b", source="source-b")
+    catalog = FlippingCatalog((initial,), (initial,))
+    retrieval = SQLiteLexicalSurfaces(tmp_path / "kb.sqlite3", catalog)
+    retrieval.index((initial,))
+    catalog._replacement = (replacement,)
+    catalog.calls = 0
+    with pytest.raises(LexicalIndexIntegrityError, match="changed during"):
+        retrieval.search(LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL))
+    assert catalog.calls == 4
+
+
+def test_search_catches_fts_mutation_between_audit_and_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = binding("canonical anatomy")
+    retrieval = adapter(tmp_path, (value,))
+    original = SQLiteLexicalSurfaces._audit_connection
+    calls = 0
+
+    def mutate_after_audit(
+        self: SQLiteLexicalSurfaces,
+        connection: sqlite3.Connection,
+        scopes: tuple[ScopeId, ...],
+        expected: tuple[LexicalProjectionBinding, ...],
+    ) -> None:
+        nonlocal calls
+        original(self, connection, scopes, expected)
+        calls += 1
+        if calls == 1:
+            connection.execute(
+                "UPDATE lex_canonical SET text = 'tampered' WHERE unit_id = ?",
+                (str(value.unit_id),),
+            )
+
+    monkeypatch.setattr(SQLiteLexicalSurfaces, "_audit_connection", mutate_after_audit)
+    with pytest.raises(LexicalIndexIntegrityError, match="canonical"):
+        retrieval.search(LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL))
 
 
 def test_failed_rebuild_preserves_previous_generation(
