@@ -35,4 +35,20 @@ need none.
 
 - The isolated checkout does not contain `dev/index.md`; no index update was
   needed for this bounded implementation.
-- Status intentionally remains implementation complete until semantic review.
+
+## Semantic review closure
+
+Applied only the approved KB-12 findings: the HIGH ladder-collapse ancestry
+finding and the MEDIUM golden-ranking, permitted-input-permutation, branching
+ladder, and diversity-cap regression-coverage findings.  Ladder ownership now
+walks the full validated canonical `PARENT` ancestry, including unmatched
+intermediates; a matched coarse ancestor is assigned once to the stable
+canonical-identity-selected narrow descendant while matched siblings remain
+distinct primaries.  The test helper preserves candidate input order instead
+of silently sorting it.
+
+## Verification
+
+- `ruff check src/study_agent/retrieval tests/unit/retrieval`: passed.
+- `/private/tmp/study-agent-kb/.venv/bin/mypy --strict src/study_agent/retrieval/fusion.py src/study_agent/retrieval/__init__.py`: passed.
+- `PYTHONPATH=src /private/tmp/study-agent-kb/.venv/bin/pytest -q tests/unit/retrieval`: 21 passed.

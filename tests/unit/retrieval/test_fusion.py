@@ -94,20 +94,19 @@ def _list(
 ) -> RetrieverCandidateList:
     query = _query()
     manifest = _digest(f"manifest:{identity}")
-    ordered = tuple(sorted(units, key=lambda item: str(item.unit_id)))
     values = tuple(
         RetrieverCandidate(
             unit.unit_id,
             None,
             rank,
-            1.0,
+            float(len(units) - rank + 1),
             query.fingerprint,
             identity,
             manifest,
             "lex_projection",
             "index-v1",
         )
-        for rank, unit in zip(ranks or tuple(range(1, len(ordered) + 1)), ordered, strict=True)
+        for rank, unit in zip(ranks or tuple(range(1, len(units) + 1)), units, strict=True)
     )
     return RetrieverCandidateList(
         query.fingerprint,
@@ -141,7 +140,7 @@ def test_weighted_rrf_consensus_and_ties_are_deterministic() -> None:
         (str(first.unit_id), str(second.unit_id))
     )
     assert result.groups[0].consensus == 2
-    assert result.groups[0].rrf_score == pytest.approx(2 / 61)
+    assert result.groups[0].rrf_score == pytest.approx(1 / 61 + 1 / 62)
 
 
 def test_weight_changes_order_and_one_retriever_contributes_once() -> None:
@@ -160,6 +159,42 @@ def test_weight_changes_order_and_one_retriever_contributes_once() -> None:
     )
     assert result.groups[0].rrf_score == pytest.approx(2 / 61)
     assert result.groups[0].consensus == 1
+
+
+def test_weight_changes_produce_exact_golden_order() -> None:
+    first = _unit("weight-first")
+    second = _unit("weight-second")
+    lexical = _list((first, second), identity="lex_projection@1")
+    semantic = _list((second, first), identity="semantic@1")
+    batch = _batch(
+        (lexical, semantic),
+        identities=("lex_projection@1", "semantic@1"),
+    )
+    common = dict(
+        max_parent_attachments=0,
+        max_sibling_attachments=0,
+        max_window_attachments=0,
+    )
+    lexical_first = fuse_candidates(
+        batch,
+        (first, second),
+        FusionPolicy(
+            retriever_weights=(("lex_projection@1", 4.0), ("semantic@1", 1.0)),
+            **common,
+        ),
+    )
+    semantic_first = fuse_candidates(
+        batch,
+        (first, second),
+        FusionPolicy(
+            retriever_weights=(("lex_projection@1", 1.0), ("semantic@1", 4.0)),
+            **common,
+        ),
+    )
+    assert [group.unit_id for group in lexical_first.groups] == [first.unit_id, second.unit_id]
+    assert [group.unit_id for group in semantic_first.groups] == [second.unit_id, first.unit_id]
+    assert lexical_first.groups[0].rrf_score == pytest.approx(4 / 61 + 1 / 62)
+    assert lexical_first.groups[1].rrf_score == pytest.approx(4 / 62 + 1 / 61)
 
 
 def test_empty_or_skipped_batch_is_explicitly_insufficient() -> None:
@@ -198,6 +233,41 @@ def test_parent_child_ladder_collapses_and_keeps_narrow_primary_ref() -> None:
     assert group.primary_unit == child
     assert group.canonical_ref == child.canonical_ref
     assert group.members == tuple(sorted((parent.unit_id, child.unit_id), key=str))
+
+
+def test_ladder_collapse_traverses_unmatched_intermediate_and_branches() -> None:
+    root = _unit("ladder-root", kind=UnitKind.SECTION, granularity=1)
+    intermediate = _unit(
+        "ladder-intermediate",
+        parent=root,
+        kind=UnitKind.SECTION,
+        granularity=2,
+    )
+    left = _unit("ladder-left", parent=intermediate)
+    right = _unit("ladder-right", parent=intermediate)
+    result = fuse_candidates(
+        _batch((_list((root, left, right)),)),
+        (root, intermediate, left, right),
+        FusionPolicy(
+            retriever_weights=(("lex_projection@1", 1.0),),
+            max_parent_attachments=0,
+            max_sibling_attachments=0,
+            max_window_attachments=0,
+        ),
+    )
+
+    # The unmatched intermediate does not split the canonical ladder.  The
+    # coarse root contribution is assigned to exactly one narrow leaf by
+    # canonical identity, while the matched sibling leaf remains separate.
+    assert len(result.groups) == 2
+    assert {group.unit_id for group in result.groups} == {left.unit_id, right.unit_id}
+    expected_owner = min((left.unit_id, right.unit_id), key=str)
+    owner_group = next(group for group in result.groups if group.unit_id == expected_owner)
+    other_group = next(group for group in result.groups if group.unit_id != expected_owner)
+    assert root.unit_id in owner_group.members
+    assert root.unit_id not in other_group.members
+    assert intermediate.unit_id not in owner_group.members
+    assert intermediate.unit_id not in other_group.members
 
 
 def test_priors_and_uncertainty_are_receipted_without_recency() -> None:
@@ -252,6 +322,37 @@ def test_diversity_caps_and_context_expansion_are_bounded() -> None:
     assert len(result.groups) == 2
     assert all(len(group.attachments) <= 2 for group in result.groups)
     assert any(group.primary_unit.canonical_ref == first.canonical_ref for group in result.groups)
+
+
+def test_source_and_section_caps_have_canonical_tie_order() -> None:
+    first = _unit("cap-first")
+    second = _unit("cap-second")
+    third = _unit("cap-third")
+    identities = ("lex_projection@1", "semantic@1", "third@1")
+    batch = _batch(
+        (
+            _list((first,), identity=identities[0]),
+            _list((second,), identity=identities[1]),
+            _list((third,), identity=identities[2]),
+        ),
+        identities=identities,
+    )
+    policy = FusionPolicy(
+        retriever_weights=tuple((identity, 1.0) for identity in identities),
+        max_units_per_source=2,
+        max_units_per_section=2,
+        max_parent_attachments=0,
+        max_sibling_attachments=0,
+        max_window_attachments=0,
+    )
+    result = fuse_candidates(batch, (third, first, second), policy)
+    expected = sorted((first.unit_id, second.unit_id, third.unit_id), key=str)[:2]
+    assert [group.unit_id for group in result.groups] == expected
+    assert all(group.score == pytest.approx(1 / 61) for group in result.groups)
+
+    # The same tied cap result survives an admitted-catalog permutation.
+    permuted = fuse_candidates(batch, (second, third, first), policy)
+    assert permuted == result
 
 
 def test_hostile_catalog_and_weight_provenance_fail_closed() -> None:

@@ -525,39 +525,55 @@ def _lookup_prior(pairs: tuple[_PAIR_VALUE, ...], key: str) -> float:
 def _ladder_groups(
     units: tuple[RetrievableUnit, ...], by_id: Mapping[UnitId, RetrievableUnit]
 ) -> tuple[tuple[RetrievableUnit, ...], ...]:
-    """Collapse only candidate units on one parent chain.
+    """Collapse candidates by their complete canonical parent ancestry.
 
-    A candidate with an ancestor candidate joins that ancestor's group.  A
-    sibling remains a distinct group unless it too is explicitly represented
-    by the same ladder; no text or non-parent relation is consulted.
+    The owner of each group is a candidate leaf: a candidate with no matched
+    descendant.  An ancestor candidate is assigned to exactly one of its
+    narrow descendant leaves, selected by the leaf's canonical ``UnitId``.
+    This keeps matched sibling leaves as distinct primaries while ensuring a
+    matched coarse ancestor contributes to only one group, even when an
+    intermediate unit was not retrieved.  Assignment is based only on stable
+    canonical identity and the validated ``PARENT`` chain; text and other
+    links never participate.
     """
     candidate_ids = {unit.unit_id for unit in units}
-    children_by_parent: dict[UnitId, tuple[UnitId, ...]] = {}
-    for unit in units:
-        parent = _parent_id(unit)
-        if parent in candidate_ids:
-            children_by_parent[parent] = tuple(
-                sorted(
-                    (*children_by_parent.get(parent, ()), unit.unit_id),
-                    key=str,
-                )
-            )
+    ancestors_by_id: dict[UnitId, tuple[UnitId, ...]] = {}
+    for unit_id in candidate_ids:
+        ancestors: list[UnitId] = []
+        current = _parent_id(by_id[unit_id])
+        while current is not None:
+            ancestors.append(current)
+            current = _parent_id(by_id[current])
+        ancestors_by_id[unit_id] = tuple(ancestors)
 
-    def owner(unit: RetrievableUnit) -> UnitId:
-        current = unit
-        while True:
-            parent = _parent_id(current)
-            if parent not in candidate_ids:
-                return current.unit_id
-            # A parent with multiple candidate children is not a single
-            # ancestry ladder; keep each child as its own group.
-            if len(children_by_parent.get(parent, ())) > 1:
-                return current.unit_id
-            current = by_id[parent]
+    # Candidate leaves are the narrowest matched units in each branch.  An
+    # unmatched intermediate does not interrupt this relation because every
+    # validated parent above was traversed.
+    leaves = tuple(
+        sorted(
+            (
+                unit_id
+                for unit_id in candidate_ids
+                if not any(unit_id in ancestors for ancestors in ancestors_by_id.values())
+            ),
+            key=str,
+        )
+    )
+
+    def owner(unit_id: UnitId) -> UnitId:
+        descendant_leaves = [
+            leaf
+            for leaf in leaves
+            if leaf == unit_id or unit_id in ancestors_by_id[leaf]
+        ]
+        # Every candidate is itself a descendant leaf or an ancestor of one.
+        # The fallback is defensive only; catalog validation and the finite
+        # parent walk above make it unreachable for a non-empty candidate set.
+        return min(descendant_leaves or [unit_id], key=str)
 
     grouped: dict[UnitId, list[RetrievableUnit]] = {}
     for unit in sorted(units, key=lambda item: str(item.unit_id)):
-        grouped.setdefault(owner(unit), []).append(unit)
+        grouped.setdefault(owner(unit.unit_id), []).append(unit)
     return tuple(
         tuple(sorted(values, key=lambda item: str(item.unit_id)))
         for _, values in sorted(grouped.items(), key=lambda item: str(item[0]))
