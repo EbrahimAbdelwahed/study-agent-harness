@@ -86,6 +86,13 @@ from .lineage import (
     SourceLineage,
     SourceSuccession,
 )
+from .projections import (
+    IndexProjection,
+    ProjectionId,
+    ProjectionRef,
+    ProjectorManifest,
+    ProjectorPort,
+)
 from .provenance import (
     AnswerProvenance,
     ClaimOrigin,
@@ -217,6 +224,7 @@ __all__ = [
     "GroundedAnswer",
     "HeadingSyntax",
     "HybridFlashcardRole",
+    "IndexProjection",
     "InteractionId",
     "InteractionKind",
     "InteractionRecord",
@@ -232,6 +240,10 @@ __all__ = [
     "PageMapEntry",
     "PresentationId",
     "PrincipalKind",
+    "ProjectionId",
+    "ProjectionRef",
+    "ProjectorManifest",
+    "ProjectorPort",
     "PromptProvenance",
     "RegionKind",
     "ResolvedCitation",

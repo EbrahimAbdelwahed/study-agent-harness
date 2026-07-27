@@ -146,3 +146,48 @@ def test_retrievable_unit_contracts_are_owned_by_domain_and_knowledge() -> None:
     assert UnitKind.__module__ == "study_agent.domain.units"
     assert UnitMeta.__module__ == "study_agent.domain.units"
     assert reduce_units.__module__ == "study_agent.knowledge.units"
+
+
+def test_projection_contracts_are_owned_by_domain_and_pure_knowledge() -> None:
+    from study_agent.domain import (
+        IndexProjection,
+        ProjectionId,
+        ProjectionRef,
+        ProjectorManifest,
+        ProjectorPort,
+    )
+    from study_agent.knowledge.projections import StructuralProjector, reduce_projections
+
+    assert IndexProjection.__module__ == "study_agent.domain.projections"
+    assert ProjectionId.__module__ == "study_agent.domain.projections"
+    assert ProjectionRef.__module__ == "study_agent.domain.projections"
+    assert ProjectorManifest.__module__ == "study_agent.domain.projections"
+    assert getattr(ProjectorPort, "__module__", "") == "study_agent.domain.projections"
+    assert StructuralProjector.__module__ == "study_agent.knowledge.projections"
+    assert reduce_projections.__module__ == "study_agent.knowledge.projections"
+
+
+def test_projection_modules_do_not_import_provider_or_adapter_layers() -> None:
+    forbidden = (
+        "study_agent.adapters",
+        "study_agent.application",
+        "study_agent.connectors",
+        "study_agent.ingestion",
+        "study_agent.models",
+        "study_agent.providers",
+        "openai",
+        "anthropic",
+        "deepseek",
+        "httpx",
+        "requests",
+        "sqlite3",
+        "socket",
+    )
+    paths = (ROOT / "domain" / "projections.py", ROOT / "knowledge" / "projections.py")
+    violations = {
+        str(path.relative_to(ROOT)): imported
+        for path in paths
+        for imported in imports(path)
+        if any(imported == prefix or imported.startswith(prefix + ".") for prefix in forbidden)
+    }
+    assert violations == {}

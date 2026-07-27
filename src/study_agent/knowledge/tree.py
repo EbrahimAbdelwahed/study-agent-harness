@@ -11,7 +11,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 
-from study_agent.domain.identifiers import NodeId, SubstrateId, node_id_for
+from study_agent.domain.identifiers import NodeId, SubstrateId, node_id_for, substrate_id_for
 from study_agent.domain.tree import (
     MALFORMED_FLAG,
     DialectProfile,
@@ -105,6 +105,23 @@ def build_document_tree(
     )
 
 
+def admit_tree(tree: DocumentTree, text: str, profile: DialectProfile) -> DocumentTree:
+    """Re-derive a persisted tree against the canonical substrate before trust."""
+    if not isinstance(tree, DocumentTree):
+        raise TypeError("tree admission requires a DocumentTree")
+    if not isinstance(text, str):
+        raise TypeError("tree admission requires canonical substrate text")
+    if not isinstance(profile, DialectProfile):
+        raise TypeError("tree admission requires a DialectProfile")
+    substrate_id = substrate_id_for(text.encode("utf-8"))
+    if tree.substrate_id != substrate_id:
+        raise ValueError("tree substrate_id does not match canonical substrate bytes")
+    rebuilt = build_document_tree(text, profile, substrate_id=substrate_id)
+    if tree.to_json() != rebuilt.to_json():
+        raise ValueError("persisted document tree fails canonical admission")
+    return tree
+
+
 def _scan_lines(text: str) -> tuple[_Line, ...]:
     """Split into newline-inclusive lines so spans tile the document exactly."""
     lines: list[_Line] = []
@@ -118,9 +135,7 @@ def _scan_lines(text: str) -> tuple[_Line, ...]:
     return tuple(lines)
 
 
-def _code_spans(
-    lines: tuple[_Line, ...], profile: DialectProfile
-) -> tuple[_Region, ...]:
+def _code_spans(lines: tuple[_Line, ...], profile: DialectProfile) -> tuple[_Region, ...]:
     """Return fenced-code spans; an unterminated fence is flagged, not dropped."""
     if not profile.fenced_code:
         return ()
@@ -207,9 +222,7 @@ def _nest(headings: tuple[_Heading, ...], document_end: int) -> _Outline:
     root = _Outline(0, "", None, 0, document_end)
     stack: list[_Outline] = [root]
     for heading in headings:
-        node = _Outline(
-            heading.level, heading.title, heading.anchor, heading.start, document_end
-        )
+        node = _Outline(heading.level, heading.title, heading.anchor, heading.start, document_end)
         # Closing the open sections here also fixes their end offset, which
         # avoids a second scan over the remaining headings per heading.
         while stack[-1].level >= heading.level:
@@ -466,9 +479,11 @@ def _markers_in(
         return frozenset()
     first, last = _line_window(lines, starts, start, end)
     content = "".join(line.content for line in lines[first:last])
-    return frozenset(
-        marker for marker in profile.uncertainty_markers if marker in content
-    )
+    return frozenset(marker for marker in profile.uncertainty_markers if marker in content)
 
 
-__all__ = ["TREE_FORMAT_VERSION", "build_document_tree"]
+__all__ = [
+    "TREE_FORMAT_VERSION",
+    "admit_tree",
+    "build_document_tree",
+]
