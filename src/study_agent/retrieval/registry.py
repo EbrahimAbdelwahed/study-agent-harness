@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha256
 
 from study_agent.ports.retrievers import (
+    MAX_RETRIEVER_REGISTRY_SIZE,
     RetrieverCandidateList,
     RetrieverHostAuthority,
     RetrieverManifest,
@@ -15,6 +15,7 @@ from study_agent.ports.retrievers import (
     RetrieverSearchBatch,
     RetrieverSkipReason,
     RetrieverSkipReceipt,
+    _registry_fingerprint,
 )
 
 
@@ -27,6 +28,23 @@ class _Registration:
     port: RetrieverPort
     manifest: RetrieverManifest
     manifest_fingerprint: str
+
+
+def _snapshot_manifest(manifest: RetrieverManifest) -> RetrieverManifest:
+    """Copy a port-owned manifest into registry-owned immutable state."""
+
+    return RetrieverManifest(
+        name=manifest.name,
+        version=manifest.version,
+        surface=manifest.surface,
+        cost=manifest.cost,
+        required_capability=manifest.required_capability,
+        default_weight=manifest.default_weight,
+        network=manifest.network,
+        provider_id=manifest.provider_id,
+        model_id=manifest.model_id,
+        supported_filters=manifest.supported_filters,
+    )
 
 
 class RetrieverRegistry:
@@ -47,6 +65,10 @@ class RetrieverRegistry:
         values = tuple(retrievers)
         if not values:
             raise ValueError("registry requires the lex_projection baseline")
+        if len(values) > MAX_RETRIEVER_REGISTRY_SIZE:
+            raise ValueError(
+                f"registry cannot contain more than {MAX_RETRIEVER_REGISTRY_SIZE} retrievers"
+            )
         registrations: list[_Registration] = []
         identities: set[str] = set()
         names: set[str] = set()
@@ -58,6 +80,7 @@ class RetrieverRegistry:
                 raise RetrieverRegistryError("retriever manifest could not be loaded") from error
             if not isinstance(manifest, RetrieverManifest):
                 raise RetrieverRegistryError("retriever manifest must be RetrieverManifest")
+            manifest = _snapshot_manifest(manifest)
             if manifest.identity in identities:
                 raise RetrieverRegistryError("duplicate retriever manifest identity")
             if manifest.name in names:
@@ -104,7 +127,9 @@ class RetrieverRegistry:
 
     @property
     def manifests(self) -> tuple[RetrieverManifest, ...]:
-        return tuple(item.manifest for item in self._registrations)
+        # Never expose the registry-owned objects themselves: frozen dataclasses
+        # can still be mutated by hostile code via ``object.__setattr__``.
+        return tuple(_snapshot_manifest(item.manifest) for item in self._registrations)
 
     def search(self, query: RetrieverQuery) -> RetrieverSearchBatch:
         if not isinstance(query, RetrieverQuery):
@@ -112,7 +137,8 @@ class RetrieverRegistry:
         results: list[RetrieverCandidateList] = []
         skips: list[RetrieverSkipReceipt] = []
         for registration in self._registrations:
-            manifest = self._current_manifest(registration)
+            manifest = registration.manifest
+            self._current_manifest(registration)
             reason = self._skip_reason(manifest, query)
             if reason is not None:
                 skips.append(
@@ -125,9 +151,18 @@ class RetrieverRegistry:
                 raise RetrieverRegistryError("retriever returned a non-portable candidate list")
             self._validate_result(returned, query, manifest)
             results.append(returned)
+        # A port may mutate another port's live manifest during its search, so
+        # every registration is checked once more before publishing a batch.
+        for registration in self._registrations:
+            self._current_manifest(registration)
+        manifest_snapshot = tuple(
+            (item.manifest.identity, item.manifest_fingerprint) for item in self._registrations
+        )
         return RetrieverSearchBatch(
             query=query,
             host_fingerprint=self.host_fingerprint,
+            registry_fingerprint=self.fingerprint(),
+            manifest_snapshot=manifest_snapshot,
             results=tuple(results),
             skips=tuple(skips),
         )
@@ -194,11 +229,10 @@ class RetrieverRegistry:
                 raise RetrieverRegistryError("candidate surface provenance is invalid")
 
     def fingerprint(self) -> str:
-        payload = "|".join(
-            f"{item.manifest.identity}:{item.manifest_fingerprint}"
-            for item in self._registrations
-        ).encode("utf-8")
-        return sha256(b"study-agent/retriever-registry/v1\0" + payload).hexdigest()
+        snapshot = tuple(
+            (item.manifest.identity, item.manifest_fingerprint) for item in self._registrations
+        )
+        return _registry_fingerprint(snapshot)
 
 
 __all__ = ["RetrieverRegistry", "RetrieverRegistryError"]

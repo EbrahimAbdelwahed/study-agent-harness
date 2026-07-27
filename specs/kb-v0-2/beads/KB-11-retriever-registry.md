@@ -39,6 +39,15 @@ implementations.
   ranks, and nondeterministic ordering tests.
 - Architecture test that fusion imports only registry contracts.
 
+## Review fixes
+
+- Registry-owned manifest snapshots are detached from port-owned objects and
+  all live manifests are revalidated before publishing a search batch.
+- Search batches bind the exact registry fingerprint and complete manifest
+  identity/fingerprint snapshot.
+- Equal-score ordering covers non-adjacent recurring scores, and a public
+  registry-size bound is enforced before manifest inspection.
+
 ## Out of scope
 
 - RRF, context expansion, external adapters, or tool surfaces.

@@ -12,7 +12,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
-from itertools import pairwise
 from math import isfinite
 from typing import Protocol
 
@@ -33,6 +32,10 @@ MAX_RETRIEVER_FILTER_VALUES = 64
 MAX_RETRIEVER_QUERY_LENGTH = 16_384
 MAX_RETRIEVER_LIMIT = 1_000
 MAX_RETRIEVER_CANDIDATES = 1_000
+# A registry is deliberately small: each active port contributes at most one
+# candidate list, so this bounds the aggregate fan-out as well as registration
+# work before any untrusted port is inspected.
+MAX_RETRIEVER_REGISTRY_SIZE = 32
 
 _IDENTITY = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
@@ -383,9 +386,16 @@ class RetrieverCandidateList:
                 or item.index_version != self.index_version
             ):
                 raise ValueError("candidate provenance does not match the candidate list")
-        for left, right in pairwise(values):
-            if left.score == right.score and _candidate_key(left) > _candidate_key(right):
+        # Equal scores may recur after another score.  Comparing only adjacent
+        # candidates would miss a non-adjacent inversion (for example scores
+        # ``1.0, 0.5, 1.0``), so retain the last identity seen for every score.
+        last_key_by_score: dict[float, tuple[str, str]] = {}
+        for candidate in values:
+            key = _candidate_key(candidate)
+            previous = last_key_by_score.get(candidate.score)
+            if previous is not None and previous > key:
                 raise ValueError("equal-score candidates must use canonical identity ordering")
+            last_key_by_score[candidate.score] = key
         object.__setattr__(self, "candidates", values)
 
     @property
@@ -395,6 +405,11 @@ class RetrieverCandidateList:
 
 def _candidate_key(candidate: RetrieverCandidate) -> tuple[str, str]:
     return (str(candidate.unit_id), str(candidate.projection_id) if candidate.projection_id else "")
+
+
+def _registry_fingerprint(manifest_snapshot: tuple[tuple[str, str], ...]) -> str:
+    payload = "|".join(f"{identity}:{fingerprint}" for identity, fingerprint in manifest_snapshot)
+    return sha256(b"study-agent/retriever-registry/v1\0" + payload.encode("utf-8")).hexdigest()
 
 
 class RetrieverPort(Protocol):
@@ -425,6 +440,8 @@ class RetrieverSkipReceipt:
 class RetrieverSearchBatch:
     query: RetrieverQuery
     host_fingerprint: str
+    registry_fingerprint: str
+    manifest_snapshot: tuple[tuple[str, str], ...]
     results: tuple[RetrieverCandidateList, ...] = ()
     skips: tuple[RetrieverSkipReceipt, ...] = ()
 
@@ -432,6 +449,27 @@ class RetrieverSearchBatch:
         if not isinstance(self.query, RetrieverQuery):
             raise TypeError("query must be RetrieverQuery")
         _digest(self.host_fingerprint, "host_fingerprint")
+        _digest(self.registry_fingerprint, "registry_fingerprint")
+        snapshot = tuple(self.manifest_snapshot)
+        if any(
+            not isinstance(item, tuple)
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not isinstance(item[1], str)
+            for item in snapshot
+        ):
+            raise TypeError("manifest_snapshot must contain (identity, fingerprint) tuples")
+        for identity, fingerprint in snapshot:
+            _retriever_identity(identity, "manifest_snapshot identity")
+            _digest(fingerprint, "manifest_snapshot fingerprint")
+        snapshot_ids = tuple(item[0] for item in snapshot)
+        if not snapshot or snapshot_ids != tuple(sorted(snapshot_ids)):
+            raise ValueError("manifest_snapshot must be non-empty and identity ordered")
+        if len(set(snapshot_ids)) != len(snapshot_ids):
+            raise ValueError("manifest_snapshot identities must be unique")
+        if self.registry_fingerprint != _registry_fingerprint(snapshot):
+            raise ValueError("registry_fingerprint does not match the manifest snapshot")
+        snapshot_by_id = dict(snapshot)
         results = tuple(self.results)
         skips = tuple(self.skips)
         if any(not isinstance(item, RetrieverCandidateList) for item in results):
@@ -446,8 +484,18 @@ class RetrieverSearchBatch:
             raise ValueError("a retriever cannot both run and be skipped")
         if result_ids != tuple(sorted(result_ids)) or skip_ids != tuple(sorted(skip_ids)):
             raise ValueError("results and skips must be in manifest identity order")
+        all_ids = result_ids + skip_ids
+        if set(all_ids) != set(snapshot_ids) or len(all_ids) != len(snapshot_ids):
+            raise ValueError("results and skips must bind the complete manifest snapshot")
+        for result_item in results:
+            if snapshot_by_id[result_item.retriever_identity] != result_item.manifest_fingerprint:
+                raise ValueError("result manifest provenance does not match the batch snapshot")
+        for skip_item in skips:
+            if snapshot_by_id[skip_item.manifest_identity] != skip_item.manifest_fingerprint:
+                raise ValueError("skip manifest provenance does not match the batch snapshot")
         if any(item.query_fingerprint != self.query.fingerprint for item in results):
             raise ValueError("result query provenance does not match the batch query")
+        object.__setattr__(self, "manifest_snapshot", snapshot)
         object.__setattr__(self, "results", results)
         object.__setattr__(self, "skips", skips)
 
@@ -464,6 +512,7 @@ __all__ = [
     "MAX_RETRIEVER_CANDIDATES",
     "MAX_RETRIEVER_LIMIT",
     "MAX_RETRIEVER_QUERY_LENGTH",
+    "MAX_RETRIEVER_REGISTRY_SIZE",
     "RetrieverCandidate",
     "RetrieverCandidateList",
     "RetrieverCost",

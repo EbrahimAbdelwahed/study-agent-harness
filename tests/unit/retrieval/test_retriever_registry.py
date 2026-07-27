@@ -16,6 +16,7 @@ from study_agent.ports.knowledge import (
     LexicalSurface,
 )
 from study_agent.ports.retrievers import (
+    MAX_RETRIEVER_REGISTRY_SIZE,
     RetrieverCandidate,
     RetrieverCandidateList,
     RetrieverCost,
@@ -95,6 +96,28 @@ class OptionalRetriever:
         )
 
 
+class MutatingBaseline:
+    def __init__(self, target: OptionalRetriever) -> None:
+        self._manifest = RetrieverManifest("lex_projection", "1", "lex_projection")
+        self._target = target
+
+    @property
+    def manifest(self) -> RetrieverManifest:
+        return self._manifest
+
+    def search(self, query: RetrieverQuery) -> RetrieverCandidateList:
+        object.__setattr__(self._target._manifest, "surface", "mutated")
+        return RetrieverCandidateList(
+            query.fingerprint,
+            self._manifest.identity,
+            self._manifest.fingerprint,
+            self._manifest.surface,
+            "baseline-v1",
+            (),
+            query.limit,
+        )
+
+
 def _query(*, filters: tuple[RetrieverFilter, ...] = ()) -> RetrieverQuery:
     return RetrieverQuery(ScopeId("exam"), "heart valve", 5, filters)
 
@@ -110,6 +133,35 @@ def test_lexical_baseline_runs_and_keeps_only_portable_candidate_data() -> None:
     assert candidate.unit_id == _unit("first")
     assert candidate.projection_id is not None
     assert not hasattr(candidate, "text")
+
+
+def test_batch_binds_registry_and_manifest_snapshot() -> None:
+    registry = RetrieverRegistry(
+        (LexicalRetriever(FakeLexicalIndex(), LexicalSurface.PROJECTION),),
+        RetrieverHostAuthority(),
+    )
+    batch = registry.search(_query())
+    assert batch.registry_fingerprint == registry.fingerprint()
+    assert batch.manifest_snapshot == (("lex_projection@1", registry.manifests[0].fingerprint),)
+    exposed = registry.manifests[0]
+    object.__setattr__(exposed, "surface", "spoofed")
+    assert registry.manifests[0].surface == "lex_projection"
+
+
+def test_manifest_mutation_of_non_invoked_port_is_rejected_before_return() -> None:
+    optional = OptionalRetriever(
+        RetrieverManifest(
+            "semantic",
+            "v1",
+            "semantic",
+            cost=RetrieverCost.LOCAL_COMPUTE,
+            required_capability="embedding",
+        )
+    )
+    baseline = MutatingBaseline(optional)
+    with pytest.raises(RetrieverRegistryError, match="manifest changed"):
+        RetrieverRegistry((baseline, optional), RetrieverHostAuthority()).search(_query())
+    assert optional.called == 0
 
 
 def test_optional_retriever_is_skipped_without_invocation() -> None:
@@ -206,6 +258,61 @@ def test_candidate_ties_use_unit_then_projection_identity() -> None:
             (replace(ordered[1], rank=1), replace(ordered[0], rank=2)),
             2,
         )
+
+
+def test_non_adjacent_equal_score_ties_use_canonical_identity_ordering() -> None:
+    query_fingerprint = _digest("query")
+    manifest_fingerprint = _digest("manifest")
+    candidates = tuple(
+        RetrieverCandidate(
+            unit,
+            None,
+            index,
+            score,
+            query_fingerprint,
+            "lex_projection@1",
+            manifest_fingerprint,
+            "lex_projection",
+            "index-v1",
+        )
+        for index, (unit, score) in enumerate(
+            sorted(
+                ((_unit("tie-a"), 1.0), (_unit("tie-b"), 1.0), (_unit("tie-c"), 0.5)),
+                key=lambda item: str(item[0]),
+            ),
+            start=1,
+        )
+    )
+    first, second = sorted(candidates, key=lambda item: str(item.unit_id))[:2]
+    third = next(item for item in candidates if item.score == 0.5)
+    with pytest.raises(ValueError, match="equal-score"):
+        RetrieverCandidateList(
+            query_fingerprint,
+            "lex_projection@1",
+            manifest_fingerprint,
+            "lex_projection",
+            "index-v1",
+            (replace(second, rank=1), replace(third, rank=2), replace(first, rank=3)),
+            3,
+        )
+
+
+def test_registry_rejects_oversize_before_reading_manifests() -> None:
+    class ManifestAccessPort:
+        called = 0
+
+        @property
+        def manifest(self) -> RetrieverManifest:
+            self.called += 1
+            raise AssertionError("manifest must not be read for an oversized registry")
+
+        def search(self, query: RetrieverQuery) -> RetrieverCandidateList:
+            raise AssertionError("search must not run")
+
+    ports = tuple(ManifestAccessPort() for _ in range(MAX_RETRIEVER_REGISTRY_SIZE + 1))
+    with pytest.raises(ValueError, match="cannot contain more"):
+        RetrieverRegistry(ports, RetrieverHostAuthority())
+    assert all(port.called == 0 for port in ports)
 
 
 def test_manifest_gating_constraints_and_registry_immutability() -> None:

@@ -41,3 +41,18 @@ importing SQLite or provider implementations and never leaks indexed text.
   only the existing `LexicalIndexPort`.
 - The integration worktree should run the full suite and architecture tests
   before promotion.
+
+## Review fixes
+
+- Registry manifests are detached into registry-owned snapshots; every live
+  manifest is revalidated before a successful batch return.
+- `RetrieverSearchBatch` now binds the registry fingerprint and complete
+  identity/fingerprint manifest snapshot.
+- Equal-score ordering validates recurring scores, and registry size is capped
+  before any manifest is read.
+
+## Review verification
+
+- `.../.venv/bin/ruff check src/study_agent/ports/retrievers.py src/study_agent/retrieval/registry.py tests/unit/retrieval/test_retriever_registry.py`: passed.
+- `MYPYPATH=src .../.venv/bin/mypy --strict tests/unit/retrieval/test_retriever_registry.py src/study_agent/ports/retrievers.py src/study_agent/retrieval/registry.py`: passed.
+- `PYTHONPATH=src pytest -q tests/unit/retrieval/test_retriever_registry.py`: 10 passed.
