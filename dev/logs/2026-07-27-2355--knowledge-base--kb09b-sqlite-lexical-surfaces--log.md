@@ -44,3 +44,24 @@ through the KB-03 citation owner and is never returned in a candidate.
   do not provide it fail during schema initialization rather than silently
   falling back to a different search algorithm.
 - Full-suite integration and orchestrator review remain pending.
+
+## Review closure (2026-07-28)
+
+Applied only the approved KB-09B review findings.  Search now re-ranks from
+scope-local deterministic literal matches instead of corpus-global BM25,
+audits and matches inside one read transaction, and rechecks the canonical
+scope fingerprint before returning candidates.  The SQLite schema is
+fail-closed for unknown tables/rows, exact columns and FTS tokenizer SQL; a
+per-scope receipt binds schema/index version, deterministic generation, and
+catalog fingerprint so partial rebuilds cannot overwrite another scope.
+Candidate receipts now require exact query fingerprints and index versions.
+
+Added adversarial coverage for cross-scope rank invariance, receipt forgery,
+unknown and unbound schema state, literal medical matching, rollback, and the
+non-zero-offset canonical span path.
+
+Verification: `ruff check` passed; `pytest -q tests/contract/retrieval
+tests/unit/knowledge/test_lexical.py` passed (36 tests).  Strict mypy could
+not run in this worktree because no mypy executable or environment is
+available; the orchestrator should run the repository's configured strict
+mypy command before integration.

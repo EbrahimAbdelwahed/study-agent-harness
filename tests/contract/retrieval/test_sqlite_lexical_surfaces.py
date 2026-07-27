@@ -124,6 +124,29 @@ def test_scope_isolation_and_deterministic_ties(tmp_path: Path) -> None:
     assert result.candidates[1].rank == 2
 
 
+def test_scope_rank_is_invariant_to_other_scope_corpus(tmp_path: Path) -> None:
+    first = binding("shared anatomy anatomy", source="source-a", revision="revision-a")
+    second = binding("shared anatomy", source="source-b", revision="revision-b")
+    (tmp_path / "baseline").mkdir()
+    baseline = adapter(tmp_path / "baseline", (first, second))
+    baseline_result = baseline.search(
+        LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL)
+    )
+
+    other = binding(
+        "anatomy anatomy anatomy anatomy anatomy",
+        scope="exam-b",
+        source="source-c",
+        revision="revision-c",
+    )
+    (tmp_path / "expanded").mkdir()
+    expanded = adapter(tmp_path / "expanded", (first, second, other))
+    expanded_result = expanded.search(
+        LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL)
+    )
+    assert expanded_result == baseline_result
+
+
 def test_tampered_and_extra_rows_fail_closed(tmp_path: Path) -> None:
     value = binding("canonical anatomy")
     retrieval = adapter(tmp_path, (value,))
@@ -135,6 +158,52 @@ def test_tampered_and_extra_rows_fail_closed(tmp_path: Path) -> None:
         connection.commit()
     with pytest.raises(LexicalIndexIntegrityError, match="canonical"):
         retrieval.search(LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL))
+
+
+def test_scope_receipt_generation_and_fingerprint_are_bound(tmp_path: Path) -> None:
+    value = binding("canonical anatomy")
+    retrieval = adapter(tmp_path, (value,))
+    database = tmp_path / "kb.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE kb_lex_receipts SET generation = generation + 1 WHERE scope_id = ?",
+            ("exam-a",),
+        )
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="generation"):
+        retrieval.search(LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL))
+
+    (tmp_path / "fingerprint").mkdir()
+    retrieval = adapter(tmp_path / "fingerprint", (value,))
+    with sqlite3.connect(tmp_path / "fingerprint" / "kb.sqlite3") as connection:
+        connection.execute(
+            "UPDATE kb_lex_receipts SET catalog_fingerprint = ? WHERE scope_id = ?",
+            ("f" * 64, "exam-a"),
+        )
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="fingerprint"):
+        retrieval.search(
+            LexicalQuery(ScopeId("exam-a"), "anatomy", LexicalSurface.CANONICAL)
+        )
+
+
+def test_unknown_and_unbound_reserved_schema_fail_closed(tmp_path: Path) -> None:
+    value = binding("canonical anatomy")
+    database = tmp_path / "unknown.sqlite3"
+    (tmp_path / "ready").mkdir()
+    retrieval = adapter(tmp_path / "ready", (value,))
+    del retrieval
+    with sqlite3.connect(tmp_path / "ready" / "kb.sqlite3") as connection:
+        connection.execute("CREATE TABLE unexpected_lexical_state(value TEXT)")
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="unknown or missing"):
+        SQLiteLexicalSurfaces(tmp_path / "ready" / "kb.sqlite3", Catalog((value,)))
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE kb_lex_bindings(scope_id TEXT)")
+        connection.commit()
+    with pytest.raises(LexicalIndexIntegrityError, match="reserved lexical"):
+        SQLiteLexicalSurfaces(database, Catalog((value,)))
 
 
 def test_failed_rebuild_preserves_previous_generation(

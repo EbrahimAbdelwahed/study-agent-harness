@@ -140,8 +140,8 @@ class LexicalCandidate:
     projection_id: ProjectionId
     rank: int
     score: float
-    query_fingerprint: str = ""
-    index_version: str = ""
+    query_fingerprint: str
+    index_version: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.unit_id, UnitId):
@@ -158,13 +158,12 @@ class LexicalCandidate:
         if not isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError("score must be finite and between zero and one")
         object.__setattr__(self, "score", value)
-        if self.query_fingerprint and (
+        if (
             len(self.query_fingerprint) != 64
             or any(char not in "0123456789abcdef" for char in self.query_fingerprint)
         ):
             raise ValueError("query_fingerprint must be a lowercase SHA-256 digest")
-        if self.index_version:
-            require_text(self.index_version, "index_version")
+        require_text(self.index_version, "index_version")
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,9 +193,9 @@ class LexicalCandidateList:
         if tuple(item.rank for item in values) != tuple(range(1, len(values) + 1)):
             raise ValueError("candidate ranks must be contiguous and one-based")
         for item in values:
-            if item.query_fingerprint and item.query_fingerprint != self.query_fingerprint:
+            if item.query_fingerprint != self.query_fingerprint:
                 raise ValueError("candidate query fingerprint does not match the result")
-            if item.index_version and item.index_version != self.index_version:
+            if item.index_version != self.index_version:
                 raise ValueError("candidate index version does not match the result")
         object.__setattr__(self, "candidates", values)
 
