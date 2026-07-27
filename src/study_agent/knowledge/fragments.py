@@ -1,16 +1,15 @@
 """Deterministic typed-fragment extraction and promotion.
 
-This module is deliberately a pure projection.  It accepts an admitted tree
-context (or performs the same canonical re-derivation for the pre-KB-08 plain
-tree seam), never tokenizes text, and never calls a model or creates a unit
-identity.  Materialization is delegated to :func:`unitize_drafts`.
+This module is deliberately a pure projection.  It accepts only the admitted
+tree context owned by KB-08, never tokenizes text, and never calls a model or
+creates a unit identity. Materialization is delegated to
+:func:`unitize_drafts`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from importlib import import_module
 from math import ceil, isfinite
 
 from study_agent.domain.fragments import (
@@ -20,12 +19,13 @@ from study_agent.domain.fragments import (
     FragmentSignals,
     SignalContribution,
 )
-from study_agent.domain.identifiers import NodeId, RevisionId, SourceId, substrate_id_for
-from study_agent.domain.tree import DialectProfile, DocumentTree, RegionKind
+from study_agent.domain.identifiers import NodeId, RevisionId, SourceId
+from study_agent.domain.tree import DocumentTree, RegionKind
 from study_agent.domain.units import RetrievableUnit, UnitKind, UnitMeta
 
-from .tree import build_document_tree
-from .unitizer import RevisionBinding, UnitDraft, UnitizerPolicy, draft_units, unitize_drafts
+from .tree import AdmittedDocumentTree
+from .unitizer import UnitDraft, UnitizerPolicy, draft_units, unitize_drafts
+from .units import RevisionBinding
 
 MAX_CANONICAL_TEXT = 8_000_000
 MAX_FRAGMENTS = 4_096
@@ -57,39 +57,11 @@ def _bounded_text(value: str) -> str:
     return value
 
 
-def _tree_context(
-    context: object,
-    *,
-    text: str | None,
-    profile: DialectProfile | None,
-) -> tuple[DocumentTree, str, DialectProfile]:
-    """Resolve an admitted KB-08 wrapper or validate the plain-tree seam."""
-    tree_module = import_module("study_agent.knowledge.tree")
-    admitted_tree_type = getattr(tree_module, "AdmittedDocumentTree", None)
-    if admitted_tree_type is not None and isinstance(context, admitted_tree_type):
-        tree = getattr(context, "tree", None)
-        canonical_text = getattr(context, "text", None)
-        admitted_profile = getattr(context, "profile", None)
-        if not isinstance(tree, DocumentTree) or not isinstance(canonical_text, str):
-            raise TypeError("admitted tree context is malformed")
-        if not isinstance(admitted_profile, DialectProfile):
-            raise TypeError("admitted tree context lacks its dialect profile")
-        if text is not None or profile is not None:
-            raise ValueError("admitted tree context owns text and profile")
-        return tree, _bounded_text(canonical_text), admitted_profile
-
-    if not isinstance(context, DocumentTree):
+def _tree_context(context: AdmittedDocumentTree) -> tuple[DocumentTree, str]:
+    """Resolve the sole trusted tree/text context."""
+    if not isinstance(context, AdmittedDocumentTree):
         raise TypeError("fragment extraction requires an admitted document tree")
-    if text is None or profile is None:
-        raise TypeError("plain document-tree extraction requires text and profile")
-    canonical_text = _bounded_text(text)
-    substrate = substrate_id_for(canonical_text.encode("utf-8"))
-    if context.substrate_id != substrate:
-        raise ValueError("tree substrate_id does not match canonical text")
-    rebuilt = build_document_tree(canonical_text, profile, substrate_id=substrate)
-    if context.to_json() != rebuilt.to_json():
-        raise ValueError("document tree fails canonical admission")
-    return context, canonical_text, profile
+    return context.tree, _bounded_text(context.text)
 
 
 def _ancestor_flags(tree: DocumentTree) -> dict[object, frozenset[str]]:
@@ -113,12 +85,10 @@ def _ancestor_flags(tree: DocumentTree) -> dict[object, frozenset[str]]:
 
 
 def draft_fragments(
-    context: object,
+    context: AdmittedDocumentTree,
     *,
     source_id: SourceId,
     revision_id: RevisionId,
-    text: str | None = None,
-    profile: DialectProfile | None = None,
     max_fragments: int = MAX_FRAGMENTS,
 ) -> tuple[FragmentDraft, ...]:
     """Extract exact typed regions from an admitted canonical tree context."""
@@ -128,7 +98,7 @@ def draft_fragments(
         raise TypeError("revision_id must be RevisionId")
     if type(max_fragments) is not int or not 1 <= max_fragments <= MAX_FRAGMENTS:
         raise ValueError(f"max_fragments must be between 1 and {MAX_FRAGMENTS}")
-    tree, canonical_text, _ = _tree_context(context, text=text, profile=profile)
+    tree, canonical_text = _tree_context(context)
     flags_by_node = _ancestor_flags(tree)
     fragments: list[FragmentDraft] = []
     for node in tree.nodes:
@@ -198,7 +168,7 @@ def _reference(value: bool | float) -> float:
 class FragmentPromotionPolicy:
     """Immutable, bounded, per-scope model-free promotion policy."""
 
-    version: str = "fragment-policy-v1-draft"
+    version: str = "fragment-policy-v1"
     minimum_length: int = 24
     idf_percentile: float = 0.90
     length_weight: float = 0.25
@@ -352,8 +322,7 @@ def promoted_unit_drafts(
 
 
 def materialize_promoted_fragments(
-    text: str,
-    tree: DocumentTree,
+    context: AdmittedDocumentTree,
     decisions: Sequence[FragmentPromotionDecision],
     *,
     revision_id: RevisionId,
@@ -362,6 +331,7 @@ def materialize_promoted_fragments(
     meta: UnitMeta | None = None,
 ) -> tuple[RetrievableUnit, ...]:
     """Materialize promoted drafts through the existing KB-06 owner."""
+    tree, text = _tree_context(context)
     if not isinstance(revision_id, RevisionId):
         raise TypeError("revision_id must be RevisionId")
     if not isinstance(binding, RevisionBinding):

@@ -4,18 +4,19 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from study_agent.domain.fragments import FragmentKind
+from study_agent.domain.fragments import FragmentDraft, FragmentKind
 from study_agent.domain.identifiers import RevisionId, SourceId, substrate_id_for
-from study_agent.domain.tree import DialectProfile, HeadingSyntax
-from study_agent.domain.units import UnitKind, UnitMeta
+from study_agent.domain.tree import DialectProfile, DocumentTree, HeadingSyntax
+from study_agent.domain.units import TextSpan, UnitKind, UnitMeta
 from study_agent.knowledge.fragments import (
     FragmentPromotionPolicy,
     draft_fragments,
     materialize_promoted_fragments,
     promoted_unit_drafts,
 )
-from study_agent.knowledge.tree import build_document_tree
-from study_agent.knowledge.unitizer import RevisionBinding, UnitizerPolicy
+from study_agent.knowledge.tree import AdmittedDocumentTree, admit_tree, build_document_tree
+from study_agent.knowledge.unitizer import UnitizerPolicy
+from study_agent.knowledge.units import RevisionBinding, derive_unit_id
 
 SOURCE = SourceId("lecture")
 REVISION = RevisionId("revision-1")
@@ -32,7 +33,7 @@ PROFILE = DialectProfile(
 )
 
 
-def make_context() -> tuple[str, object, tuple[object, ...]]:
+def make_context() -> tuple[str, AdmittedDocumentTree, tuple[FragmentDraft, ...]]:
     text = (
         "# Heart\n\n"
         "> [!warning] uncertain pressure threshold\n"
@@ -43,18 +44,18 @@ def make_context() -> tuple[str, object, tuple[object, ...]]:
     )
     substrate = substrate_id_for(text.encode())
     tree = build_document_tree(text, PROFILE, substrate_id=substrate)
+    admitted = admit_tree(tree, text, PROFILE)
     fragments = draft_fragments(
-        tree,
-        text=text,
-        profile=PROFILE,
+        admitted,
         source_id=SOURCE,
         revision_id=REVISION,
     )
-    return text, tree, fragments
+    return text, admitted, fragments
 
 
 def test_drafts_preserve_exact_binding_span_and_inherited_flags() -> None:
-    text, tree, fragments = make_context()
+    text, context, fragments = make_context()
+    tree = context.tree
     assert {fragment.kind for fragment in fragments} == set(FragmentKind)
     by_kind = {fragment.kind: fragment for fragment in fragments}
     for _kind, fragment in by_kind.items():
@@ -129,7 +130,8 @@ def test_policy_is_immutable_and_rejects_unbounded_values() -> None:
 
 
 def test_non_promoted_fragments_have_no_child_draft_and_parent_remains_accessible() -> None:
-    _, tree, fragments = make_context()
+    _, context, fragments = make_context()
+    tree = context.tree
     policy = FragmentPromotionPolicy(threshold=1.0, minimum_length=32_768)
     decisions = tuple(policy.decide(fragment) for fragment in fragments)
     assert not any(decision.promoted for decision in decisions)
@@ -139,15 +141,14 @@ def test_non_promoted_fragments_have_no_child_draft_and_parent_remains_accessibl
 
 
 def test_materialization_uses_kb06_identity_owner_and_custom_version() -> None:
-    text, tree, fragments = make_context()
+    text, context, fragments = make_context()
     policy = FragmentPromotionPolicy(minimum_length=1, threshold=0.0)
     decisions = tuple(policy.decide(fragment) for fragment in fragments)
     unitizer = UnitizerPolicy(version="unitizer-v2")
     substrate = substrate_id_for(text.encode())
     binding = RevisionBinding(SOURCE, substrate, len(text))
     units = materialize_promoted_fragments(
-        text,
-        tree,
+        context,
         decisions,
         revision_id=REVISION,
         binding=binding,
@@ -167,7 +168,9 @@ def test_materialization_uses_kb06_identity_owner_and_custom_version() -> None:
         }
     ]
     assert len(fragment_units) == len(fragments)
-    assert all(unit.canonical_ref.substrate_id == substrate for unit in fragment_units)
+    for unit in fragment_units:
+        assert isinstance(unit.canonical_ref, TextSpan)
+        assert unit.canonical_ref.substrate_id == substrate
     assert len({unit.unit_id for unit in fragment_units}) == len(fragment_units)
     assert all(
         "uncertain" in unit.meta.flags
@@ -175,33 +178,30 @@ def test_materialization_uses_kb06_identity_owner_and_custom_version() -> None:
         if unit.unit_kind is UnitKind.EMPHASIS
     )
     assert all(
-        unit.unit_id.value == unit.unit_id.value
+        unit.unit_id == derive_unit_id(unit, unitizer_version="unitizer-v2")
         for unit in fragment_units
     )
 
 
-def test_fabricated_plain_tree_context_fails_closed() -> None:
-    text, tree, _ = make_context()
-    mutated = replace(tree, nodes=(tree.root,))
-    with pytest.raises(ValueError, match="canonical admission"):
+def test_plain_tree_context_fails_closed() -> None:
+    _, context, _ = make_context()
+    plain_tree: DocumentTree = context.tree
+    with pytest.raises(TypeError, match="admitted"):
         draft_fragments(
-            mutated,
-            text=text,
-            profile=PROFILE,
+            plain_tree,  # type: ignore[arg-type]
             source_id=SOURCE,
             revision_id=REVISION,
         )
 
 
 def test_materialization_rejects_fragment_from_another_revision() -> None:
-    text, tree, fragments = make_context()
+    text, context, fragments = make_context()
     policy = FragmentPromotionPolicy(minimum_length=1, threshold=0.0)
     decisions = tuple(policy.decide(fragment) for fragment in fragments)
     binding = RevisionBinding(SOURCE, substrate_id_for(text.encode()), len(text))
     with pytest.raises(ValueError, match="canonical revision binding"):
         materialize_promoted_fragments(
-            text,
-            tree,
+            context,
             tuple(
                 replace(
                     decision,
