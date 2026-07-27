@@ -14,6 +14,15 @@ from .artifact import (
     VerifiedMediaRef,
 )
 from .assessment import CriterionStatus, GradeLifecycle, GradeStatus
+from .citation_v2 import (
+    FIGURE_CITATION_VERSION,
+    TEXT_CITATION_VERSION,
+    CitationFailure,
+    CitationFailureKind,
+    DerivedRef,
+    FigureCitationV1,
+    TextCitationV2,
+)
 from .context import ExecutionContext
 from .course import CourseProfile, SourcePolicy, TerminologyEntry, TerminologyPolicy
 from .errors import ErrorCode, StudyError
@@ -159,7 +168,9 @@ from .units import (
 )
 
 __all__ = [
+    "FIGURE_CITATION_VERSION",
     "MALFORMED_FLAG",
+    "TEXT_CITATION_VERSION",
     "TUTOR_SNAPSHOT_SCHEMA_VERSION",
     "Actor",
     "AnswerId",
@@ -182,6 +193,8 @@ __all__ = [
     "CanonicalRef",
     "ChunkId",
     "Citation",
+    "CitationFailure",
+    "CitationFailureKind",
     "ClaimOrigin",
     "ContentOrigin",
     "ContinuationSummaryV1",
@@ -189,6 +202,7 @@ __all__ = [
     "CourseId",
     "CourseProfile",
     "CriterionStatus",
+    "DerivedRef",
     "DialectProfile",
     "DocumentTree",
     "DomainEvent",
@@ -196,6 +210,7 @@ __all__ = [
     "EventId",
     "ExecutionContext",
     "FigureBlob",
+    "FigureCitationV1",
     "GradeId",
     "GradeLifecycle",
     "GradeStatus",
@@ -264,6 +279,7 @@ __all__ = [
     "SummaryExchange",
     "TerminologyEntry",
     "TerminologyPolicy",
+    "TextCitationV2",
     "TextSpan",
     "TreeNode",
     "TutorConfiguredHint",
