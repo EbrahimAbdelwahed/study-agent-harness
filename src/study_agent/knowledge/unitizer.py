@@ -14,7 +14,7 @@ from itertools import pairwise
 from re import finditer
 
 from study_agent.domain.citation_v2 import TextCitationV2
-from study_agent.domain.identifiers import RevisionId, UnitId, substrate_id_for
+from study_agent.domain.identifiers import NodeId, RevisionId, UnitId, substrate_id_for
 from study_agent.domain.tree import DocumentTree, RegionKind, TreeNode
 from study_agent.domain.units import (
     LinkKind,
@@ -65,6 +65,7 @@ class UnitDraft:
     span: tuple[int, int]
     flags: frozenset[str] = frozenset()
     parent_path: tuple[str, ...] | None = None
+    node_id: NodeId | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.unit_kind, UnitKind):
@@ -88,6 +89,8 @@ class UnitDraft:
             if any(not isinstance(segment, str) or not segment.strip() for segment in parent):
                 raise ValueError("unit draft parent_path segments must be non-empty text")
             object.__setattr__(self, "parent_path", parent)
+        if self.node_id is not None and not isinstance(self.node_id, NodeId):
+            raise TypeError("unit draft node_id must be NodeId or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,9 +256,56 @@ def unitize(
     if not isinstance(base_meta, UnitMeta):
         raise TypeError("meta must be UnitMeta")
 
-    drafts = draft_units(text, tree, policy=policy)
+    return unitize_drafts(
+        text,
+        tree,
+        draft_units(text, tree, policy=policy),
+        revision_id=revision_id,
+        binding=binding,
+        policy=policy,
+        meta=meta,
+    )
+
+
+def unitize_drafts(
+    text: str,
+    tree: DocumentTree,
+    drafts: Sequence[UnitDraft],
+    *,
+    revision_id: RevisionId,
+    binding: RevisionBinding,
+    policy: UnitizerPolicy = DEFAULT_POLICY,
+    meta: UnitMeta | None = None,
+) -> tuple[RetrievableUnit, ...]:
+    """Materialize canonical drafts through the one KB-06 identity owner.
+
+    ``drafts`` remain identity-free.  A caller may provide typed structural
+    drafts, but every span and optional node binding is checked against the
+    already-admitted tree before the existing ``_unit_id`` function runs.
+    """
+    if not isinstance(revision_id, RevisionId):
+        raise TypeError("revision_id must be RevisionId")
+    if not isinstance(binding, RevisionBinding):
+        raise TypeError("binding must be RevisionBinding")
+    _validate_tree_text(text, tree)
+    if len(text) != binding.character_length:
+        raise ValueError("canonical text length does not match the revision binding")
+    if substrate_id_for(text.encode("utf-8")) != binding.substrate_id:
+        raise ValueError("canonical text does not match the bound substrate")
+    if not isinstance(policy, UnitizerPolicy):
+        raise TypeError("policy must be a UnitizerPolicy")
+    base_meta = meta if meta is not None else UnitMeta("unknown", "primary", 0)
+    if not isinstance(base_meta, UnitMeta):
+        raise TypeError("meta must be UnitMeta")
+    materialized_drafts = tuple(drafts)
+    if len(materialized_drafts) > 4096:
+        raise ValueError("unit draft collection is too large")
+    for draft in materialized_drafts:
+        if not isinstance(draft, UnitDraft):
+            raise TypeError("drafts must contain UnitDraft values")
+        _validate_draft_context(draft, tree, len(text))
     units: list[RetrievableUnit] = []
-    for ordinal, draft in enumerate(drafts, start=base_meta.ordinal):
+    for ordinal, draft in enumerate(materialized_drafts, start=base_meta.ordinal):
         span = TextSpan(binding.substrate_id, *draft.span)
         unit_meta = replace(base_meta, flags=base_meta.flags | draft.flags, ordinal=ordinal)
         units.append(
@@ -291,6 +341,31 @@ def unitize(
         parent = _parent_unit(unit, by_key, document)
         finalized.append(replace(unit, links=(UnitLink(LinkKind.PARENT, parent.unit_id),)))
     return tuple(finalized)
+
+
+def _validate_draft_context(draft: UnitDraft, tree: DocumentTree, text_length: int) -> None:
+    """Reject spans and structural claims not backed by the admitted tree."""
+    start, end = draft.span
+    if end > text_length or start < 0:
+        raise ValueError("unit draft span escapes canonical text")
+    if draft.node_id is None:
+        return
+    node = tree.node(draft.node_id)
+    if node.path != draft.structural_path:
+        raise ValueError("unit draft path does not match its tree node")
+    if node.region_kind is RegionKind.BODY:
+        raise ValueError("typed unit draft must reference a typed tree region")
+    expected_kind = {
+        RegionKind.EMPHASIS: UnitKind.EMPHASIS,
+        RegionKind.SUMMARY: UnitKind.SUMMARY,
+        RegionKind.DEFINITION: UnitKind.DEFINITION,
+        RegionKind.TABLE: UnitKind.TABLE,
+        RegionKind.ITEM: UnitKind.ITEM,
+    }.get(node.region_kind)
+    if expected_kind is None or draft.unit_kind is not expected_kind:
+        raise ValueError("typed unit draft kind does not match its tree region")
+    if not node.start_offset <= start < end <= node.end_offset:
+        raise ValueError("unit draft span escapes its tree node")
 
 
 def remap_citations(
@@ -507,4 +582,5 @@ __all__ = [
     "draft_units",
     "remap_citations",
     "unitize",
+    "unitize_drafts",
 ]

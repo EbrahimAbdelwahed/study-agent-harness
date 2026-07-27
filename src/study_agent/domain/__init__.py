@@ -27,6 +27,13 @@ from .context import ExecutionContext
 from .course import CourseProfile, SourcePolicy, TerminologyEntry, TerminologyPolicy
 from .errors import ErrorCode, StudyError
 from .events import Actor, DomainEvent, PrincipalKind
+from .fragments import (
+    FragmentDraft,
+    FragmentKind,
+    FragmentPromotionDecision,
+    FragmentSignals,
+    SignalContribution,
+)
 from .grounding import AnswerSegment, AnswerStatus, GroundedAnswer, SegmentKind
 from .identifiers import (
     AnswerId,
@@ -218,6 +225,10 @@ __all__ = [
     "ExecutionContext",
     "FigureBlob",
     "FigureCitationV1",
+    "FragmentDraft",
+    "FragmentKind",
+    "FragmentPromotionDecision",
+    "FragmentSignals",
     "GradeId",
     "GradeLifecycle",
     "GradeStatus",
@@ -262,6 +273,7 @@ __all__ = [
     "SelectionStatus",
     "SessionId",
     "SessionStatus",
+    "SignalContribution",
     "SourceChunk",
     "SourceCommitment",
     "SourceDocument",

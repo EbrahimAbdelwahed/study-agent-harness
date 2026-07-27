@@ -27,7 +27,9 @@ class UnitKind(StrEnum):
     PASSAGE = "passage"
     DEFINITION = "definition"
     EMPHASIS = "emphasis"
+    SUMMARY = "summary"
     TABLE = "table"
+    ITEM = "item"
     FIGURE = "figure"
     EXAM_ITEM = "exam_item"
 
@@ -56,7 +58,9 @@ _ALLOWED_GRANULARITY: dict[UnitKind, frozenset[int]] = {
     UnitKind.PASSAGE: frozenset({3}),
     UnitKind.DEFINITION: frozenset({4}),
     UnitKind.EMPHASIS: frozenset({4}),
+    UnitKind.SUMMARY: frozenset({4}),
     UnitKind.TABLE: frozenset({4}),
+    UnitKind.ITEM: frozenset({4}),
     UnitKind.FIGURE: frozenset({4}),
     UnitKind.EXAM_ITEM: frozenset({4}),
 }

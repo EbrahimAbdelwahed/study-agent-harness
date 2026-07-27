@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ._validation import JsonObject, require_text
+from ._validation import JsonObject, JsonValue, require_text
 from .identifiers import NodeId, SubstrateId
 
 
@@ -25,6 +25,7 @@ class RegionKind(StrEnum):
     BODY = "body"
     EMPHASIS = "emphasis"
     SUMMARY = "summary"
+    DEFINITION = "definition"
     TABLE = "table"
     CODE = "code"
     FIGURE_REF = "figure_ref"
@@ -63,6 +64,7 @@ class DialectProfile:
     emphasis_markers: tuple[str, ...] = ()
     summary_markers: tuple[str, ...] = ()
     uncertainty_markers: tuple[str, ...] = ()
+    definition_markers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         require_text(self.profile_name, "profile_name")
@@ -82,12 +84,13 @@ class DialectProfile:
             (self.figure_reference_markers, "figure_reference_markers"),
             (self.emphasis_markers, "emphasis_markers"),
             (self.summary_markers, "summary_markers"),
+            (self.definition_markers, "definition_markers"),
             (self.uncertainty_markers, "uncertainty_markers"),
         ):
             object.__setattr__(self, name, _marker_tuple(markers, name))
 
     def to_json(self) -> JsonObject:
-        return {
+        payload: dict[str, JsonValue] = {
             "emphasis_markers": self.emphasis_markers,
             "fenced_code": self.fenced_code,
             "figure_reference_markers": self.figure_reference_markers,
@@ -100,6 +103,9 @@ class DialectProfile:
             "summary_markers": self.summary_markers,
             "uncertainty_markers": self.uncertainty_markers,
         }
+        if self.definition_markers:
+            payload["definition_markers"] = self.definition_markers
+        return payload
 
 
 def _marker_tuple(markers: Sequence[str], name: str) -> tuple[str, ...]:

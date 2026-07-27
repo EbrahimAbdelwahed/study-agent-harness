@@ -504,7 +504,9 @@ def _regions(
     return tuple(regions)
 
 
-_MERGEABLE = frozenset({RegionKind.TABLE, RegionKind.EMPHASIS, RegionKind.SUMMARY})
+_MERGEABLE = frozenset(
+    {RegionKind.TABLE, RegionKind.EMPHASIS, RegionKind.SUMMARY, RegionKind.DEFINITION}
+)
 
 
 def _classify(content: str, profile: DialectProfile) -> RegionKind | None:
@@ -517,6 +519,9 @@ def _classify(content: str, profile: DialectProfile) -> RegionKind | None:
     for marker in profile.summary_markers:
         if stripped.startswith(marker):
             return RegionKind.SUMMARY
+    for marker in profile.definition_markers:
+        if stripped.startswith(marker):
+            return RegionKind.DEFINITION
     if profile.pipe_tables and stripped.startswith("|"):
         return RegionKind.TABLE
     for marker in profile.figure_reference_markers:
