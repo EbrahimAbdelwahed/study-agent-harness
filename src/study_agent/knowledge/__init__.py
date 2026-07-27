@@ -8,5 +8,30 @@ authority.
 from __future__ import annotations
 
 from .tree import TREE_FORMAT_VERSION, build_document_tree
+from .unitizer import (
+    DEFAULT_POLICY,
+    V01_WINDOW_CHARACTERS,
+    CitationRemap,
+    RemapReport,
+    UnitDraft,
+    UnitizerPolicy,
+    draft_units,
+    remap_citations,
+    unitize,
+    unitize_document,
+)
 
-__all__ = ["TREE_FORMAT_VERSION", "build_document_tree"]
+__all__ = [
+    "DEFAULT_POLICY",
+    "TREE_FORMAT_VERSION",
+    "V01_WINDOW_CHARACTERS",
+    "CitationRemap",
+    "RemapReport",
+    "UnitDraft",
+    "UnitizerPolicy",
+    "build_document_tree",
+    "draft_units",
+    "remap_citations",
+    "unitize",
+    "unitize_document",
+]
