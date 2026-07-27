@@ -24,6 +24,8 @@ from study_agent.domain.tree import (
 #: Bumping this version changes every derived ``node_id`` and forces a rebuild.
 TREE_FORMAT_VERSION = "document-tree-v1"
 
+_ADMISSION_SEAL = object()
+
 _FENCE = "```"
 _LIST_BULLETS = ("- ", "* ", "+ ")
 
@@ -49,6 +51,70 @@ class _Region:
     start: int
     end: int
     flags: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class AdmittedDocumentTree:
+    """Canonical tree context that can only be produced by :func:`admit_tree`.
+
+    A persisted :class:`DocumentTree` is merely data.  Projection code must
+    receive this runtime value so it cannot accidentally trust a caller-built
+    tree or a fabricated node sequence.  The private factory below is the
+    only construction path used by this module.
+    """
+
+    tree: DocumentTree
+    text: str
+    profile: DialectProfile
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("AdmittedDocumentTree values must come from admit_tree")
+
+    @property
+    def substrate_id(self) -> SubstrateId:
+        return self.tree.substrate_id
+
+    @property
+    def tree_format_version(self) -> str:
+        return self.tree.tree_format_version
+
+    @property
+    def profile_name(self) -> str:
+        return self.tree.profile_name
+
+    @property
+    def profile_version(self) -> str:
+        return self.tree.profile_version
+
+    @property
+    def nodes(self) -> tuple[TreeNode, ...]:
+        return self.tree.nodes
+
+    @property
+    def root(self) -> TreeNode:
+        return self.tree.root
+
+    def node(self, node_id: NodeId) -> TreeNode:
+        return self.tree.node(node_id)
+
+    def children(self, node_id: NodeId) -> tuple[TreeNode, ...]:
+        return self.tree.children(node_id)
+
+
+def _make_admitted_tree(
+    tree: DocumentTree,
+    text: str,
+    profile: DialectProfile,
+    *,
+    seal: object,
+) -> AdmittedDocumentTree:
+    if seal is not _ADMISSION_SEAL:
+        raise TypeError("AdmittedDocumentTree values must come from admit_tree")
+    admitted = object.__new__(AdmittedDocumentTree)
+    object.__setattr__(admitted, "tree", tree)
+    object.__setattr__(admitted, "text", text)
+    object.__setattr__(admitted, "profile", profile)
+    return admitted
 
 
 @dataclass
@@ -105,7 +171,7 @@ def build_document_tree(
     )
 
 
-def admit_tree(tree: DocumentTree, text: str, profile: DialectProfile) -> DocumentTree:
+def admit_tree(tree: DocumentTree, text: str, profile: DialectProfile) -> AdmittedDocumentTree:
     """Re-derive a persisted tree against the canonical substrate before trust."""
     if not isinstance(tree, DocumentTree):
         raise TypeError("tree admission requires a DocumentTree")
@@ -119,7 +185,7 @@ def admit_tree(tree: DocumentTree, text: str, profile: DialectProfile) -> Docume
     rebuilt = build_document_tree(text, profile, substrate_id=substrate_id)
     if tree.to_json() != rebuilt.to_json():
         raise ValueError("persisted document tree fails canonical admission")
-    return tree
+    return _make_admitted_tree(tree, text, profile, seal=_ADMISSION_SEAL)
 
 
 def _scan_lines(text: str) -> tuple[_Line, ...]:
@@ -484,6 +550,7 @@ def _markers_in(
 
 __all__ = [
     "TREE_FORMAT_VERSION",
+    "AdmittedDocumentTree",
     "admit_tree",
     "build_document_tree",
 ]

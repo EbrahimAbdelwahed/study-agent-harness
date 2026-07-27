@@ -14,8 +14,9 @@ from study_agent.domain.projections import (
     ProjectorPort,
 )
 from study_agent.domain.tree import TreeNode
-from study_agent.domain.units import RetrievableUnit
-from study_agent.knowledge.units import decode_unit
+from study_agent.domain.units import RetrievableUnit, TextSpan
+from study_agent.knowledge.tree import AdmittedDocumentTree
+from study_agent.knowledge.units import UNITIZER_VERSION, decode_unit
 from study_agent.state.serialization import canonical_json_bytes
 
 STRUCTURAL_PROJECTOR_NAME = "structural"
@@ -30,41 +31,45 @@ MAX_POLICY_TEXT = 512
 TRUNCATION_MARKER = "…"
 
 
+def _require_admitted_tree(value: object) -> AdmittedDocumentTree:
+    if not isinstance(value, AdmittedDocumentTree):
+        raise TypeError("projector requires an AdmittedDocumentTree context")
+    return value
+
+
 def _validated_ancestors(
-    unit: RetrievableUnit, headings: Sequence[TreeNode]
+    unit: RetrievableUnit, admitted_tree: object
 ) -> tuple[TreeNode, ...]:
-    if isinstance(headings, (str, bytes, bytearray)):
-        raise TypeError("ancestor_headings must be a sequence of TreeNode values")
-    values = tuple(headings)
-    if len(values) > MAX_ANCESTOR_COUNT:
-        raise ValueError("ancestor_headings exceeds the tree depth bound")
-    seen: set[object] = set()
-    previous: TreeNode | None = None
-    for heading in values:
-        if not isinstance(heading, TreeNode):
-            raise TypeError("ancestor_headings must contain TreeNode values")
-        if heading.region_kind.value != "body":
-            raise ValueError("ancestor headings must be BODY tree nodes")
-        if heading.depth > MAX_ANCESTOR_DEPTH:
+    admitted = _require_admitted_tree(admitted_tree)
+    reference = unit.canonical_ref
+    if isinstance(reference, TextSpan) and reference.substrate_id != admitted.substrate_id:
+        raise ValueError("unit text substrate does not match admitted tree")
+
+    by_path = {node.path: node for node in admitted.nodes}
+    ancestors: list[TreeNode] = []
+    path: tuple[str, ...] = ()
+    parent: TreeNode | None = None
+    for segment in (None, *unit.structural_path):
+        if segment is not None:
+            path = (*path, segment)
+        node = by_path.get(path)
+        if node is None:
+            raise ValueError("unit structural path cannot be resolved in admitted tree")
+        if node.region_kind.value != "body":
+            raise ValueError("unit structural path must resolve to BODY tree nodes")
+        if node.depth > MAX_ANCESTOR_DEPTH:
             raise ValueError("ancestor heading depth exceeds the tree bound")
-        if heading.node_id in seen:
-            raise ValueError("ancestor headings must be unique")
-        seen.add(heading.node_id)
-        if (
-            len(heading.path) > len(unit.structural_path)
-            or tuple(unit.structural_path[: heading.depth]) != heading.path
-        ):
-            raise ValueError("ancestor heading path is not a prefix of the unit path")
-        if previous is not None and (
-            heading.depth <= previous.depth or heading.parent_id != previous.node_id
-        ):
-            raise ValueError("ancestor headings must be ordered root-to-leaf")
-        previous = heading
-    return values
+        if parent is not None and node.parent_id != parent.node_id:
+            raise ValueError("admitted tree ancestor chain is not ordered root-to-leaf")
+        ancestors.append(node)
+        parent = node
+    if len(ancestors) - 1 > MAX_ANCESTOR_COUNT:
+        raise ValueError("unit structural path exceeds the tree depth bound")
+    return tuple(ancestors)
 
 
-def _labels(unit: RetrievableUnit, headings: Sequence[TreeNode]) -> tuple[str, ...]:
-    values = _validated_ancestors(unit, headings)
+def _labels(unit: RetrievableUnit, admitted_tree: object) -> tuple[str, ...]:
+    values = _validated_ancestors(unit, admitted_tree)
     labels: list[str] = []
     for heading in values:
         label = heading.heading_text.strip()
@@ -83,8 +88,8 @@ def _truncate(value: str, limit: int) -> str:
     return value[: limit - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
 
 
-def _context(unit: RetrievableUnit, headings: Sequence[TreeNode]) -> str:
-    labels = _labels(unit, headings)
+def _context(unit: RetrievableUnit, admitted_tree: object) -> str:
+    labels = _labels(unit, admitted_tree)
     return _truncate(" > ".join(labels) if labels else "document", 1_024)
 
 
@@ -139,16 +144,23 @@ def _policy(value: Mapping[str, JsonValue] | Sequence[JsonValue], name: str) -> 
 
 def projection_input_fingerprint(
     unit: RetrievableUnit,
-    ancestor_headings: Sequence[TreeNode],
+    admitted_tree: object,
     *,
     scope_policy: Mapping[str, JsonValue] | Sequence[JsonValue] = (),
     producer_policy: Mapping[str, JsonValue] | Sequence[JsonValue] = (),
 ) -> str:
-    ancestors = _validated_ancestors(unit, ancestor_headings)
-    context = _context(unit, ancestors)
+    admitted = _require_admitted_tree(admitted_tree)
+    ancestors = _validated_ancestors(unit, admitted)
+    context = _context(unit, admitted)
     payload: JsonObject = {
+        "admitted_tree": {
+            "profile_name": admitted.profile_name,
+            "profile_version": admitted.profile_version,
+            "substrate_id": str(admitted.substrate_id),
+            "tree_format_version": admitted.tree_format_version,
+        },
         "ancestor_nodes": tuple(node.to_json() for node in ancestors),
-        "ancestor_headings": _labels(unit, ancestors),
+        "ancestor_headings": _labels(unit, admitted),
         "producer_policy": _policy(producer_policy, "producer_policy"),
         "scope_policy": _policy(scope_policy, "scope_policy"),
         "structural_context": context,
@@ -167,16 +179,17 @@ class StructuralProjector:
     def project(
         self,
         unit: RetrievableUnit,
-        ancestor_headings: Sequence[TreeNode],
+        admitted_tree: object,
         *,
         scope_policy: Mapping[str, JsonValue] | Sequence[JsonValue] = (),
         producer_policy: Mapping[str, JsonValue] | Sequence[JsonValue] = (),
     ) -> IndexProjection:
         if not isinstance(unit, RetrievableUnit):
             raise TypeError("structural projector requires RetrievableUnit")
-        ancestors = _validated_ancestors(unit, ancestor_headings)
-        labels = _labels(unit, ancestors)
-        context = _context(unit, ancestors)
+        admitted = _require_admitted_tree(admitted_tree)
+        _validated_ancestors(unit, admitted)
+        labels = _labels(unit, admitted)
+        context = _context(unit, admitted)
         descriptive = tuple(label for label in labels if not _weak(label))
         handle = (
             f"{unit.unit_kind.value}: {_truncate(descriptive[-1], 512)}"
@@ -185,7 +198,7 @@ class StructuralProjector:
         )
         handle = _truncate(handle, 512)
         fingerprint = projection_input_fingerprint(
-            unit, ancestors, scope_policy=scope_policy, producer_policy=producer_policy
+            unit, admitted, scope_policy=scope_policy, producer_policy=producer_policy
         )
         output = IndexProjection.derive_output_sha256(
             handle=handle,
@@ -213,13 +226,13 @@ class StructuralProjector:
 
 def project_structural(
     unit: RetrievableUnit,
-    ancestor_headings: Sequence[TreeNode],
+    admitted_tree: object,
     *,
     scope_policy: Mapping[str, JsonValue] | Sequence[JsonValue] = (),
     producer_policy: Mapping[str, JsonValue] | Sequence[JsonValue] = (),
 ) -> IndexProjection:
     return StructuralProjector().project(
-        unit, ancestor_headings, scope_policy=scope_policy, producer_policy=producer_policy
+        unit, admitted_tree, scope_policy=scope_policy, producer_policy=producer_policy
     )
 
 
@@ -237,9 +250,12 @@ def _mapping(value: JsonValue | None, name: str) -> Mapping[str, JsonValue]:
 
 
 def reduce_projections(
-    state: JsonObject, projections: Sequence[IndexProjection]
+    state: JsonObject,
+    projections: Sequence[IndexProjection],
+    *,
+    unitizer_version: str = UNITIZER_VERSION,
 ) -> Mapping[str, JsonValue]:
-    canonical_units = _canonical_units(state)
+    canonical_units = _canonical_units(state, unitizer_version=unitizer_version)
     rows = dict(_mapping(state.get(PROJECTIONS_STATE_KEY, {}), PROJECTIONS_STATE_KEY))
     by_unit = dict(_mapping(state.get(PROJECTION_UNITS_STATE_KEY, {}), PROJECTION_UNITS_STATE_KEY))
     for projection in projections:
@@ -259,14 +275,16 @@ def reduce_projections(
     return {**state, PROJECTIONS_STATE_KEY: rows, PROJECTION_UNITS_STATE_KEY: by_unit}
 
 
-def _canonical_units(state: JsonObject) -> Mapping[str, JsonValue]:
+def _canonical_units(
+    state: JsonObject, *, unitizer_version: str = UNITIZER_VERSION
+) -> Mapping[str, JsonValue]:
     units = state.get("units")
     if not isinstance(units, Mapping):
         raise ValueError("canonical state must contain a units object")
     for key, raw in units.items():
         if not isinstance(key, str) or not isinstance(raw, Mapping):
             raise ValueError("canonical units state is malformed")
-        decoded = decode_unit(raw)
+        decoded = decode_unit(raw, unitizer_version=unitizer_version)
         if str(decoded.unit_id) != key:
             raise ValueError("canonical unit index key does not match unit identity")
     return units

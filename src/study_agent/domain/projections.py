@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol, cast
@@ -12,7 +11,6 @@ from study_agent.state.serialization import canonical_json_bytes, canonical_json
 
 from ._validation import JsonObject, JsonValue, require_text
 from .identifiers import UnitId
-from .tree import TreeNode
 from .units import RetrievableUnit
 
 MAX_HANDLE_LENGTH = 512
@@ -434,7 +432,7 @@ class ProjectorPort(Protocol):
     def manifest(self) -> ProjectorManifest: ...
 
     def project(
-        self, unit: RetrievableUnit, ancestor_headings: Sequence[TreeNode]
+        self, unit: RetrievableUnit, admitted_tree: object
     ) -> IndexProjection: ...
 
 

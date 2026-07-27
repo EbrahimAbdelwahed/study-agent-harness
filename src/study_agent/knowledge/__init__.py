@@ -21,7 +21,7 @@ from .projections import (
     projection_input_fingerprint,
     reduce_projections,
 )
-from .tree import TREE_FORMAT_VERSION, admit_tree, build_document_tree
+from .tree import TREE_FORMAT_VERSION, AdmittedDocumentTree, admit_tree, build_document_tree
 from .unitizer import (
     DEFAULT_POLICY,
     V01_WINDOW_CHARACTERS,
@@ -41,6 +41,7 @@ __all__ = [
     "STRUCTURAL_PROJECTOR_NAME",
     "STRUCTURAL_PROJECTOR_VERSION",
     "TREE_FORMAT_VERSION",
+    "AdmittedDocumentTree",
     "V01_WINDOW_CHARACTERS",
     "CitationRemap",
     "RemapReport",
