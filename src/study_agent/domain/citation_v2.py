@@ -8,6 +8,12 @@ A citation commits to identity and to the hash of the exact quoted bytes.
 Locators, page numbers, and anchors are hints or links and never participate in
 identity, so no index, snippet, or derived artifact can stand in for canonical
 evidence.
+
+Spans are code-point exact by design (ADR-0014). A span may therefore split a
+grapheme cluster; the quoted hash stays consistent, but the rendered fragment
+may not read the way a human would expect. This is accepted deliberately
+rather than silently widened, because widening a span would change what was
+cited.
 """
 
 from __future__ import annotations
@@ -20,6 +26,9 @@ from .identifiers import RevisionId, SourceId, SubstrateId, UnitId
 
 TEXT_CITATION_VERSION = 2
 FIGURE_CITATION_VERSION = 1
+
+#: A locator is a short human hint, never a second channel for text.
+MAX_LOCATOR_LENGTH = 128
 
 
 class CitationFailureKind(StrEnum):
@@ -79,6 +88,10 @@ class TextCitationV2:
         _digest(self.quoted_sha256, "quoted_sha256")
         if self.locator is not None:
             require_text(self.locator, "locator")
+            if len(self.locator) > MAX_LOCATOR_LENGTH:
+                raise ValueError(
+                    f"locator must be at most {MAX_LOCATOR_LENGTH} characters"
+                )
         if self.page_hint is not None and (
             type(self.page_hint) is not int or self.page_hint < 1
         ):

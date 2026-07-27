@@ -1,7 +1,7 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Active — KB-00, KB-01, KB-02, KB-04, and KB-05 complete; KB-03 and
-KB-06/KB-07/KB-08/KB-14 dependency-ready
+Status: Active — KB-00 through KB-05 complete; KB-06, KB-07, KB-08, and
+KB-14 dependency-ready
 Last updated: 2026-07-27
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
@@ -18,10 +18,15 @@ migration tests; do not add model, vector, OCR, vision, transport, UI, or
 tutor behavior to the offline trunk. Before ending a pass, update this
 section, the owning bead status, and the checklist below.
 
-Current pickup: KB-03 citation v2 verification, then KB-06/KB-07/KB-08 and
-KB-14 (all four unblocked by KB-05).
+Current pickup: KB-06 structural unitizer, KB-07 typed fragments, KB-08
+projection core, and KB-14 connector protocol. All four are independent.
 
-Active blockers: none for KB-03, KB-06, KB-07, KB-08, or KB-14.
+Active blockers: none. Owner decisions are recorded in
+[`answers.md`](../../docs/decision-requests/20260727-kb-v0-2-completion/answers.md).
+
+KB-06 and KB-13 both depend on the caller obligation KB-03 records: a
+`RetrievableUnit` handed to the citation verifier must come from the canonical
+registry, never from connector or model input.
 
 KB-06 must feed `reduce_units` real `RevisionBinding` values read from
 canonical projection state; the binding gate is the only thing standing
@@ -153,7 +158,7 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 - [x] [KB-00 architecture closure](beads/KB-00-architecture-closure.md)
 - [x] [KB-01 canonical substrate](beads/KB-01-canonical-substrate.md)
 - [x] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
-- [ ] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
+- [x] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
 - [x] [KB-04 document tree](beads/KB-04-document-tree.md)
 - [x] [KB-05 uniform retrievable units](beads/KB-05-uniform-retrievable-units.md)
 - [ ] [KB-06 structural unitizer](beads/KB-06-structural-unitizer.md)

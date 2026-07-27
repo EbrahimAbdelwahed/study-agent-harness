@@ -3,6 +3,18 @@
 The verifier takes the bytes it is asked to trust as explicit arguments and
 performs no I/O itself, so no index text, snippet, or cached projection can
 reach it. Every check fails closed with a typed reason.
+
+**Caller obligation.** ``substrate_id`` is a hash of content bytes only, so it
+carries no source or revision binding. The only thing tying a citation to a
+source and revision is the ``RetrievableUnit`` the caller supplies. That unit
+MUST be looked up by ``citation.unit_id`` in the canonical unit registry for
+its revision; it must never be reconstructed from connector, request, or model
+input. A fabricated but internally consistent unit will verify here, and
+catching that is the job of the KB-05 binding gate, not of this module.
+
+For the same reason, ``DerivedRef.subject`` is not verified when a derived
+reference is constructed: a consumer that shows a subject citation as
+grounding must verify it here first.
 """
 
 from __future__ import annotations
@@ -52,7 +64,7 @@ def verify_text_citation(
     *,
     substrate_bytes: bytes,
     unit: RetrievableUnit,
-    selection_status: SelectionStatus = SelectionStatus.CURRENT,
+    selection_status: SelectionStatus,
     successor: RevisionRef | None = None,
 ) -> ResolvedCitation:
     """Resolve one text citation against the substrate bytes and its unit."""
@@ -68,14 +80,11 @@ def verify_text_citation(
     if not isinstance(substrate_bytes, bytes) or not substrate_bytes:
         raise _fail(CitationFailureKind.MISSING, "substrate bytes were not supplied")
 
+    text = _canonical_text(substrate_bytes)
     if substrate_id_for(substrate_bytes) != citation.substrate_id:
         raise _fail(
             CitationFailureKind.CORRUPT, "substrate bytes do not match substrate_id"
         )
-    try:
-        text = substrate_bytes.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:  # pragma: no cover - guarded by substrate_id
-        raise _fail(CitationFailureKind.CORRUPT, "substrate is not valid UTF-8") from error
 
     _require_unit_agreement(citation, unit)
     span = unit.canonical_ref
@@ -107,7 +116,7 @@ def verify_figure_citation(
     citation: FigureCitationV1,
     *,
     image_bytes: bytes,
-    selection_status: SelectionStatus = SelectionStatus.CURRENT,
+    selection_status: SelectionStatus,
     successor: RevisionRef | None = None,
 ) -> ResolvedCitation:
     """Resolve one figure citation against the image bytes themselves."""
@@ -130,6 +139,21 @@ def verify_figure_citation(
     # anchor_unit_id and page_hint are links and hints; they are deliberately
     # not part of image identity and are never verified as such.
     return ResolvedCitation(citation, None, selection_status, successor)
+
+
+def _canonical_text(substrate_bytes: bytes) -> str:
+    """Decode canonical bytes, converting every Unicode failure into a typed one."""
+    try:
+        return substrate_bytes.decode("utf-8", errors="strict")
+    except (UnicodeDecodeError, AttributeError) as error:
+        raise _fail(CitationFailureKind.CORRUPT, "substrate is not valid UTF-8") from error
+
+
+def _quoted_digest(value: str, reason: str) -> str:
+    try:
+        return sha256(value.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError as error:
+        raise _fail(CitationFailureKind.CORRUPT, reason) from error
 
 
 def _require_unit_agreement(citation: TextCitationV2, unit: RetrievableUnit) -> None:
@@ -158,7 +182,7 @@ def text_citation_for(
             CitationFailureKind.REFERENCE_MISMATCH,
             "only a text unit can produce a text citation",
         )
-    text = substrate_bytes.decode("utf-8", errors="strict")
+    text = _canonical_text(substrate_bytes)
     if start < 0 or end <= start or end > len(text):
         raise _fail(CitationFailureKind.MALFORMED_SPAN, "span is outside the substrate")
     citation = TextCitationV2(
@@ -168,13 +192,20 @@ def text_citation_for(
         unit.canonical_ref.substrate_id,
         start,
         end,
-        sha256(text[start:end].encode("utf-8")).hexdigest(),
+        _quoted_digest(text[start:end], "canonical bytes are not encodable"),
         locator,
         page_hint,
     )
-    # Minting goes through the same gate as reading, so a caller cannot create
-    # a citation the verifier would later reject.
-    verify_text_citation(citation, substrate_bytes=substrate_bytes, unit=unit)
+    # Minting goes through the same gate as reading, so a caller cannot mint a
+    # citation this verifier would reject for the same unit. It does not, and
+    # cannot, establish that the unit itself is authentic; see the module
+    # docstring.
+    verify_text_citation(
+        citation,
+        substrate_bytes=substrate_bytes,
+        unit=unit,
+        selection_status=SelectionStatus.CURRENT,
+    )
     return citation
 
 
@@ -206,7 +237,9 @@ def upgrade_v1_citation(
         locator=legacy.locator,
     )
     if legacy.quoted_snippet is not None:
-        expected = sha256(legacy.quoted_snippet.encode("utf-8")).hexdigest()
+        expected = _quoted_digest(
+            legacy.quoted_snippet, "the v0.1 snippet is not encodable UTF-8"
+        )
         if expected != upgraded.quoted_sha256:
             raise _fail(
                 CitationFailureKind.MISMATCHED_CHECKSUM,
