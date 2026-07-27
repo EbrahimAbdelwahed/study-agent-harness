@@ -1,7 +1,7 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Active — KB-00, KB-01, KB-02, and KB-04 complete; KB-03 and KB-05
-dependency-ready
+Status: Active — KB-00, KB-01, KB-02, KB-04, and KB-05 complete; KB-03 and
+KB-06/KB-07/KB-08/KB-14 dependency-ready
 Last updated: 2026-07-27
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
@@ -18,10 +18,15 @@ migration tests; do not add model, vector, OCR, vision, transport, UI, or
 tutor behavior to the offline trunk. Before ending a pass, update this
 section, the owning bead status, and the checklist below.
 
-Current pickup: KB-03 citation v2 verification and KB-05 uniform retrievable
-units.
+Current pickup: KB-03 citation v2 verification, then KB-06/KB-07/KB-08 and
+KB-14 (all four unblocked by KB-05).
 
-Active blockers: none for KB-03 or KB-05.
+Active blockers: none for KB-03, KB-06, KB-07, KB-08, or KB-14.
+
+KB-06 must feed `reduce_units` real `RevisionBinding` values read from
+canonical projection state; the binding gate is the only thing standing
+between a unitizer bug and forged evidence, because ADR-0014 keeps
+`source_id` and the substrate out of `unit_id`.
 
 Open for review: KB-02 deliberately kept the existing v0.1 `revision_id`
 derivation instead of minting a second revision identity, and deferred the
@@ -150,7 +155,7 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 - [x] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
 - [ ] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
 - [x] [KB-04 document tree](beads/KB-04-document-tree.md)
-- [ ] [KB-05 uniform retrievable units](beads/KB-05-uniform-retrievable-units.md)
+- [x] [KB-05 uniform retrievable units](beads/KB-05-uniform-retrievable-units.md)
 - [ ] [KB-06 structural unitizer](beads/KB-06-structural-unitizer.md)
 - [ ] [KB-07 typed fragments and promotion](beads/KB-07-typed-fragments.md)
 - [ ] [KB-08 projection core](beads/KB-08-projection-core.md)
@@ -191,6 +196,11 @@ layout, automatic cross-edition citation migration, and a hosted database.
 ## Human review map
 
 - KB-00: approve identity, compatibility, conformance, and replay semantics.
+- KB-05: `node_id` still does not commit to `span`. Inside
+  `build_document_tree` this is safe, and README keeps `node_id` a structural
+  handle, but before KB-08 trusts a persisted tree span for anything
+  evidentiary either bind `span` into `node_id` or add a tree admission
+  function that re-derives against the substrate.
 - KB-09B: inspect retrieval quality on fixed medical fixtures.
 - KB-15C: inspect real-semester conformance output before tuning profiles.
 - KB-17C: approve figure-anchor event and review authority.

@@ -115,6 +115,19 @@ class NodeId(Identifier):
             raise ValueError("node id must be node:sha256:<lowercase sha256>")
 
 
+class UnitId(Identifier):
+    """Identity of one revision-local retrievable unit occurrence."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        prefix = "unit:sha256:"
+        digest = self.value.removeprefix(prefix)
+        if not self.value.startswith(prefix) or len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise ValueError("unit id must be unit:sha256:<lowercase sha256>")
+
+
 class ArtifactId(Identifier):
     pass
 
@@ -328,6 +341,58 @@ def node_id_for(
     )
     digest = sha256(b"study-agent/document-tree-node/v1\0" + payload).hexdigest()
     return NodeId(f"node:sha256:{digest}")
+
+
+def unit_id_for(
+    *,
+    revision_id: RevisionId,
+    structural_path: Sequence[str],
+    unit_kind: str,
+    granularity: int,
+    canonical_ref: Mapping[str, object],
+    unitizer_version: str,
+) -> UnitId:
+    """Derive a revision-local unit occurrence identity (ADR-0014 §5.3).
+
+    Identity commits to the revision, the placement (structural path plus the
+    canonical reference), the kind/granularity pair, and the unitizer version.
+    Duplicate passages therefore stay distinct, and changing the unitizer
+    deliberately changes every ``unit_id``.
+    """
+    if not isinstance(revision_id, RevisionId):
+        raise TypeError("unit identity requires RevisionId")
+    for value, field_name in ((unit_kind, "unit_kind"), (unitizer_version, "unitizer_version")):
+        require_text(value, field_name)
+    if type(granularity) is not int or not 0 <= granularity <= 4:
+        raise ValueError("granularity must be an integer between 0 and 4")
+    if isinstance(structural_path, (str, bytes, bytearray)) or not isinstance(
+        structural_path, Sequence
+    ):
+        raise TypeError("structural_path must be a sequence of segments")
+    segments = tuple(structural_path)
+    for segment in segments:
+        if not isinstance(segment, str):
+            raise TypeError("structural_path segments must be strings")
+        require_text(segment, "structural_path segment")
+    if not isinstance(canonical_ref, Mapping) or not canonical_ref:
+        raise TypeError("canonical_ref must be a non-empty object")
+    from study_agent.state.serialization import canonical_json_bytes
+
+    payload = canonical_json_bytes(
+        cast(
+            JsonObject,
+            {
+                "canonical_ref": dict(canonical_ref),
+                "granularity": granularity,
+                "revision_id": str(revision_id),
+                "structural_path": segments,
+                "unit_kind": unit_kind,
+                "unitizer_version": unitizer_version,
+            },
+        )
+    )
+    digest = sha256(b"study-agent/retrievable-unit/v1\0" + payload).hexdigest()
+    return UnitId(f"unit:sha256:{digest}")
 
 
 def substrate_production_event_id_for(

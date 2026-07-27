@@ -118,3 +118,31 @@ def test_public_substrate_types_are_owned_by_domain_and_ingestion_modules() -> N
     assert SubstrateProduction.__module__ == "study_agent.domain.substrate"
     assert ConverterReceipt.__module__ == "study_agent.ingestion.substrate"
     assert SubstrateProductionService.__module__ == "study_agent.ingestion.substrate"
+
+
+def test_no_module_outside_the_domain_defines_a_parallel_unit_type() -> None:
+    owned = {"units.py"}
+    parallel: list[str] = []
+    for path in sorted(ROOT.rglob("*.py")):
+        if path.parent == ROOT / "domain" and path.name in owned:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in {
+                "RetrievableUnit",
+                "UnitKind",
+                "UnitMeta",
+                "CanonicalRef",
+            }:
+                parallel.append(f"{path.relative_to(ROOT)} defines {node.name}")
+    assert parallel == []
+
+
+def test_retrievable_unit_contracts_are_owned_by_domain_and_knowledge() -> None:
+    from study_agent.domain import RetrievableUnit, UnitKind, UnitMeta
+    from study_agent.knowledge.units import reduce_units
+
+    assert RetrievableUnit.__module__ == "study_agent.domain.units"
+    assert UnitKind.__module__ == "study_agent.domain.units"
+    assert UnitMeta.__module__ == "study_agent.domain.units"
+    assert reduce_units.__module__ == "study_agent.knowledge.units"

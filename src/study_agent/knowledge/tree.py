@@ -8,6 +8,7 @@ substrate, profile, and format version.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 
 from study_agent.domain.identifiers import NodeId, SubstrateId, node_id_for
@@ -79,6 +80,7 @@ def build_document_tree(
         raise TypeError("document tree requires SubstrateId")
 
     lines = _scan_lines(text)
+    starts = tuple(line.start for line in lines)
     code_spans = _code_spans(lines, profile)
     headings = _headings(lines, code_spans, profile)
     outline = _nest(headings, len(text))
@@ -88,6 +90,7 @@ def build_document_tree(
         parent_id=None,
         path=(),
         lines=lines,
+        starts=starts,
         code_spans=code_spans,
         profile=profile,
         substrate_id=substrate_id,
@@ -147,6 +150,21 @@ def _inside(offset: int, spans: tuple[_Region, ...]) -> bool:
     return any(span.start <= offset < span.end for span in spans)
 
 
+def _line_window(
+    lines: tuple[_Line, ...], starts: tuple[int, ...], start: int, end: int
+) -> tuple[int, int]:
+    """Index range of the lines fully contained in ``[start, end)``.
+
+    Lines are already ordered, so a bounded slice replaces a full rescan of the
+    document for every node.
+    """
+    first = bisect_left(starts, start)
+    last = bisect_right(starts, end)
+    while last > first and lines[last - 1].end > end:
+        last -= 1
+    return first, last
+
+
 def _headings(
     lines: tuple[_Line, ...],
     code_spans: tuple[_Region, ...],
@@ -188,15 +206,14 @@ def _split_anchor(text: str) -> tuple[str, str | None]:
 def _nest(headings: tuple[_Heading, ...], document_end: int) -> _Outline:
     root = _Outline(0, "", None, 0, document_end)
     stack: list[_Outline] = [root]
-    for index, heading in enumerate(headings):
-        end = document_end
-        for candidate in headings[index + 1 :]:
-            if candidate.level <= heading.level:
-                end = candidate.start
-                break
-        node = _Outline(heading.level, heading.title, heading.anchor, heading.start, end)
+    for heading in headings:
+        node = _Outline(
+            heading.level, heading.title, heading.anchor, heading.start, document_end
+        )
+        # Closing the open sections here also fixes their end offset, which
+        # avoids a second scan over the remaining headings per heading.
         while stack[-1].level >= heading.level:
-            stack.pop()
+            stack.pop().end = heading.start
         stack[-1].children.append(node)
         stack.append(node)
     return root
@@ -208,6 +225,7 @@ def _emit(
     parent_id: NodeId | None,
     path: tuple[str, ...],
     lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
     code_spans: tuple[_Region, ...],
     profile: DialectProfile,
     substrate_id: SubstrateId,
@@ -219,7 +237,7 @@ def _emit(
     accumulates the uncertainty declared by its typed regions.
     """
     own_end = outline.children[0].start if outline.children else outline.end
-    regions = _regions(outline.start, own_end, lines, code_spans, profile)
+    regions = _regions(outline.start, own_end, lines, starts, code_spans, profile)
     children: list[tuple[int, RegionKind, _Region | _Outline]] = [
         (region.start, region.kind, region) for region in regions
     ]
@@ -246,7 +264,7 @@ def _emit(
     )
     nodes.append(placeholder)
 
-    flags = _markers_in(outline.start, own_end, lines, profile)
+    flags = _markers_in(outline.start, own_end, lines, starts, profile)
     for segment, (_, _, child) in zip(segments, children, strict=True):
         child_path = (*path, segment)
         if isinstance(child, _Outline):
@@ -255,6 +273,7 @@ def _emit(
                 parent_id=node_id,
                 path=child_path,
                 lines=lines,
+                starts=starts,
                 code_spans=code_spans,
                 profile=profile,
                 substrate_id=substrate_id,
@@ -266,6 +285,7 @@ def _emit(
                 parent_id=node_id,
                 path=child_path,
                 lines=lines,
+                starts=starts,
                 profile=profile,
                 substrate_id=substrate_id,
                 nodes=nodes,
@@ -288,11 +308,12 @@ def _emit_region(
     parent_id: NodeId,
     path: tuple[str, ...],
     lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
     profile: DialectProfile,
     substrate_id: SubstrateId,
     nodes: list[TreeNode],
 ) -> frozenset[str]:
-    flags = region.flags | _markers_in(region.start, region.end, lines, profile)
+    flags = region.flags | _markers_in(region.start, region.end, lines, starts, profile)
     nodes.append(
         TreeNode(
             node_id_for(
@@ -326,14 +347,18 @@ def _unique_segments(
             counters[kind] = counters.get(kind, 0) + 1
             proposed.append(f"{kind.value}-{counters[kind]}")
     used: dict[str, int] = {}
+    taken: set[str] = set()
     segments: list[str] = []
     for segment in proposed:
-        if segment in used:
-            used[segment] += 1
-            segments.append(f"{segment}-{used[segment]}")
-        else:
-            used[segment] = 1
-            segments.append(segment)
+        candidate = segment
+        # A renamed segment can itself collide with a sibling that is literally
+        # named "intro-2", so keep bumping until the label is actually free.
+        while candidate in taken:
+            used[segment] = used.get(segment, 1) + 1
+            candidate = f"{segment}-{used[segment]}"
+        taken.add(candidate)
+        used.setdefault(segment, 1)
+        segments.append(candidate)
     return tuple(segments)
 
 
@@ -355,6 +380,7 @@ def _regions(
     start: int,
     end: int,
     lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
     code_spans: tuple[_Region, ...],
     profile: DialectProfile,
 ) -> tuple[_Region, ...]:
@@ -368,9 +394,8 @@ def _regions(
     open_kind: RegionKind | None = None
     open_start = 0
     open_end = 0
-    for line in lines:
-        if line.start < start or line.end > end:
-            continue
+    first, last = _line_window(lines, starts, start, end)
+    for line in lines[first:last]:
         if _inside(line.start, code_spans):
             # A fenced block is its own region; it must never be swallowed by
             # an open merged region that started before it.
@@ -434,13 +459,13 @@ def _markers_in(
     start: int,
     end: int,
     lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
     profile: DialectProfile,
 ) -> frozenset[str]:
     if end <= start or not profile.uncertainty_markers:
         return frozenset()
-    content = "".join(
-        line.content for line in lines if line.start >= start and line.end <= end
-    )
+    first, last = _line_window(lines, starts, start, end)
+    content = "".join(line.content for line in lines[first:last])
     return frozenset(
         marker for marker in profile.uncertainty_markers if marker in content
     )

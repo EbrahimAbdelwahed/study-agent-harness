@@ -91,15 +91,36 @@ def reduce_source_superseded_by(
     _require_endpoint(sources, payload.successor)
 
     successions = _edges(state)
+    index = _index(successions)
     encoded = payload.to_json()
-    existing = _successor_in(successions, payload.predecessor)
+    existing = index.get(_key(payload.predecessor))
     if existing is not None:
         if existing != payload.successor:
             raise ValueError("revision already has a different declared successor")
         return state
-    if _reaches(successions, payload.successor, payload.predecessor):
+    if _reaches(index, payload.successor, payload.predecessor):
         raise ValueError("succession would create a cycle")
     return {**state, "successions": (*successions, encoded)}
+
+
+def _key(ref: RevisionRef) -> tuple[str, str]:
+    """An in-memory lookup key; never persisted, so it needs no separator."""
+    return str(ref.source_id), str(ref.revision_id)
+
+
+def _index(successions: tuple[JsonObject, ...]) -> dict[tuple[str, str], RevisionRef]:
+    """Build the predecessor lookup once per call.
+
+    The persisted shape stays an append-ordered array — a composite string key
+    would need a separator that no identifier is guaranteed to exclude — but
+    rebuilding this index once keeps a single append linear instead of
+    quadratic in the number of accumulated edges.
+    """
+    index: dict[tuple[str, str], RevisionRef] = {}
+    for edge in successions:
+        predecessor = _endpoint(edge.get("predecessor"), "predecessor")
+        index[_key(predecessor)] = _endpoint(edge.get("successor"), "successor")
+    return index
 
 
 def _edges(state: JsonObject) -> tuple[JsonObject, ...]:
@@ -110,28 +131,22 @@ def _edges(state: JsonObject) -> tuple[JsonObject, ...]:
     return tuple(_mapping(edge, "successions entry") for edge in value)
 
 
-def _successor_in(
-    successions: tuple[JsonObject, ...], predecessor: RevisionRef
-) -> RevisionRef | None:
-    for edge in successions:
-        if _endpoint(edge.get("predecessor"), "predecessor") == predecessor:
-            return _endpoint(edge.get("successor"), "successor")
-    return None
-
-
 def _reaches(
-    successions: tuple[JsonObject, ...], start: RevisionRef, target: RevisionRef
+    index: Mapping[tuple[str, str], RevisionRef],
+    start: RevisionRef,
+    target: RevisionRef,
 ) -> bool:
     """Whether ``target`` is reachable by following successor edges."""
     current = start
-    seen: set[RevisionRef] = set()
+    seen: set[tuple[str, str]] = set()
     while True:
         if current == target:
             return True
-        if current in seen:
+        key = _key(current)
+        if key in seen:
             return False
-        seen.add(current)
-        following = _successor_in(successions, current)
+        seen.add(key)
+        following = index.get(key)
         if following is None:
             return False
         current = following
@@ -157,7 +172,7 @@ def successor_of(
     state: JsonObject, source_id: SourceId, revision_id: RevisionId
 ) -> RevisionRef | None:
     """Return the explicitly declared successor of one revision, if any."""
-    return _successor_in(_edges(state), RevisionRef(source_id, revision_id))
+    return _index(_edges(state)).get(_key(RevisionRef(source_id, revision_id)))
 
 
 def revision_manifest(
@@ -229,13 +244,13 @@ def _production_for(
     )
     candidates = index.get(str(source_id), ())
     if not isinstance(candidates, tuple):
-        return None
+        raise ValueError("substrate production source index is invalid")
     for candidate in candidates:
         if not isinstance(candidate, str):
-            continue
+            raise ValueError("substrate production source index is invalid")
         receipt = productions.get(candidate)
         if not isinstance(receipt, Mapping):
-            continue
+            raise ValueError("substrate production receipt is invalid")
         substrate = receipt.get("substrate")
         if (
             isinstance(substrate, Mapping)
