@@ -7,10 +7,15 @@ from study_agent.ports.retrieval import (
 
 from .content import CourseSourceContent, SourceRevisionRecord
 from .errors import SourceContentError, SourceContentErrorCode
+from .lexical import LexicalRetriever
+from .registry import RetrieverRegistry, RetrieverRegistryError
 
 __all__ = [
     "CourseSourceContent",
+    "LexicalRetriever",
     "RetrievalDocument",
+    "RetrieverRegistry",
+    "RetrieverRegistryError",
     "SourceContentError",
     "SourceContentErrorCode",
     "SourceRevisionRecord",
