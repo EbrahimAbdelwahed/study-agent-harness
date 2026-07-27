@@ -206,6 +206,27 @@ def test_unknown_and_unbound_reserved_schema_fail_closed(tmp_path: Path) -> None
         SQLiteLexicalSurfaces(database, Catalog((value,)))
 
 
+def test_schema_initialization_rolls_back_every_ddl_on_fault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "rollback.sqlite3"
+    original = SQLiteLexicalSurfaces._create_surface
+
+    def fail_on_terms(connection: sqlite3.Connection, table: str) -> None:
+        if table == "lex_terms":
+            raise RuntimeError("injected schema fault")
+        original(connection, table)
+
+    monkeypatch.setattr(SQLiteLexicalSurfaces, "_create_surface", staticmethod(fail_on_terms))
+    with pytest.raises(RuntimeError, match="injected schema fault"):
+        SQLiteLexicalSurfaces(database, Catalog(()))
+    with sqlite3.connect(database) as connection:
+        tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    assert tables == []
+
+
 def test_failed_rebuild_preserves_previous_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
