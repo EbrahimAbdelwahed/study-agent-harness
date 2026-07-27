@@ -472,14 +472,24 @@ def _validate_ancestry(catalog: AdmittedUnitCatalog) -> dict[UnitId, Retrievable
         if parent.source_id != unit.source_id or parent.revision_id != unit.revision_id:
             raise FusionError("catalog contains cross-source or cross-revision ancestry")
         parent_by_id[unit.unit_id] = parent.unit_id
-    for unit_id in parent_by_id:
-        seen: set[UnitId] = set()
-        current: UnitId | None = unit_id
-        while current is not None:
-            if current in seen:
-                raise FusionError("catalog contains cyclic parent ancestry")
-            seen.add(current)
+
+    # Resolve every parent chain once.  The previous per-unit ``seen`` walk
+    # revisited a deep shared ancestry for each descendant, making validation
+    # quadratic on a near-bound catalog before fusion even started.
+    state: dict[UnitId, int] = {}
+    for start in parent_by_id:
+        if state.get(start, 0) == 2:
+            continue
+        path: list[UnitId] = []
+        current: UnitId | None = start
+        while current is not None and state.get(current, 0) == 0:
+            state[current] = 1
+            path.append(current)
             current = parent_by_id[current]
+        if current is not None and state.get(current, 0) == 1:
+            raise FusionError("catalog contains cyclic parent ancestry")
+        for unit_id in path:
+            state[unit_id] = 2
     return by_id
 
 
@@ -537,43 +547,67 @@ def _ladder_groups(
     links never participate.
     """
     candidate_ids = {unit.unit_id for unit in units}
-    ancestors_by_id: dict[UnitId, tuple[UnitId, ...]] = {}
-    for unit_id in candidate_ids:
-        ancestors: list[UnitId] = []
-        current = _parent_id(by_id[unit_id])
-        while current is not None:
-            ancestors.append(current)
-            current = _parent_id(by_id[current])
-        ancestors_by_id[unit_id] = tuple(ancestors)
 
-    # Candidate leaves are the narrowest matched units in each branch.  An
-    # unmatched intermediate does not interrupt this relation because every
-    # validated parent above was traversed.
-    leaves = tuple(
-        sorted(
-            (
-                unit_id
-                for unit_id in candidate_ids
-                if not any(unit_id in ancestors for ancestors in ancestors_by_id.values())
-            ),
-            key=str,
-        )
-    )
+    # Build one adjacency map over the admitted catalog.  A validated unit has
+    # at most one canonical parent, so a single postorder walk can propagate
+    # each subtree's minimum matched descendant without repeatedly walking the
+    # same unmatched intermediate chain for every candidate.
+    children_by_parent: dict[UnitId, list[UnitId]] = {}
+    roots: list[UnitId] = []
+    for unit in by_id.values():
+        parent = _parent_id(unit)
+        if parent is None:
+            roots.append(unit.unit_id)
+            continue
+        if parent not in by_id:
+            # Normally rejected by ``_validate_ancestry``; retain the guard so
+            # this helper remains fail-closed if called independently.
+            raise FusionError("catalog contains a missing or provisional parent")
+        children_by_parent.setdefault(parent, []).append(unit.unit_id)
 
-    def owner(unit_id: UnitId) -> UnitId:
-        descendant_leaves = [
-            leaf
-            for leaf in leaves
-            if leaf == unit_id or unit_id in ancestors_by_id[leaf]
-        ]
-        # Every candidate is itself a descendant leaf or an ancestor of one.
-        # The fallback is defensive only; catalog validation and the finite
-        # parent walk above make it unreachable for a non-empty candidate set.
-        return min(descendant_leaves or [unit_id], key=str)
+    min_matched_leaf: dict[UnitId, UnitId] = {}
+    visited: set[UnitId] = set()
+    for root in roots:
+        stack: list[tuple[UnitId, bool]] = [(root, False)]
+        while stack:
+            current, expanded = stack.pop()
+            if expanded:
+                visited.add(current)
+                child_leaves = [
+                    min_matched_leaf[child]
+                    for child in children_by_parent.get(current, ())
+                    if child in min_matched_leaf
+                ]
+                if current in candidate_ids:
+                    # A matched ancestor with descendants joins exactly one
+                    # narrow leaf; sibling leaves retain their own groups.
+                    if child_leaves:
+                        min_matched_leaf[current] = min(child_leaves, key=str)
+                    else:
+                        min_matched_leaf[current] = current
+                elif child_leaves:
+                    min_matched_leaf[current] = min(child_leaves, key=str)
+                continue
+            stack.append((current, True))
+            stack.extend(
+                (child, False)
+                for child in reversed(children_by_parent.get(current, ()))
+            )
+
+    # A cycle would leave one or more catalog nodes unreachable from a root.
+    # ``_validate_ancestry`` rejects this earlier, but preserve the invariant
+    # for direct helper calls as well.
+    if len(visited) != len(by_id):
+        raise FusionError("catalog contains cyclic parent ancestry")
 
     grouped: dict[UnitId, list[RetrievableUnit]] = {}
     for unit in sorted(units, key=lambda item: str(item.unit_id)):
-        grouped.setdefault(owner(unit.unit_id), []).append(unit)
+        owner = min_matched_leaf.get(unit.unit_id)
+        if owner is None:
+            # Every candidate belongs to a rooted validated tree and therefore
+            # receives a leaf owner in the postorder walk above.
+            raise FusionError("catalog candidate ancestry is malformed")
+        grouped.setdefault(owner, []).append(unit)
     return tuple(
         tuple(sorted(values, key=lambda item: str(item.unit_id)))
         for _, values in sorted(grouped.items(), key=lambda item: str(item[0]))

@@ -4,6 +4,7 @@ from hashlib import sha256
 
 import pytest
 
+import study_agent.retrieval.fusion as fusion_module
 from study_agent.domain.identifiers import RevisionId, ScopeId, SourceId, SubstrateId, UnitId
 from study_agent.domain.units import (
     LinkKind,
@@ -268,6 +269,33 @@ def test_ladder_collapse_traverses_unmatched_intermediate_and_branches() -> None
     assert root.unit_id not in other_group.members
     assert intermediate.unit_id not in owner_group.members
     assert intermediate.unit_id not in other_group.members
+
+
+def test_deep_catalog_ladder_uses_linear_parent_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every catalog unit is a candidate, so the former per-candidate ancestor
+    # scan would revisit this 10k-deep chain quadratically.  Count parent
+    # lookups instead of asserting elapsed time, making the regression stable
+    # across machines while retaining the near-bound catalog size.
+    root = _unit("performance-root", kind=UnitKind.SECTION, granularity=1)
+    units = [root]
+    for index in range(1, 10_000):
+        units.append(_unit(f"performance-{index}", parent=units[-1]))
+    by_id = {unit.unit_id: unit for unit in units}
+    calls = 0
+    original_parent_id = fusion_module._parent_id
+
+    def counted_parent_id(unit: RetrievableUnit) -> UnitId | None:
+        nonlocal calls
+        calls += 1
+        if calls > 2 * len(units):
+            raise AssertionError("parent ancestry traversal exceeded linear bound")
+        return original_parent_id(unit)
+
+    monkeypatch.setattr(fusion_module, "_parent_id", counted_parent_id)
+    groups = fusion_module._ladder_groups(tuple(units), by_id)
+    assert len(groups) == 1
+    assert groups[0][0].unit_id == min((unit.unit_id for unit in units), key=str)
+    assert calls <= 2 * len(units)
 
 
 def test_priors_and_uncertainty_are_receipted_without_recency() -> None:
