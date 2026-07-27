@@ -67,6 +67,14 @@ from .identifiers import (
     substrate_production_event_id_for,
     substrate_production_id_for,
 )
+from .lineage import (
+    RevisionLineage,
+    RevisionManifest,
+    RevisionRef,
+    SelectionStatus,
+    SourceLineage,
+    SourceSuccession,
+)
 from .provenance import (
     AnswerProvenance,
     ClaimOrigin,
@@ -198,9 +206,13 @@ __all__ = [
     "RetrievalProvenance",
     "ReviewId",
     "RevisionId",
+    "RevisionLineage",
+    "RevisionManifest",
+    "RevisionRef",
     "RunId",
     "ScheduleDecisionId",
     "SegmentKind",
+    "SelectionStatus",
     "SessionId",
     "SessionStatus",
     "SourceChunk",
@@ -208,7 +220,9 @@ __all__ = [
     "SourceDocument",
     "SourceId",
     "SourceKind",
+    "SourceLineage",
     "SourcePolicy",
+    "SourceSuccession",
     "StatementId",
     "StatementStatus",
     "StructureOrigin",

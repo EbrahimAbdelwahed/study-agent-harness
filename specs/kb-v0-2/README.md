@@ -1,25 +1,32 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Active — KB-00, KB-01, and KB-04 complete; KB-02 and KB-05 dependency-ready
+Status: Active — KB-00, KB-01, KB-02, and KB-04 complete; KB-03 and KB-05
+dependency-ready
 Last updated: 2026-07-27
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
 ## Next Agent Prompt
 
 Read ADR-0014, the parent spec, and either
-[KB-02](beads/KB-02-supersession-lineage.md) or
+[KB-03](beads/KB-03-citation-v2-verification.md) or
 [KB-05](beads/KB-05-uniform-retrievable-units.md). These are the two
 independent dependency-ready continuations now that the canonical substrate
-tracer and the deterministic document tree are in place. Preserve v0.1
+tracer, supersession/lineage, and the deterministic document tree are in
+place. Preserve v0.1
 ingestion and retrieval behavior through versioned successors and explicit
 migration tests; do not add model, vector, OCR, vision, transport, UI, or
 tutor behavior to the offline trunk. Before ending a pass, update this
 section, the owning bead status, and the checklist below.
 
-Current pickup: KB-02 supersession/lineage and KB-05 uniform retrievable
+Current pickup: KB-03 citation v2 verification and KB-05 uniform retrievable
 units.
 
-Active blockers: none for KB-02 or KB-05.
+Active blockers: none for KB-03 or KB-05.
+
+Open for review: KB-02 deliberately kept the existing v0.1 `revision_id`
+derivation instead of minting a second revision identity, and deferred the
+promoted-study-material edge of the lineage projection to KB-13. Confirm both
+before KB-03 and KB-16 bind to them.
 
 KB-05 must consume `study_agent.domain.tree` and must not re-derive structure:
 `node_id` is a structural handle, never a unit or citation identity, and
@@ -140,7 +147,7 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 
 - [x] [KB-00 architecture closure](beads/KB-00-architecture-closure.md)
 - [x] [KB-01 canonical substrate](beads/KB-01-canonical-substrate.md)
-- [ ] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
+- [x] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
 - [ ] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
 - [x] [KB-04 document tree](beads/KB-04-document-tree.md)
 - [ ] [KB-05 uniform retrievable units](beads/KB-05-uniform-retrievable-units.md)
