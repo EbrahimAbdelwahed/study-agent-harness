@@ -29,6 +29,12 @@ class SourceId(Identifier):
     pass
 
 
+class ScopeId(Identifier):
+    """Identity of one named exam/search scope."""
+
+    pass
+
+
 class RevisionId(Identifier):
     pass
 
@@ -80,8 +86,10 @@ class SubstrateId(Identifier):
         super().__post_init__()
         prefix = "substrate:sha256:"
         digest = self.value.removeprefix(prefix)
-        if not self.value.startswith(prefix) or len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError("substrate id must be substrate:sha256:<lowercase sha256>")
 
@@ -93,12 +101,13 @@ class SubstrateProductionId(Identifier):
         super().__post_init__()
         prefix = "substrate-production:sha256:"
         digest = self.value.removeprefix(prefix)
-        if not self.value.startswith(prefix) or len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError(
-                "substrate production id must be "
-                "substrate-production:sha256:<lowercase sha256>"
+                "substrate production id must be substrate-production:sha256:<lowercase sha256>"
             )
 
 
@@ -109,8 +118,10 @@ class NodeId(Identifier):
         super().__post_init__()
         prefix = "node:sha256:"
         digest = self.value.removeprefix(prefix)
-        if not self.value.startswith(prefix) or len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError("node id must be node:sha256:<lowercase sha256>")
 
@@ -122,8 +133,10 @@ class UnitId(Identifier):
         super().__post_init__()
         prefix = "unit:sha256:"
         digest = self.value.removeprefix(prefix)
-        if not self.value.startswith(prefix) or len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError("unit id must be unit:sha256:<lowercase sha256>")
 
@@ -176,6 +189,36 @@ def artifact_event_id_for(
         f"artifact-event@1\0{course_id}\0{session_id}\0{retry_identity}\0{command_kind}"
     ).encode()
     return EventId(f"event-sha256:{sha256(payload).hexdigest()}")
+
+
+def scope_event_id_for(
+    course_id: CourseId,
+    scope_id: ScopeId,
+    action: str,
+    payload: Mapping[str, object],
+    course_sequence: int,
+) -> EventId:
+    """Derive one deterministic scope-event identity from its exact payload."""
+    if not isinstance(course_id, CourseId) or not isinstance(scope_id, ScopeId):
+        raise TypeError("scope event identity requires CourseId and ScopeId")
+    require_text(action, "scope event action")
+    if len(action) > 128:
+        raise ValueError("scope event action is too long")
+    if type(course_sequence) is not int or course_sequence < 1:
+        raise ValueError("scope event course_sequence must be positive")
+    from study_agent.state.serialization import canonical_json_bytes
+
+    identity = {
+        "action": action,
+        "course_id": str(course_id),
+        "course_sequence": course_sequence,
+        "payload": dict(payload),
+        "scope_id": str(scope_id),
+    }
+    digest = sha256(
+        b"study-agent/knowledge-scope-event/v1\0" + canonical_json_bytes(cast(JsonObject, identity))
+    ).hexdigest()
+    return EventId(f"event-sha256:{digest}")
 
 
 def substrate_id_for(content: bytes) -> SubstrateId:
@@ -237,9 +280,7 @@ def substrate_production_id_for(
         raise TypeError("substrate production requires SubstrateId")
     if page_count is not None and (type(page_count) is not int or page_count < 1):
         raise ValueError("page_count must be positive when present")
-    if character_length is not None and (
-        type(character_length) is not int or character_length < 1
-    ):
+    if character_length is not None and (type(character_length) is not int or character_length < 1):
         raise ValueError("character_length must be positive when present")
     if page_count is not None and character_length is None:
         raise ValueError("character_length is required when pagination is present")
@@ -292,8 +333,7 @@ def substrate_production_id_for(
         "substrate_id": str(substrate_id),
     }
     digest = sha256(
-        b"study-agent/substrate-production/v1\0"
-        + canonical_json_bytes(cast(JsonObject, identity))
+        b"study-agent/substrate-production/v1\0" + canonical_json_bytes(cast(JsonObject, identity))
     ).hexdigest()
     return SubstrateProductionId(f"substrate-production:sha256:{digest}")
 
@@ -400,9 +440,7 @@ def substrate_production_event_id_for(
     production_id: SubstrateProductionId,
     course_sequence: int,
 ) -> EventId:
-    if not isinstance(course_id, CourseId) or not isinstance(
-        production_id, SubstrateProductionId
-    ):
+    if not isinstance(course_id, CourseId) or not isinstance(production_id, SubstrateProductionId):
         raise TypeError("substrate production event requires typed ids")
     if type(course_sequence) is not int or course_sequence < 1:
         raise ValueError("course_sequence must be positive")
@@ -498,8 +536,7 @@ def schedule_decision_id_for(
     require_text(trigger, "trigger")
     require_text(identity, "identity")
     raw = (
-        f"recall-schedule@1\0{course_id}\0{session_id}\0"
-        f"{revision_id}\0{trigger}\0{identity}"
+        f"recall-schedule@1\0{course_id}\0{session_id}\0{revision_id}\0{trigger}\0{identity}"
     ).encode()
     return ScheduleDecisionId(f"schedule-sha256:{sha256(raw).hexdigest()}")
 
@@ -523,9 +560,7 @@ def review_decision_id_for(
 ) -> ScheduleDecisionId:
     if not isinstance(review_id, ReviewId):
         raise TypeError("review decision identity requires ReviewId")
-    return schedule_decision_id_for(
-        course_id, session_id, revision_id, "review", str(review_id)
-    )
+    return schedule_decision_id_for(course_id, session_id, revision_id, "review", str(review_id))
 
 
 def recall_event_id_for(
@@ -623,8 +658,7 @@ def session_turn_event_id_for(
     require_text(idempotency_key, "idempotency_key")
     require_text(event_type, "event_type")
     identity = (
-        f"session-turn-event@1\0{course_id}\0{session_id}\0"
-        f"{idempotency_key}\0{event_type}"
+        f"session-turn-event@1\0{course_id}\0{session_id}\0{idempotency_key}\0{event_type}"
     ).encode()
     return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
 
@@ -638,8 +672,7 @@ def session_event_id_for(
 ) -> EventId:
     require_text(event_type, "event_type")
     return EventId(
-        "event-sha256:"
-        f"{_retry_digest(course_id, session_id, run_id, idempotency_key, event_type)}"
+        f"event-sha256:{_retry_digest(course_id, session_id, run_id, idempotency_key, event_type)}"
     )
 
 

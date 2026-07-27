@@ -10,6 +10,7 @@ from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import DomainEvent
 from study_agent.domain.identifiers import BlobId, SubstrateId
 from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument
+from study_agent.knowledge.scopes import register_scope_events
 from study_agent.state import EventRegistry
 
 from .events import (
@@ -311,3 +312,4 @@ def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoad
         decode_source_superseded_by_event,
         reduce_source_superseded_by,
     )
+    register_scope_events(registry)
