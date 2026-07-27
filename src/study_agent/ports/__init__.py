@@ -22,6 +22,16 @@ from .host_file import (
     HostFileIngestionPort,
     HostFileSnapshotStore,
 )
+from .knowledge import (
+    LexicalCandidate,
+    LexicalCandidateList,
+    LexicalCatalogPort,
+    LexicalIndexPort,
+    LexicalIndexReceipt,
+    LexicalProjectionBinding,
+    LexicalQuery,
+    LexicalSurface,
+)
 from .model import (
     CancellationToken,
     MessageRole,
@@ -107,6 +117,14 @@ __all__ = [
     "HostFileSnapshotStore",
     "IndexReceipt",
     "LearnerEvidenceViewPort",
+    "LexicalCandidate",
+    "LexicalCandidateList",
+    "LexicalCatalogPort",
+    "LexicalIndexPort",
+    "LexicalIndexReceipt",
+    "LexicalProjectionBinding",
+    "LexicalQuery",
+    "LexicalSurface",
     "MessageRole",
     "ModelCapabilities",
     "ModelError",
