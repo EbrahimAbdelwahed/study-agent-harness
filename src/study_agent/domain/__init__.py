@@ -105,6 +105,7 @@ from .projections import (
 from .scopes import (
     WHOLE_CORPUS,
     AdapterAvailability,
+    AnsweringHint,
     AvailabilityStatus,
     ConformanceSummary,
     ConnectorHint,
@@ -209,6 +210,7 @@ __all__ = [
     "AnswerRecord",
     "AnswerSegment",
     "AnswerStatus",
+    "AnsweringHint",
     "ArtifactBatchId",
     "ArtifactDecision",
     "ArtifactId",

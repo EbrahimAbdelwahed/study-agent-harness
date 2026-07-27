@@ -283,43 +283,91 @@ class ConnectorHint:
 
 
 @dataclass(frozen=True, slots=True)
+class AnsweringHint:
+    """One trusted source of an agent-facing answering hint."""
+
+    text: str
+    provenance_kind: str
+    connector_name: str | None = None
+    connector_version: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text", _label(self.text, "hint.text"))
+        object.__setattr__(
+            self, "provenance_kind", _label(self.provenance_kind, "hint.provenance_kind")
+        )
+        if self.provenance_kind not in {"connector", "scope_policy"}:
+            raise ValueError("hint provenance_kind must be connector or scope_policy")
+        if self.provenance_kind == "connector":
+            if self.connector_name is None or self.connector_version is None:
+                raise ValueError("connector hints require connector name and version")
+            object.__setattr__(
+                self, "connector_name", _label(self.connector_name, "hint.connector_name")
+            )
+            object.__setattr__(
+                self,
+                "connector_version",
+                _label(self.connector_version, "hint.connector_version"),
+            )
+        elif self.connector_name is not None or self.connector_version is not None:
+            raise ValueError("scope-policy hints cannot carry connector metadata")
+
+    def sort_key(self) -> tuple[str, str, str, str]:
+        return (
+            self.text,
+            self.provenance_kind,
+            "" if self.connector_name is None else self.connector_name,
+            "" if self.connector_version is None else self.connector_version,
+        )
+
+    def to_json(self) -> JsonObject:
+        return {
+            "connector_name": self.connector_name,
+            "connector_version": self.connector_version,
+            "provenance_kind": self.provenance_kind,
+            "text": self.text,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ManifestSource:
     source_id: SourceId
     title: str
-    source_class: str
+    source_class: str | None
     revisions: tuple[str, ...]
     unit_count: int
     figure_count: int
-    answering_hints: tuple[tuple[str, str], ...] = ()
+    answering_hints: tuple[AnsweringHint, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_id, SourceId):
             raise TypeError("manifest source_id must be SourceId")
         _label(str(self.source_id), "manifest source_id")
         object.__setattr__(self, "title", _label(self.title, "source.title"))
-        object.__setattr__(self, "source_class", _label(self.source_class, "source.source_class"))
+        if self.source_class is not None:
+            object.__setattr__(
+                self, "source_class", _label(self.source_class, "source.source_class")
+            )
         object.__setattr__(self, "revisions", _texts(self.revisions, "source.revisions"))
         for value, name in ((self.unit_count, "unit_count"), (self.figure_count, "figure_count")):
             if type(value) is not int or value < 0 or value > 10_000_000:
                 raise ValueError(f"source.{name} is out of bounds")
         if self.figure_count > self.unit_count:
             raise ValueError("source.figure_count cannot exceed unit_count")
-        hints = tuple(
-            (_label(value, "hint"), _label(provenance, "hint provenance"))
-            for value, provenance in self.answering_hints
-        )
+        hints = tuple(self.answering_hints)
         if len(hints) > _MAX_ITEMS:
             raise ValueError("source.answering_hints is too large")
-        if any(provenance not in {"connector", "scope_policy"} for _, provenance in hints):
-            raise ValueError("hint provenance must be connector or scope_policy")
-        object.__setattr__(self, "answering_hints", tuple(sorted(set(hints))))
+        if any(not isinstance(hint, AnsweringHint) for hint in hints):
+            raise TypeError("source.answering_hints must contain AnsweringHint values")
+        object.__setattr__(
+            self,
+            "answering_hints",
+            tuple(sorted(set(hints), key=lambda hint: hint.sort_key())),
+        )
 
     def to_json(self) -> JsonObject:
         return {
-            "answering_hints": tuple(
-                {"provenance": provenance, "text": text}
-                for text, provenance in self.answering_hints
-            ),
+            "answering_hints": tuple(hint.to_json() for hint in self.answering_hints),
             "figure_count": self.figure_count,
             "revisions": self.revisions,
             "source_class": self.source_class,
@@ -478,6 +526,7 @@ class CorpusManifest:
 __all__ = [
     "WHOLE_CORPUS",
     "AdapterAvailability",
+    "AnsweringHint",
     "AvailabilityStatus",
     "ConformanceSummary",
     "ConnectorHint",

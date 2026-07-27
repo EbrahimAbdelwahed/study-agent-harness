@@ -11,6 +11,7 @@ from study_agent.domain import (
     WHOLE_CORPUS,
     Actor,
     AdapterAvailability,
+    AnsweringHint,
     AvailabilityStatus,
     ConformanceSummary,
     ConnectorHint,
@@ -295,13 +296,13 @@ def test_manifest_hints_accept_only_declared_connector_or_scope_policy_sources()
     )
     manifest = build_corpus_manifest(state, ScopeSelection.scope(SCOPE_A), snapshot=snapshot)
     assert manifest.sources[0].answering_hints == (
-        ("connector hint", "connector"),
-        ("scope owner hint", "scope_policy"),
+        AnsweringHint("connector hint", "connector", "notes", "v1"),
+        AnsweringHint("scope owner hint", "scope_policy"),
     )
     assert all(
-        provenance in {"connector", "scope_policy"}
+        hint.provenance_kind in {"connector", "scope_policy"}
         for source in manifest.sources
-        for _, provenance in source.answering_hints
+        for hint in source.answering_hints
     )
 
 

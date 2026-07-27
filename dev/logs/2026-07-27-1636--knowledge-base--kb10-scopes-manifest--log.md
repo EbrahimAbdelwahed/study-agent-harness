@@ -27,16 +27,19 @@ state and explicitly supplied derived availability snapshots.
 - `tests/unit/knowledge/test_scopes_manifest.py`: codec, authority, CAS,
   replay, multi-scope, no-duplication, snapshot, provenance, and determinism
   coverage.
+- `tests/unit/knowledge/test_scopes_manifest_independent.py`: independent
+  boundary coverage for strict event bytes, orphan references, and structured
+  connector provenance.
 - `specs/kb-v0-2/beads/KB-10-scopes-manifest.md`: marked acceptance criteria
   complete.
 
 ## Verification
 
-- `pytest -q tests/unit/knowledge/test_scopes_manifest.py`: 7 passed.
-- `pytest -q tests/unit/knowledge tests/architecture/test_knowledge_boundaries.py tests/architecture/test_import_boundaries.py tests/integration/test_source_projection_replay.py`: 339 passed.
+- `pytest -q tests/unit/knowledge/test_scopes_manifest.py tests/unit/knowledge/test_scopes_manifest_independent.py`: 21 passed.
+- `pytest -q tests/unit/knowledge tests/architecture/test_knowledge_boundaries.py tests/architecture/test_import_boundaries.py tests/integration/test_source_projection_replay.py tests/unit/state/test_state_kernel.py tests/unit/study_context/test_event_contracts.py`: 365 passed.
 - `ruff check` on changed source and tests: clean.
 - strict `mypy` on changed source and tests: clean (7 files).
-- `pytest -q`: 2151 passed, 13 skipped, 1 failed. The failure is the
+- `pytest -q`: 2165 passed, 13 skipped, 1 failed. The failure is the
   pre-existing sandbox restriction preventing the browser-surface integration
   test from binding a localhost socket (`PermissionError: [Errno 1]`).
 
@@ -45,5 +48,11 @@ state and explicitly supplied derived availability snapshots.
 - Source metadata is read from canonical top-level source rows when present or
   from the current revision manifest used by the repository's source
   projection; no units are copied into scope state.
+- Legacy v0.1 rows with one revision and no unit metadata infer that sole
+  revision for counting and expose `source_class: null`; they never substitute
+  `source_role`. Remove this compatibility path once the projection migration
+  guarantees `current_revision_id`, unit `revision_id`, and `meta.source_class`.
+- Answering hints are one structured collection with `provenance_kind` and,
+  for connector hints, exact connector name/version metadata.
 - No retrieval, planner, transport, connector implementation, model inference,
   or dependency changes were made.

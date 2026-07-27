@@ -9,6 +9,7 @@ from study_agent.domain import (
     WHOLE_CORPUS,
     Actor,
     AdapterAvailability,
+    AnsweringHint,
     AvailabilityStatus,
     ConformanceSummary,
     ConnectorHint,
@@ -130,6 +131,45 @@ def source_state() -> JsonObject:
     }
 
 
+def canonical_manifest_state() -> JsonObject:
+    state = source_state()
+    sources = state["sources"]
+    assert isinstance(sources, Mapping)
+    canonical_sources: dict[str, JsonValue] = {}
+    for source_id, value in sources.items():
+        assert isinstance(value, Mapping)
+        revision_ids = value["revision_ids"]
+        assert isinstance(revision_ids, tuple) and len(revision_ids) == 1
+        current = revision_ids[0]
+        assert isinstance(current, str)
+        canonical_sources[source_id] = {
+            **value,
+            "current_revision_id": current,
+            "revisions": {
+                current: {
+                    "source": {
+                        "source_role": "ignored-source-role",
+                        "title": value["title"],
+                    }
+                }
+            },
+        }
+    units = state["units"]
+    assert isinstance(units, Mapping)
+    canonical_units = {
+        unit_id: {
+            **value,
+            "meta": {"source_class": "canonical-class"},
+            "revision_id": (
+                "rev-book" if value["source_id"] == str(SOURCE_A) else "rev-transcript"
+            ),
+        }
+        for unit_id, value in units.items()
+        if isinstance(value, Mapping)
+    }
+    return {**state, "sources": canonical_sources, "units": canonical_units}
+
+
 def configured_state() -> JsonObject:
     state = reduce_scope_configured(
         source_state(),
@@ -213,6 +253,21 @@ def test_configuration_create_update_cas_and_exact_retry_are_deterministic() -> 
         reduce_scope_configured(state, config_event(conflict, sequence=5), conflict)
 
 
+def test_exact_retries_survive_later_policy_and_membership_changes() -> None:
+    initial = ScopeConfigured(SCOPE_A, policy())
+    initial_event = config_event(initial)
+    state = reduce_scope_configured(source_state(), initial_event, initial)
+    add = ScopeMembershipChanged(SCOPE_A, SOURCE_A, "add")
+    add_event = membership_event(add, sequence=2)
+    state = reduce_scope_membership(state, add_event, add)
+    updated = ScopeConfigured(SCOPE_A, policy("p2"), "p1")
+    state = reduce_scope_configured(state, config_event(updated, sequence=3), updated)
+    remove = ScopeMembershipChanged(SCOPE_A, SOURCE_A, "remove")
+    state = reduce_scope_membership(state, membership_event(remove, sequence=4), remove)
+    assert reduce_scope_configured(state, initial_event, initial) == state
+    assert reduce_scope_membership(state, add_event, add) == state
+
+
 def test_membership_requires_known_scope_and_source_and_does_not_copy_units() -> None:
     state = source_state()
     add = ScopeMembershipChanged(SCOPE_A, SOURCE_A, "add")
@@ -270,11 +325,58 @@ def test_manifest_hints_record_only_connector_and_trusted_scope_policy_provenanc
     )
     manifest = build_corpus_manifest(updated, ScopeSelection.scope(SCOPE_A), snapshot=snapshot)
     assert manifest.sources[0].answering_hints == (
-        ("connector hint", "connector"),
-        ("scope hint", "scope_policy"),
+        AnsweringHint("connector hint", "connector", "notes", "v1"),
+        AnsweringHint("scope hint", "scope_policy"),
     )
     assert all(
-        "model" not in provenance
+        hint.provenance_kind in {"connector", "scope_policy"}
         for source in manifest.sources
-        for _, provenance in source.answering_hints
+        for hint in source.answering_hints
     )
+
+
+def test_manifest_uses_current_revision_unit_metadata_and_exact_connector_receipts() -> None:
+    state = canonical_manifest_state()
+    sources = state["sources"]
+    assert isinstance(sources, Mapping)
+    sources_mut = dict(sources)
+    book = sources_mut[str(SOURCE_A)]
+    assert isinstance(book, Mapping)
+    book_revision_ids = book["revision_ids"]
+    assert isinstance(book_revision_ids, tuple)
+    sources_mut[str(SOURCE_A)] = {
+        **book,
+        "revision_ids": ("old-book", *book_revision_ids),
+    }
+    units = state["units"]
+    assert isinstance(units, Mapping)
+    units_mut = dict(units)
+    units_mut["old"] = {
+        "meta": {"source_class": "canonical-class"},
+        "revision_id": "old-book",
+        "source_id": str(SOURCE_A),
+        "unit_kind": "passage",
+    }
+    state = {**state, "sources": sources_mut, "units": units_mut}
+    snapshot = ManifestSnapshot(
+        connector_hints=(
+            ConnectorHint(SOURCE_A, "notes", "v1", ("shared hint",)),
+            ConnectorHint(SOURCE_A, "pdf", "v2", ("shared hint",)),
+        )
+    )
+    manifest = build_corpus_manifest(state, WHOLE_CORPUS, snapshot=snapshot)
+    book_manifest = manifest.sources[0]
+    assert book_manifest.source_class == "canonical-class"
+    assert book_manifest.unit_count == 2
+    assert book_manifest.answering_hints == (
+        AnsweringHint("shared hint", "connector", "notes", "v1"),
+        AnsweringHint("shared hint", "connector", "pdf", "v2"),
+    )
+    unit_two = units_mut["u2"]
+    assert isinstance(unit_two, Mapping)
+    units_mut["u2"] = {
+        **unit_two,
+        "meta": {"source_class": "conflicting-class"},
+    }
+    with pytest.raises(ValueError, match="inconsistent"):
+        build_corpus_manifest(state, WHOLE_CORPUS, snapshot=ManifestSnapshot())

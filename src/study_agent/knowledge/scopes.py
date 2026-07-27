@@ -11,6 +11,7 @@ from study_agent.domain.events import DomainEvent, PrincipalKind
 from study_agent.domain.identifiers import ScopeId, SourceId, scope_event_id_for
 from study_agent.domain.scopes import (
     WHOLE_CORPUS,
+    AnsweringHint,
     CorpusManifest,
     ManifestSnapshot,
     ManifestSource,
@@ -28,6 +29,9 @@ SCOPE_MEMBERSHIP_SCHEMA_VERSION = 1
 _CONFIG_KEYS = frozenset({"policy", "previous_policy_version", "scope_id"})
 _MEMBERSHIP_KEYS = frozenset({"operation", "scope_id", "source_id"})
 _SCOPE_ROW_KEYS = frozenset({"policy", "source_ids"})
+_RECEIPT_KEYS = frozenset({"event_type", "scope_id"})
+_RECEIPTS_FIELD = "scope_event_receipts"
+_MAX_RECEIPTS = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,8 +155,12 @@ def decode_scope_membership_event(event: DomainEvent) -> ScopeMembershipChanged:
 
 
 def reduce_scope_configured(
-    state: JsonObject, _: DomainEvent, payload: ScopeConfigured
+    state: JsonObject, event: DomainEvent, payload: ScopeConfigured
 ) -> Mapping[str, JsonValue]:
+    if _is_recorded_retry(
+        state, event, payload.scope_id, "configure", scope_configured_payload(payload)
+    ):
+        return state
     scopes = dict(_mapping(state.get("scopes", {}), "scopes"))
     key = str(payload.scope_id)
     existing_value = scopes.get(key)
@@ -161,27 +169,33 @@ def reduce_scope_configured(
         if payload.previous_policy_version is not None:
             raise ValueError("new scope configuration cannot name a previous policy")
         scopes[key] = encoded
-        return {**state, "scopes": scopes}
+        return _with_receipt(state, scopes, event, payload.scope_id)
     existing = _object(existing_value, f"scopes.{key}", _SCOPE_ROW_KEYS)
     current_policy = decode_scope_policy(_object(existing.get("policy"), f"scopes.{key}.policy"))
     source_ids = _source_ids(existing.get("source_ids"), f"scopes.{key}.source_ids")
     if payload.previous_policy_version is None:
-        if current_policy == payload.policy:
-            return state
         raise ValueError("scope already exists; update requires previous policy version")
     if payload.previous_policy_version != current_policy.policy_version:
         raise ValueError("scope policy compare-and-set version is stale")
     if current_policy == payload.policy:
-        return state
+        raise ValueError("scope configuration is unchanged; retry the original event")
     if payload.policy.policy_version == current_policy.policy_version:
         raise ValueError("a policy version cannot carry different content")
     scopes[key] = {"policy": payload.policy.to_json(), "source_ids": source_ids}
-    return {**state, "scopes": scopes}
+    return _with_receipt(state, scopes, event, payload.scope_id)
 
 
 def reduce_scope_membership(
-    state: JsonObject, _: DomainEvent, payload: ScopeMembershipChanged
+    state: JsonObject, event: DomainEvent, payload: ScopeMembershipChanged
 ) -> Mapping[str, JsonValue]:
+    if _is_recorded_retry(
+        state,
+        event,
+        payload.scope_id,
+        payload.operation,
+        scope_membership_payload(payload),
+    ):
+        return state
     scopes = dict(_mapping(state.get("scopes", {}), "scopes"))
     key = str(payload.scope_id)
     if key not in scopes:
@@ -194,7 +208,7 @@ def reduce_scope_membership(
     current = list(_source_ids(row.get("source_ids"), f"scopes.{key}.source_ids"))
     if payload.operation == "add":
         if source_key in current:
-            return state
+            raise ValueError("membership already exists; retry the original event")
         current.append(source_key)
         current.sort()
     elif source_key not in current:
@@ -202,7 +216,7 @@ def reduce_scope_membership(
     else:
         current.remove(source_key)
     scopes[key] = {"policy": row["policy"], "source_ids": tuple(current)}
-    return {**state, "scopes": scopes}
+    return _with_receipt(state, scopes, event, payload.scope_id)
 
 
 def register_scope_events(registry: EventRegistry) -> None:
@@ -218,6 +232,63 @@ def register_scope_events(registry: EventRegistry) -> None:
         decode_scope_membership_event,
         reduce_scope_membership,
     )
+
+
+def _is_recorded_retry(
+    state: JsonObject,
+    event: DomainEvent,
+    scope_id: ScopeId,
+    action: str,
+    payload: JsonObject,
+) -> bool:
+    expected = scope_event_id_for(
+        event.course_id,
+        scope_id,
+        action,
+        payload,
+        event.course_sequence,
+    )
+    if event.event_id != expected:
+        raise ValueError("event_id does not match scope reducer identity")
+    receipt = _event_receipts(state).get(str(event.event_id))
+    if receipt is None:
+        return False
+    expected_receipt: JsonObject = {
+        "event_type": event.event_type,
+        "scope_id": str(scope_id),
+    }
+    if receipt != expected_receipt:
+        raise ValueError("scope event receipt conflicts with the event")
+    return True
+
+
+def _with_receipt(
+    state: JsonObject,
+    scopes: Mapping[str, JsonValue],
+    event: DomainEvent,
+    scope_id: ScopeId,
+) -> Mapping[str, JsonValue]:
+    receipts = dict(_event_receipts(state))
+    event_key = str(event.event_id)
+    if event_key in receipts:
+        raise ValueError("scope event receipt was unexpectedly duplicated")
+    if len(receipts) >= _MAX_RECEIPTS:
+        raise ValueError("scope event receipt history is full")
+    receipts[event_key] = {
+        "event_type": event.event_type,
+        "scope_id": str(scope_id),
+    }
+    return {**state, "scopes": scopes, _RECEIPTS_FIELD: receipts}
+
+
+def _event_receipts(state: JsonObject) -> Mapping[str, JsonValue]:
+    receipts = _mapping(state.get(_RECEIPTS_FIELD, {}), _RECEIPTS_FIELD)
+    if len(receipts) > _MAX_RECEIPTS:
+        raise ValueError("scope event receipt history is too large")
+    for event_id, receipt in receipts.items():
+        _text(event_id, f"{_RECEIPTS_FIELD}.event_id")
+        _object(receipt, f"{_RECEIPTS_FIELD}.{event_id}", _RECEIPT_KEYS)
+    return receipts
 
 
 def decode_scope_policy(payload: JsonObject) -> ScopePolicy:
@@ -275,6 +346,48 @@ def build_corpus_manifest(
         raise TypeError("manifest requires explicit ManifestSnapshot")
     sources = _mapping(state.get("sources", {}), "sources")
     units = _mapping(state.get("units", {}), "units")
+    source_revisions: dict[str, tuple[str, ...]] = {}
+    current_revisions: dict[str, str] = {}
+    source_descriptors: dict[str, Mapping[str, JsonValue]] = {}
+    for source_id, value in sources.items():
+        _text(source_id, f"sources.{source_id}.source_id")
+        source_row = _mapping(value, f"sources.{source_id}")
+        revision_ids = _texts(source_row.get("revision_ids"), f"sources.{source_id}.revision_ids")
+        if not revision_ids:
+            raise ValueError(f"sources.{source_id}.revision_ids cannot be empty")
+        current_revision_id = source_row.get("current_revision_id")
+        if current_revision_id is None and len(revision_ids) == 1:
+            current_revision_id = revision_ids[0]
+        current = _text(current_revision_id, f"sources.{source_id}.current_revision_id")
+        if current not in revision_ids:
+            raise ValueError(f"sources.{source_id}.current_revision_id is unknown")
+        source_revisions[source_id] = revision_ids
+        current_revisions[source_id] = current
+        source_descriptors[source_id] = _source_descriptor(source_row, source_id)
+
+    units_by_source: dict[str, list[Mapping[str, JsonValue]]] = {
+        source_id: [] for source_id in sources
+    }
+    for unit_key, value in units.items():
+        row = _mapping(value, f"units.{unit_key}")
+        unit_source_id = _text(row.get("source_id"), f"units.{unit_key}.source_id")
+        if unit_source_id not in sources:
+            raise ValueError(f"units.{unit_key} references unknown source {unit_source_id}")
+        revision_ids = source_revisions[unit_source_id]
+        revision_id = row.get("revision_id")
+        if revision_id is None and len(revision_ids) == 1:
+            revision_id = revision_ids[0]
+        revision = _text(revision_id, f"units.{unit_key}.revision_id")
+        if revision not in revision_ids:
+            raise ValueError(f"units.{unit_key} references unknown source revision")
+        meta_value = row.get("meta")
+        if meta_value is not None:
+            meta = _object(meta_value, f"units.{unit_key}.meta")
+            if meta.get("source_class") is not None:
+                _text(meta.get("source_class"), f"units.{unit_key}.meta.source_class")
+        row_with_revision = dict(row)
+        row_with_revision["revision_id"] = revision
+        units_by_source[unit_source_id].append(row_with_revision)
     policy: ScopePolicy | None = None
     if selection.kind is ScopeSelectionKind.WHOLE_CORPUS:
         selected_ids = set(sources)
@@ -290,30 +403,54 @@ def build_corpus_manifest(
         if not selected_ids:
             raise ValueError("manifest scope has no source members")
         policy = decode_scope_policy(_object(scope_row.get("policy"), f"scopes.{scope_key}.policy"))
-    connector_by_source = {str(item.source_id): item for item in snapshot.connector_hints}
     manifest_sources: list[ManifestSource] = []
     for source_id in sorted(selected_ids):
-        source_row = _mapping(sources.get(source_id), f"sources.{source_id}")
-        descriptor = _source_descriptor(source_row, source_id)
+        if source_id not in source_revisions:
+            raise ValueError(f"manifest scope references unknown source {source_id}")
+        descriptor = source_descriptors[source_id]
         title = _text(descriptor.get("title"), f"sources.{source_id}.title")
-        source_class = _text(descriptor.get("source_role"), f"sources.{source_id}.source_role")
-        revision_ids_value = source_row.get("revision_ids", ())
-        revisions = _texts(revision_ids_value, f"sources.{source_id}.revision_ids")
-        source_units = []
-        for unit_key, value in units.items():
-            row = _mapping(value, f"units.{unit_key}")
-            row_source_id = _text(row.get("source_id"), f"units.{unit_key}.source_id")
-            if row_source_id == source_id:
-                _text(row.get("unit_kind"), f"units.{unit_key}.unit_kind")
-                source_units.append(row)
+        revisions = source_revisions[source_id]
+        source_units = [
+            row
+            for row in units_by_source[source_id]
+            if row["revision_id"] == current_revisions[source_id]
+        ]
+        source_classes: set[str] = set()
+        missing_source_class = False
+        for row in source_units:
+            meta_value = row.get("meta")
+            if meta_value is not None:
+                unit_source_class = _text(
+                    _object(meta_value, "unit.meta").get("source_class"),
+                    "unit.meta.source_class",
+                )
+                source_classes.add(unit_source_class)
+            else:
+                missing_source_class = True
+            _text(row.get("unit_kind"), "unit.unit_kind")
+        if len(source_classes) > 1 or (source_classes and missing_source_class):
+            raise ValueError(f"source {source_id} has inconsistent unit source classes")
+        # Legacy rows without unit metadata expose no class; never substitute
+        # the connector/source-role label for canonical unit metadata.
+        source_class = next(iter(source_classes), None)
         unit_count = len(source_units)
         figure_count = sum(1 for row in source_units if row.get("unit_kind") == "figure")
-        hints: list[tuple[str, str]] = []
-        connector_hint = connector_by_source.get(source_id)
-        if connector_hint is not None:
-            hints.extend((hint, "connector") for hint in connector_hint.hints)
+        hints: list[AnsweringHint] = []
+        connector_hints = [
+            item for item in snapshot.connector_hints if str(item.source_id) == source_id
+        ]
+        for connector_hint in connector_hints:
+            hints.extend(
+                AnsweringHint(
+                    hint,
+                    "connector",
+                    connector_hint.connector_name,
+                    connector_hint.connector_version,
+                )
+                for hint in connector_hint.hints
+            )
         if policy is not None:
-            hints.extend((hint, "scope_policy") for hint in policy.answering_hints)
+            hints.extend(AnsweringHint(hint, "scope_policy") for hint in policy.answering_hints)
         manifest_sources.append(
             ManifestSource(
                 SourceId(source_id),
@@ -322,7 +459,7 @@ def build_corpus_manifest(
                 revisions,
                 unit_count,
                 figure_count,
-                tuple(sorted(set(hints))),
+                tuple(hints),
             )
         )
     total_units = sum(source.unit_count for source in manifest_sources)
