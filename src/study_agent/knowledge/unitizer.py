@@ -293,12 +293,6 @@ def unitize(
     return tuple(finalized)
 
 
-def unitize_document(*args: object, **kwargs: object) -> tuple[RetrievableUnit, ...]:
-    """Descriptive alias for :func:`unitize`."""
-
-    return unitize(*args, **kwargs)  # type: ignore[arg-type]
-
-
 def remap_citations(
     citations: Sequence[TextCitationV2],
     *,
@@ -513,5 +507,4 @@ __all__ = [
     "draft_units",
     "remap_citations",
     "unitize",
-    "unitize_document",
 ]

@@ -58,23 +58,37 @@ class RevisionBinding:
             raise ValueError("binding character_length must be positive")
 
 
-def derive_unit_id(unit: RetrievableUnit) -> UnitId:
-    """Re-derive the identity a unit must carry to be admissible."""
+def derive_unit_id(
+    unit: RetrievableUnit,
+    *,
+    unitizer_version: str = UNITIZER_VERSION,
+) -> UnitId:
+    """Re-derive the identity a unit must carry to be admissible.
+
+    The version is explicit caller context rather than persisted unit state.
+    This lets a migration validate old and new unitizer outputs without
+    silently inferring a policy from an opaque ``UnitId`` digest.
+    """
+    _require_unitizer_version(unitizer_version)
     return unit_id_for(
         revision_id=unit.revision_id,
         structural_path=unit.structural_path,
         unit_kind=unit.unit_kind.value,
         granularity=unit.granularity,
         canonical_ref=dict(unit.canonical_ref.to_json()),
-        unitizer_version=UNITIZER_VERSION,
+        unitizer_version=unitizer_version,
     )
 
 
-def admit(unit: RetrievableUnit) -> RetrievableUnit:
+def admit(
+    unit: RetrievableUnit,
+    *,
+    unitizer_version: str = UNITIZER_VERSION,
+) -> RetrievableUnit:
     """Reject any unit whose identity does not match its immutable fields."""
     if not isinstance(unit, RetrievableUnit):
         raise TypeError("unit projection requires RetrievableUnit values")
-    if unit.unit_id != derive_unit_id(unit):
+    if unit.unit_id != derive_unit_id(unit, unitizer_version=unitizer_version):
         raise ValueError("unit_id does not match its immutable placement fields")
     return unit
 
@@ -84,6 +98,7 @@ def reduce_units(
     units: Sequence[RetrievableUnit],
     *,
     bindings: Mapping[str, RevisionBinding],
+    unitizer_version: str = UNITIZER_VERSION,
 ) -> Mapping[str, JsonValue]:
     """Materialize units idempotently into replayable projection state.
 
@@ -91,10 +106,11 @@ def reduce_units(
     revision coherence, and link integrity before any row is written, so a
     rejected batch can never leave a half-applied projection behind.
     """
+    _require_unitizer_version(unitizer_version)
     rows = dict(_mapping(state.get("units", {}), "units"))
     by_revision = dict(_mapping(state.get("units_by_revision", {}), "units_by_revision"))
     for unit in units:
-        admit(unit)
+        admit(unit, unitizer_version=unitizer_version)
         _require_binding(unit, bindings)
     _require_revision_coherence(rows, units)
     _require_link_integrity(rows, units)
@@ -236,7 +252,11 @@ _META_KEYS = frozenset(
 _LINK_KEYS = frozenset({"kind", "provisional_target", "target"})
 
 
-def decode_unit(payload: JsonObject) -> RetrievableUnit:
+def decode_unit(
+    payload: JsonObject,
+    *,
+    unitizer_version: str = UNITIZER_VERSION,
+) -> RetrievableUnit:
     """Decode one strict unit row; unknown or missing fields fail closed."""
     top = _object(payload, "unit", _UNIT_KEYS)
     unit = RetrievableUnit(
@@ -250,7 +270,7 @@ def decode_unit(payload: JsonObject) -> RetrievableUnit:
         _decode_meta(top.get("meta")),
         _decode_links(top.get("links")),
     )
-    return admit(unit)
+    return admit(unit, unitizer_version=unitizer_version)
 
 
 def _decode_meta(value: JsonValue | None) -> UnitMeta:
@@ -325,6 +345,11 @@ def _integer(value: JsonValue | None, name: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{name} must be an integer")
     return value
+
+
+def _require_unitizer_version(value: str) -> None:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("unitizer_version must be non-empty trimmed text")
 
 
 def unit_from_legacy_chunk(

@@ -18,7 +18,6 @@ from .unitizer import (
     draft_units,
     remap_citations,
     unitize,
-    unitize_document,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     "draft_units",
     "remap_citations",
     "unitize",
-    "unitize_document",
 ]

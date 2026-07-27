@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from hashlib import sha256
+from typing import cast
 
 import pytest
 
 from study_agent.domain.citation_v2 import TextCitationV2
 from study_agent.domain.identifiers import RevisionId, SourceId, substrate_id_for
-from study_agent.domain.tree import DialectProfile, HeadingSyntax, RegionKind
-from study_agent.domain.units import UnitKind
+from study_agent.domain.tree import DialectProfile, DocumentTree, HeadingSyntax, RegionKind
+from study_agent.domain.units import RetrievableUnit, TextSpan, UnitKind
 from study_agent.knowledge.tree import build_document_tree
 from study_agent.knowledge.unitizer import (
     V01_WINDOW_CHARACTERS,
@@ -19,7 +20,7 @@ from study_agent.knowledge.unitizer import (
     remap_citations,
     unitize,
 )
-from study_agent.knowledge.units import RevisionBinding, reduce_units
+from study_agent.knowledge.units import RevisionBinding, decode_unit, reduce_units
 
 SOURCE = SourceId("notes")
 REVISION = RevisionId("revision-1")
@@ -34,7 +35,12 @@ MARKDOWN = DialectProfile(
 )
 
 
-def make_units(text: str, profile: DialectProfile = MARKDOWN, *, cap: int = 1200):
+def make_units(
+    text: str,
+    profile: DialectProfile = MARKDOWN,
+    *,
+    cap: int = 1200,
+) -> tuple[DocumentTree, RevisionBinding, tuple[RetrievableUnit, ...]]:
     substrate = substrate_id_for(text.encode("utf-8"))
     tree = build_document_tree(text, profile, substrate_id=substrate)
     binding = RevisionBinding(SOURCE, substrate, len(text))
@@ -54,6 +60,10 @@ def spans(units: tuple[object, ...], kind: UnitKind) -> list[tuple[int, int]]:
         for unit in units
         if unit.unit_kind is kind  # type: ignore[attr-defined]
     ]
+
+
+def span_for(unit: RetrievableUnit) -> TextSpan:
+    return cast(TextSpan, unit.canonical_ref)
 
 
 def test_small_section_emits_document_section_and_one_passage() -> None:
@@ -130,7 +140,7 @@ def test_unicode_offsets_are_code_point_offsets_and_ids_are_deterministic() -> N
     second = make_units(text)[2]
     assert [unit.to_json() for unit in first] == [unit.to_json() for unit in second]
     assert all(
-        0 <= unit.canonical_ref.start < unit.canonical_ref.end <= len(text)
+        0 <= span_for(unit).start < span_for(unit).end <= len(text)
         for unit in first
     )
 
@@ -178,16 +188,17 @@ def test_versioned_unit_ids_and_complete_no_guess_remap_report() -> None:
         policy=UnitizerPolicy(version="unitizer-v2", max_characters=600),
     )
     old_passage = next(unit for unit in old_units if unit.unit_kind is UnitKind.PASSAGE)
+    old_span = span_for(old_passage)
     assert old_passage.unit_id not in {unit.unit_id for unit in new_units}
     citation = TextCitationV2(
         SOURCE,
         REVISION,
         old_passage.unit_id,
         binding.substrate_id,
-        old_passage.canonical_ref.start,
-        old_passage.canonical_ref.end,
+        old_span.start,
+        old_span.end,
         sha256(
-            text[old_passage.canonical_ref.start : old_passage.canonical_ref.end].encode()
+            text[old_span.start : old_span.end].encode()
         ).hexdigest(),
     )
     report = remap_citations(
@@ -201,6 +212,27 @@ def test_versioned_unit_ids_and_complete_no_guess_remap_report() -> None:
     assert len(report.entries) == 1
     assert report.unmatched[0].replacement is None
     assert report.unmatched[0].reason == "no exact replacement"
+
+
+def test_explicit_unitizer_version_context_admits_and_decodes_matching_rows() -> None:
+    text = "# Doc\n\nshort\n"
+    tree, binding, _ = make_units(text)
+    policy = UnitizerPolicy(version="unitizer-v2")
+    units = unitize(text, tree, revision_id=REVISION, binding=binding, policy=policy)
+    bindings = {str(REVISION): binding}
+    with pytest.raises(ValueError, match="does not match"):
+        reduce_units({}, units, bindings=bindings)
+    with pytest.raises(ValueError, match="does not match"):
+        reduce_units({}, units, bindings=bindings, unitizer_version="unitizer-v3")
+    projected = reduce_units(
+        {}, units, bindings=bindings, unitizer_version="unitizer-v2"
+    )
+    assert len(projected["units"]) == len(units)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="does not match"):
+        decode_unit(units[0].to_json())
+    assert decode_unit(
+        units[0].to_json(), unitizer_version="unitizer-v2"
+    ) == units[0]
 
 
 def test_exact_remap_changes_only_the_unit_id() -> None:
