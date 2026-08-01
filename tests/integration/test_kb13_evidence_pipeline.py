@@ -120,7 +120,11 @@ def test_real_file_reaches_verified_agent_evidence(tmp_path: Path) -> None:
     retriever = LexicalRetriever(index, LexicalSurface.PROJECTION)
     evidence = EvidenceService(
         registry=RetrieverRegistry((retriever,), RetrieverHostAuthority()),
-        catalog=EvidenceCatalog(bindings),
+        catalog=EvidenceCatalog(
+            bindings,
+            units,
+            {substrate_id: substrate_bytes},
+        ),
     )
 
     packet = evidence.search(

@@ -1,6 +1,6 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Active — offline text evidence path complete through KB-13
+Status: Active — offline text evidence baseline complete; KB-13 primitive surface partial
 Last updated: 2026-08-01
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
@@ -147,7 +147,8 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 - [x] [KB-10 scopes and manifest](beads/KB-10-scopes-manifest.md)
 - [x] [KB-11 retriever registry](beads/KB-11-retriever-registry.md)
 - [x] [KB-12 fusion pipeline](beads/KB-12-fusion-pipeline.md)
-- [x] [KB-13 agent-facing primitives](beads/KB-13-agent-primitives.md)
+- [~] [KB-13 agent-facing primitives](beads/KB-13-agent-primitives.md) (verified
+  lexical evidence baseline; remaining primitive surface follows)
 - [ ] [KB-14 connector protocol](beads/KB-14-connector-protocol.md)
 - [ ] [KB-15 baseline connectors parent](beads/KB-15-baseline-connectors.md)
   - [ ] [KB-15A Markdown and notes](beads/KB-15A-markdown-notes-connectors.md)

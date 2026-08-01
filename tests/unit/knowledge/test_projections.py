@@ -81,6 +81,15 @@ def test_structural_projection_is_deterministic_and_round_trips() -> None:
     assert ProjectionRef.from_bytes(first.ref.to_bytes()) == first.ref
 
 
+def test_real_document_heading_is_not_aliased_to_synthetic_root() -> None:
+    context = admitted_tree()
+    projection = project_structural(
+        make_unit(("document",), substrate=context.substrate_id), context
+    )
+    assert projection.structural_context == "Document"
+    assert projection.handle == "passage unit in Document"
+
+
 def test_weak_headings_have_a_safe_nonempty_fallback() -> None:
     context = admitted_tree(leaf_heading="section", path_segment="section")
     projection = StructuralProjector().project(

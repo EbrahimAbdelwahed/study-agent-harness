@@ -14,7 +14,7 @@ from study_agent.domain.projections import (
     ProjectorPort,
 )
 from study_agent.domain.tree import TreeNode
-from study_agent.domain.units import RetrievableUnit, TextSpan
+from study_agent.domain.units import RetrievableUnit, TextSpan, UnitKind
 from study_agent.knowledge.tree import AdmittedDocumentTree
 from study_agent.knowledge.units import UNITIZER_VERSION, decode_unit
 from study_agent.state.serialization import canonical_json_bytes
@@ -49,11 +49,14 @@ def _validated_ancestors(
     ancestors: list[TreeNode] = []
     path: tuple[str, ...] = ()
     parent: TreeNode | None = None
-    # KB-06 uses ``("document",)`` as the stable, user-facing root label for
-    # document-card and structure-poor passage units.  The document tree's
-    # actual root path remains ``()``, so translate only that one canonical
-    # spelling before validating ancestors.
-    structural_path = () if unit.structural_path == ("document",) else unit.structural_path
+    # KB-06 uses ``("document",)`` for a document-card and structure-poor
+    # passages, while a real heading may legitimately have that same slug.
+    # Only alias the synthetic spelling when it cannot name an admitted node.
+    structural_path = unit.structural_path
+    if structural_path == ("document",) and (
+        unit.unit_kind is UnitKind.DOCUMENT_CARD or structural_path not in by_path
+    ):
+        structural_path = ()
     for segment in (None, *structural_path):
         if segment is not None:
             path = (*path, segment)

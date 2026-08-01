@@ -44,3 +44,6 @@ fusion -> citation-verified `EvidencePacket`.
 - KB-14/15 connector profiles, KB-16 incrementality, figures/items, and model
   adapters remain follow-up beads. The existing `.txt`/`.md` ingestion service
   is the verified baseline source path.
+- Post-review hardening requires explicit canonical unit/substrate records when
+  constructing an evidence catalog and rejects mixed retriever registries until
+  non-lexical provenance receipts survive fusion.
