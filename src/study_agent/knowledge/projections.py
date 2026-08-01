@@ -49,7 +49,12 @@ def _validated_ancestors(
     ancestors: list[TreeNode] = []
     path: tuple[str, ...] = ()
     parent: TreeNode | None = None
-    for segment in (None, *unit.structural_path):
+    # KB-06 uses ``("document",)`` as the stable, user-facing root label for
+    # document-card and structure-poor passage units.  The document tree's
+    # actual root path remains ``()``, so translate only that one canonical
+    # spelling before validating ancestors.
+    structural_path = () if unit.structural_path == ("document",) else unit.structural_path
+    for segment in (None, *structural_path):
         if segment is not None:
             path = (*path, segment)
         node = by_path.get(path)

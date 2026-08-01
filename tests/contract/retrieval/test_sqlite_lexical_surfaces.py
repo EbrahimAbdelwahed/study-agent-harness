@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
+from typing import Never
 
 import pytest
 
@@ -13,6 +14,8 @@ from study_agent.adapters.sqlite import (
 )
 from study_agent.adapters.sqlite.literal_query import compile_medical_trigram_query
 from study_agent.domain import (
+    ChunkId,
+    Citation,
     DialectProfile,
     RetrievableUnit,
     RevisionId,
@@ -32,6 +35,7 @@ from study_agent.ports.knowledge import (
     LexicalQuery,
     LexicalSurface,
 )
+from study_agent.ports.retrieval import RetrievalDocument
 
 
 class Catalog:
@@ -59,9 +63,17 @@ class FlippingCatalog(Catalog):
 
 
 class EmptyRetrievalCatalog:
-    def documents(self, *, include_superseded: bool = False) -> tuple[object, ...]:
+    def documents(self, *, include_superseded: bool = False) -> tuple[RetrievalDocument, ...]:
         del include_superseded
         return ()
+
+    def canonical_document(self, chunk_id: ChunkId) -> Never:
+        del chunk_id
+        raise AssertionError("empty legacy catalog cannot resolve a chunk")
+
+    def resolve(self, citation: Citation) -> Never:
+        del citation
+        raise AssertionError("empty legacy catalog cannot resolve a citation")
 
 
 def binding(

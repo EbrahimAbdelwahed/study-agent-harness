@@ -27,6 +27,7 @@ from .context import ExecutionContext
 from .course import CourseProfile, SourcePolicy, TerminologyEntry, TerminologyPolicy
 from .errors import ErrorCode, StudyError
 from .events import Actor, DomainEvent, PrincipalKind
+from .evidence import EvidenceExpansion, EvidencePacket, EvidencePacketStatus, EvidenceRow
 from .fragments import (
     FragmentDraft,
     FragmentKind,
@@ -102,6 +103,19 @@ from .projections import (
     ProjectorManifest,
     ProjectorPort,
 )
+from .provenance import (
+    AnswerProvenance,
+    ClaimOrigin,
+    ContentOrigin,
+    ModelProvenance,
+    ModelUsageProvenance,
+    PromptProvenance,
+    RetrievalProvenance,
+    SourceCommitment,
+    StructureOrigin,
+    ValidatorProvenance,
+    VersionPins,
+)
 from .scopes import (
     WHOLE_CORPUS,
     AdapterAvailability,
@@ -116,19 +130,6 @@ from .scopes import (
     ScopePolicy,
     ScopeSelection,
     ScopeSelectionKind,
-)
-from .provenance import (
-    AnswerProvenance,
-    ClaimOrigin,
-    ContentOrigin,
-    ModelProvenance,
-    ModelUsageProvenance,
-    PromptProvenance,
-    RetrievalProvenance,
-    SourceCommitment,
-    StructureOrigin,
-    ValidatorProvenance,
-    VersionPins,
 )
 from .session import (
     AnswerRecord,
@@ -205,6 +206,7 @@ __all__ = [
     "TUTOR_SNAPSHOT_SCHEMA_VERSION",
     "WHOLE_CORPUS",
     "Actor",
+    "AdapterAvailability",
     "AnswerId",
     "AnswerProvenance",
     "AnswerRecord",
@@ -221,7 +223,6 @@ __all__ = [
     "AssistantTurnRecord",
     "AssistantTurnStatus",
     "AttemptId",
-    "AdapterAvailability",
     "AvailabilityStatus",
     "BlobId",
     "BlobRef",
@@ -246,6 +247,10 @@ __all__ = [
     "DomainEvent",
     "ErrorCode",
     "EventId",
+    "EvidenceExpansion",
+    "EvidencePacket",
+    "EvidencePacketStatus",
+    "EvidenceRow",
     "ExecutionContext",
     "FigureBlob",
     "FigureCitationV1",
@@ -277,11 +282,11 @@ __all__ = [
     "PageMapEntry",
     "PresentationId",
     "PrincipalKind",
+    "ProjectionCoverage",
     "ProjectionId",
     "ProjectionRef",
     "ProjectorManifest",
     "ProjectorPort",
-    "ProjectionCoverage",
     "PromptProvenance",
     "RegionKind",
     "ResolvedCitation",

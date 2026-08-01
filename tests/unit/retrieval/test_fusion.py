@@ -171,17 +171,14 @@ def test_weight_changes_produce_exact_golden_order() -> None:
         (lexical, semantic),
         identities=("lex_projection@1", "semantic@1"),
     )
-    common = dict(
-        max_parent_attachments=0,
-        max_sibling_attachments=0,
-        max_window_attachments=0,
-    )
     lexical_first = fuse_candidates(
         batch,
         (first, second),
         FusionPolicy(
             retriever_weights=(("lex_projection@1", 4.0), ("semantic@1", 1.0)),
-            **common,
+            max_parent_attachments=0,
+            max_sibling_attachments=0,
+            max_window_attachments=0,
         ),
     )
     semantic_first = fuse_candidates(
@@ -189,7 +186,9 @@ def test_weight_changes_produce_exact_golden_order() -> None:
         (first, second),
         FusionPolicy(
             retriever_weights=(("lex_projection@1", 1.0), ("semantic@1", 4.0)),
-            **common,
+            max_parent_attachments=0,
+            max_sibling_attachments=0,
+            max_window_attachments=0,
         ),
     )
     assert [group.unit_id for group in lexical_first.groups] == [first.unit_id, second.unit_id]

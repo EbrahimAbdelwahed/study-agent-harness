@@ -1,6 +1,6 @@
 # KB-13: Evidence packet and agent-facing primitives
 
-Status: Proposed
+Status: Done — offline evidence service and file-to-evidence proof verified 2026-08-01
 Risk: High
 Depends On: KB-03, KB-04, KB-10, KB-12
 Parent coverage: §§10.4, 12–13; M5
@@ -22,16 +22,16 @@ SDK dependency.
 
 ## Acceptance criteria
 
-- [ ] Every evidence row resolves through KB-03 before return.
-- [ ] `search_lexical` works offline with only structural projection and no
+- [x] Every evidence row resolves through KB-03 before return.
+- [x] `search_lexical` works offline with only structural projection and no
   optional capability.
-- [ ] Expansion has its own citation and never replaces the narrow citation.
-- [ ] Navigational `concepts` output is not represented as evidence.
-- [ ] Provenance permits callers to distinguish lexical versus derived/model
+- [x] Expansion has its own citation and never replaces the narrow citation.
+- [x] Navigational `concepts` output is not represented as evidence.
+- [x] Provenance permits callers to distinguish lexical versus derived/model
   discovery without trusting a model claim.
-- [ ] No primitive chooses what to teach, synthesizes an answer, or schedules
+- [x] No primitive chooses what to teach, synthesizes an answer, or schedules
   work.
-- [ ] Existing v0.1 retrieval consumers have explicit compatible migration.
+- [x] Existing v0.1 retrieval consumers have explicit compatible migration.
 
 ## Verification
 
