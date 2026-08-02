@@ -13,6 +13,7 @@ __pycache__/
 build/
 dist/
 htmlcov/
+/.worktrees/
 
 # Raw Flywheel execution state is local orchestration evidence. Public, durable
 # artifacts live in docs/specs, docs/reviews, docs/tasks, and the worker docs.

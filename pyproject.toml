@@ -6,12 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "study-agent-harness"
 version = "0.2.0"
 description = "Provider-neutral, event-sourced study-agent harness"
+keywords = ["study agents", "tutoring", "event sourcing", "replay"]
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Ebrahim Abdelwahed" }]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Libraries",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
@@ -23,6 +26,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/EbrahimAbdelwahed/study-agent-harness"
 Documentation = "https://github.com/EbrahimAbdelwahed/study-agent-harness#readme"
+Changelog = "https://github.com/EbrahimAbdelwahed/study-agent-harness/blob/main/CHANGELOG.md"
 Issues = "https://github.com/EbrahimAbdelwahed/study-agent-harness/issues"
 Source = "https://github.com/EbrahimAbdelwahed/study-agent-harness"
 

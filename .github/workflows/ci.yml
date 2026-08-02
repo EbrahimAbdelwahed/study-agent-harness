@@ -22,11 +22,32 @@ jobs:
       - run: python -m pytest
       - run: python -m ruff check .
       - run: python -m mypy
+      - run: git diff --check
       - run: python -m pip install --disable-pip-version-check build
       - run: python -m build --wheel --sdist --outdir dist
+      - run: python -m pytest tests/quality/test_distribution_contents.py
+        env:
+          STUDY_AGENT_REQUIRE_DIST: "1"
       - run: python -m venv clean-install
       - run: clean-install/bin/python -m pip install --disable-pip-version-check dist/*.whl
+      - run: >-
+          clean-install/bin/python -c
+          'import study_agent.tools as tools;
+          from study_agent import __version__;
+          from study_agent.tools import StudyToolRegistry, public_agent_operation_manifests, public_study_tool_manifests;
+          assert __version__ == "0.2.0";
+          assert tools.StudyToolRegistry is StudyToolRegistry;
+          assert public_study_tool_manifests();
+          assert public_agent_operation_manifests()'
       - run: clean-install/bin/study-agent --help
+      - run: >-
+          clean-install/bin/python -c
+          'import json, subprocess;
+          result = subprocess.run(
+          ["clean-install/bin/study-agent", "--json", "--version", "--repository", "/missing", "doctor"],
+          check=True, capture_output=True, text=True);
+          assert result.stderr == "";
+          assert json.loads(result.stdout) == {"command": "version", "data": {"version": "0.2.0"}, "ok": True}'
       - run: clean-install/bin/study-agent-demo
       - run: clean-install/bin/study-agent --json describe
       - run: >-
