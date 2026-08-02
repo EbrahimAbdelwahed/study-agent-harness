@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050607" />
+    <title>Study Agent Harness — Build Week launch film</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-scene="1">
+    <main class="stage" aria-live="polite">
+      <div class="atmosphere" aria-hidden="true"></div>
+      <header class="masthead">
+        <a class="wordmark" href="https://github.com/EbrahimAbdelwahed/study-agent-harness">Study Agent Harness</a>
+        <p class="build">OpenAI Build Week · 0.2.0 alpha</p>
+      </header>
+      <p class="demo-disclaimer">Demonstrative interface · real offline trace.</p>
+
+      <section class="opening" aria-labelledby="opening-title">
+        <p class="eyebrow">An open execution layer for AI tutors</p>
+        <h1 id="opening-title">A tutor should meet you<br />where you are.</h1>
+        <p class="opening-line">And remember where you’ve been.</p>
+      </section>
+
+      <section class="product" aria-label="Adaptive tutor demonstration">
+        <div class="product-glow" aria-hidden="true"></div>
+        <div class="product-frame">
+          <aside class="rail">
+            <div class="rail-mark">S</div>
+            <nav aria-label="Tutor areas">
+              <span class="rail-item active"><i></i> Tutor</span>
+              <span class="rail-item"><i></i> Sources</span>
+              <span class="rail-item"><i></i> Memory</span>
+            </nav>
+            <div class="learner-chip"><span>EA</span><p>Exam in 12 days</p></div>
+          </aside>
+
+          <div class="workspace">
+            <header class="workspace-header">
+              <div>
+                <span class="status-dot"></span>
+                <p>Cardiovascular anatomy</p>
+              </div>
+              <p class="runtime-label">offline · source-grounded</p>
+            </header>
+
+            <div class="workspace-state state-intake">
+              <div class="chapter-label"><span>01</span> Start with the student</div>
+              <div class="intake-copy">
+                <p class="speaker">You</p>
+                <h2 data-bind="learner_entry"></h2>
+              </div>
+              <div class="context-dock">
+                <div class="context-card time-card"><span>Time available</span><strong>10 min</strong></div>
+                <div class="context-card source-card"><span>Material</span><strong data-bind="source_fixture"></strong><i>uploaded</i></div>
+                <div class="context-card goal-card"><span>Goal</span><strong>Understand, then test</strong></div>
+              </div>
+              <div class="pointer pointer-intake" aria-hidden="true"><i></i></div>
+            </div>
+
+            <div class="workspace-state state-grounding">
+              <div class="chapter-label"><span>02</span> Ground every answer</div>
+              <div class="conversation-mini">
+                <p class="speaker">Tutor</p>
+                <h2>Let’s use your material.<br />I’ll keep this focused.</h2>
+                <div class="tutor-question"><span>One useful question</span><strong data-bind="clarification"></strong></div>
+              </div>
+              <aside class="source-inspector">
+                <header><span>Trusted source snapshot</span><i>verified</i></header>
+                <strong data-bind="source_fixture"></strong>
+                <code data-bind="source_checksum"></code>
+                <div class="evidence-line"><span>01</span><p data-bind="evidence_0"></p></div>
+                <div class="evidence-line"><span>02</span><p data-bind="evidence_1"></p></div>
+              </aside>
+              <div class="focus-choice"><span>You</span><strong data-bind="selected_focus"></strong><i>↗</i></div>
+              <div class="pointer pointer-focus" aria-hidden="true"><i></i></div>
+            </div>
+
+            <div class="workspace-state state-lesson">
+              <div class="chapter-label"><span>03</span> Explain. Test. Remember.</div>
+              <div class="lesson-main">
+                <div class="lesson-heading">
+                  <span>Focused lesson · 4 min</span>
+                  <h2>The aortic valve</h2>
+                </div>
+                <article class="concept-card">
+                  <span class="card-type">Source-grounded explanation</span>
+                  <p>The aortic valve sits between the left ventricle and the aorta. It opens during ventricular contraction, then closes to prevent backward flow.</p>
+                  <small>heart-valves.md · evidence 01</small>
+                </article>
+                <article class="check-card">
+                  <span class="card-type">Check understanding</span>
+                  <p>What problem does the valve prevent when the ventricle relaxes?</p>
+                  <div class="answer-reveal"><i></i><span>Backflow from the aorta</span><strong>Correct</strong></div>
+                </article>
+              </div>
+              <aside class="learning-loop">
+                <p>Adaptive loop</p>
+                <ol>
+                  <li class="done"><i></i><span>Explain</span><small>grounded</small></li>
+                  <li class="done"><i></i><span>Test</span><small>retrieval</small></li>
+                  <li class="active"><i></i><span>Remember</span><small>scheduled</small></li>
+                </ol>
+                <div class="memory-card"><span>Memory updated</span><strong>Aortic valve · learning</strong><small>Review tomorrow</small></div>
+              </aside>
+              <div class="pointer pointer-answer" aria-hidden="true"><i></i></div>
+            </div>
+
+            <div class="workspace-state state-proof">
+              <div class="chapter-label"><span>04</span> The tutor can improvise. The state cannot.</div>
+              <div class="proof-heading">
+                <span>State lives outside the model</span>
+                <h2>Every continuation<br />can be reproduced.</h2>
+              </div>
+              <div class="trace-stack" aria-label="Replay parity trace">
+                <div class="trace-row"><span>scripted</span><div><i></i><b>completed</b><b>suspended</b><b>completed</b></div></div>
+                <div class="trace-row recorded"><span>recorded</span><div><i></i><b>completed</b><b>suspended</b><b>completed</b></div></div>
+                <p>evidence sequence <strong data-bind="initial_sequence"></strong><i>→</i><strong data-bind="refreshed_sequence"></strong></p>
+              </div>
+              <aside class="runtime-window">
+                <header><i></i><i></i><i></i><span>study-agent runtime</span></header>
+                <div>
+                  <p><b>$</b> study-agent-demo --json</p>
+                  <p><i>✓</i><code data-bind="cli_0"></code></p>
+                  <p><i>↳</i><code data-bind="cli_1"></code></p>
+                  <p><i>✓</i><code data-bind="cli_2"></code></p>
+                  <p class="parity-line"><i>✓</i> replay parity <strong data-bind="parity"></strong></p>
+                </div>
+              </aside>
+              <div class="architecture-strip">
+                <span>append-only events</span><i></i><span>portable skills</span><i></i><span>provider-neutral adapters</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="closing" aria-labelledby="closing-title">
+        <p class="eyebrow">Study Agent Harness</p>
+        <h2 id="closing-title">Let the tutor adapt.<br /><em>Keep the learning durable.</em></h2>
+        <div class="closing-meta"><span>Open source</span><span>Provider neutral</span><span>Offline-verifiable</span></div>
+      </section>
+
+      <footer class="timeline">
+        <div class="timeline-track"><i></i></div>
+        <p><span data-scene-count>01</span> / 06</p>
+        <button type="button" data-replay>Replay</button>
+      </footer>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+STUDY AGENT HARNESS — BUILD WEEK VOICE-OVER
+Target: 80 seconds. Natural, calm, confident. Do not read the scene labels.
+
+[00:00–00:07]
+Most study tools make the student adapt to a workflow. A real tutor does the opposite.
+
+[00:07–00:22]
+You can begin with whatever is true right now: “I have ten minutes. Help me understand heart valves.” The tutor notices the time, the goal, and the material you already have. No setup wizard. No rigid lesson plan.
+
+[00:22–00:38]
+Before it teaches, the harness locks a trusted snapshot of your source. The tutor can ask the one question that matters next—“Which valve should we focus on?”—and use your answer to change direction without losing context.
+
+[00:38–00:57]
+Now the lesson becomes a loop. Explain one idea from the source. Test it immediately. Record what the student understood, and schedule what should return later. The conversation stays flexible; the learning state keeps accumulating.
+
+[00:57–01:12]
+Underneath, every transition is an append-only event. Pause, resume, or change models: the same continuation can be replayed and verified. Skills carry the teaching behavior. Provider adapters stay replaceable.
+
+[01:12–01:20]
+Study Agent Harness. Let the tutor adapt. Keep the learning durable.
+
+DELIVERY NOTES
+- Speak to one person, not to an audience.
+- Pause briefly after “does the opposite”, “matters next”, and “append-only event”.
+- Keep “No setup wizard. No rigid lesson plan.” brisk and conversational.
+- The edit is timed to these six cue windows; aim to finish each paragraph 0.5–1.0 seconds early.
