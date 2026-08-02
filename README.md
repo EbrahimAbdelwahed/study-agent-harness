@@ -1,9 +1,10 @@
 # Study Agent Harness
 
-`study-agent-harness` is an alpha Python library and reference CLI for building
-source-grounded study agents. It provides a local, provider-neutral execution
-core: the host supplies trusted authority and the model may propose only
-schema-bounded actions.
+Study Agent Harness is the verifiable execution and evidence layer for AI tutors.
+
+Models decide how to teach. The harness owns trusted sources, durable sessions, safe retries, and deterministic replay.
+
+Use it when you are building a source-grounded tutor and do not want learner state, citations, or long-running execution to live inside an LLM conversation.
 
 The harness is designed to sit behind different agent hosts, models, providers,
 and user interfaces without making any of them canonical. It has no runtime
