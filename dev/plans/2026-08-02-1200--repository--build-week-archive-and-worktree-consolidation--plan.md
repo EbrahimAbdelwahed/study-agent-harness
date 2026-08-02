@@ -16,7 +16,7 @@ demo CLI, or product tests.
 - In scope: Git audit, document relocation, link updates, media relocation,
   reviewed integration, local commits, and verified local worktree/branch
   removal.
-- Out of scope: Cardine changes, remote actions, README positioning copy,
+- Out of scope: downstream-product changes, remote actions, README positioning copy,
   runtime/demo/test behavior, and object-database pruning.
 
 ## Approach

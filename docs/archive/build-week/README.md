@@ -10,12 +10,10 @@ product guide.
 - The remaining files: submission narrative, captions, narration, and montage
   material.
 
-The original media are intentionally outside the Git repository at:
-
-`/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Build Week Media Archive/study-agent-harness-2026-08-02/`
-
+The original media are intentionally kept in a separate, non-versioned archive.
 They were moved on 2026-08-02 without transcoding or deletion. The following
-SHA-256 values identify the large deliverables:
+SHA-256 values identify the large deliverables independently of their local
+storage path:
 
 ```text
 1564a37b6ff6c1188844e169e98eeaccfbf39d3c5e2aae76e523e6ad88f71bfa  Study Agent Harness - Launch Video with Chunked Voiceover.mp4

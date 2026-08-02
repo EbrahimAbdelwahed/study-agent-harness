@@ -17,7 +17,8 @@ The in-app browser download control did not materialize any of the new MP3 files
 
 - ElevenLabs generation history: all eight revised block texts are present in order, using Jerry B and Eleven Multilingual v2.
 - ElevenLabs account display: 3,076 credits remained after generation.
-- `find /Users/ebrahimabdelwahed/Downloads ...`: only the previous single 95.8-second Jerry B MP3 was present; no new chunk files were downloaded.
+- A local downloads-folder scan found only the previous single 95.8-second
+  Jerry B MP3; no new chunk files were downloaded.
 
 ## Notes
 

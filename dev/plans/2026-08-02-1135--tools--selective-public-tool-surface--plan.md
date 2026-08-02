@@ -48,7 +48,7 @@ duplicating owner behavior.
   - recall commands, scheduler/FSRS code, or a success-returning fake recall
     tool;
   - artifact proposal generation/acceptance or assessment write flows;
-  - KB service recomposition, historical KB code, browser/demo shell, Cardine,
+  - KB service recomposition, historical KB code, browser/demo shell, downstream product,
     PDF workarounds, capability-gap work, new CLI command handlers, CI/release
     engineering, README rewrites, dependencies, push/tag/release actions, and
     worktree removal.

@@ -64,7 +64,7 @@ not composed by `LocalRepository`.
 - KB-13 `EvidenceService` recomposition: the hardened service exists in the
   active tree but is not wired into `LocalRepository`; changing retrieval scope
   and indexes requires a separate approved integration.
-- Cardine and every separate checkout/worktree action.
+- Every downstream-product and separate checkout/worktree action.
 
 ## Notes
 

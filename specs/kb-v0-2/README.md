@@ -141,6 +141,10 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 - [x] [KB-06 structural unitizer](beads/KB-06-structural-unitizer.md)
 - [x] [KB-07 typed fragments and promotion](beads/KB-07-typed-fragments.md)
 - [x] [KB-08 projection core](beads/KB-08-projection-core.md)
+- [ ] KB admission hardening: add instance authenticity only when every
+  projector, fragment, and lexical trust gate enforces the same stored marker
+  and an `object.__new__` forgery test proves the boundary; a marker with no
+  consumer provides no guarantee.
 - [x] [KB-09 lexical projection and indexes parent](beads/KB-09-lexical-projection-indexes.md)
   - [x] [KB-09A lexical projector](beads/KB-09A-lexical-projector.md)
   - [x] [KB-09B SQLite lexical surfaces](beads/KB-09B-sqlite-lexical-surfaces.md)

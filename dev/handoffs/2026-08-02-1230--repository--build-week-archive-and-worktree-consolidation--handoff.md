@@ -15,17 +15,16 @@ decision and preservation decision described below.
 - Committed `98bbdf4` (`docs: archive Build Week materials`), placing the
   lightweight Build Week record under `docs/archive/build-week/`.
 - Moved 19 Build Week media files (about 58 MB) without transcoding or deletion
-  to `/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Build Week Media Archive/study-agent-harness-2026-08-02/`.
+  to a separate, non-versioned media archive.
 - Recorded SHA-256 values for the principal media in the archive README;
   `output/` is absent from Harness and no longer appears as Git noise.
 - Removed `.tmp-api-repo/` after proving it was not a Git repository and held
   only an API-test lock and runtime JSON.
 - Removed clean duplicate worktree and local branch `codex/public-tool-surface`.
-- Verified Cardine only in read-only mode: `/private/tmp/cardine-ui-fix` is an
-  independent checkout with `origin` at `EbrahimAbdelwahed/cardine.git`; its
-  `.git` is not shared with Harness.
-- Scanned the maintained Harness ref and remaining worktree refs for Cardine
-  naming (`cardine`, `cardine_session`, `study-agent-ui`, `referto`): no hits.
+- Verified the downstream product only in read-only mode: it is an independent
+  checkout whose `.git` is not shared with Harness.
+- Scanned the maintained Harness ref and remaining worktree refs for downstream
+  product naming: no hits.
 
 ## Remaining
 
@@ -34,16 +33,14 @@ decision and preservation decision described below.
   cleanup in `codex/public-tool-surface-main` should be reconciled into the
   active adaptive-tutor branch. Both are generic by term scan, but each is a
   large divergent implementation with extensive merge conflicts.
-- Decide whether to preserve the incomplete five-line KB-08 seal patch as a
-  recovery artifact or discard it. It is not safe to integrate: the projection
-  guard does not use the added seal and no adversarial test exists.
 - After those gates, perform a new commit/diff/untracked audit and remove the
   four remaining worktrees and their branches only when every exclusive change
   is integrated or explicitly preserved.
 
 ## Important Context
 
-- Do not touch Cardine while completing this Harness task.
+- Do not touch the separate downstream product while completing this Harness
+  task.
 - Do not delete, reset, or overwrite the pre-existing modified `README.md` or
   unrelated untracked files in the primary checkout.
 - Do not merge the release or tool-surface branch merely to remove worktrees:
