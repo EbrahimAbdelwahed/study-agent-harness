@@ -24,11 +24,23 @@ from study_agent.ports.retrieval import (
 )
 
 from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
-from .literal_query import compile_unicode61_query_on
+from .literal_query import compile_unicode61_query_on, unicode61_tokens_on
 
 INDEX_VERSION = "sqlite-fts5-unicode61-v1"
 RETRIEVAL_STRATEGY_ID = "sqlite_fts5_bm25"
-RETRIEVAL_STRATEGY_VERSION = "1.0.0"
+RETRIEVAL_STRATEGY_VERSION = "1.1.0"
+_MAX_RELEVANCE_QUERY_TERMS = 6
+_MAX_RELEVANCE_SOURCE_TERMS = 32
+_RELEVANCE_CANDIDATE_LIMIT = 64
+_QUERY_STOP_WORDS = frozenset(
+    {
+        "a", "about", "and", "briefly", "by", "can", "could", "di", "e", "explain",
+        "fonte", "fonti", "from", "il", "in", "instructions", "la", "le", "materiale",
+        "materiali", "of", "or", "please", "prompt", "source", "spiega", "spiegami",
+        "the", "to", "uploaded", "what", "with", "ignore", "previous", "developer",
+        "assistant", "drop", "table", "column", "value",
+    }
+)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS retrieval_documents (
     chunk_id TEXT PRIMARY KEY,
@@ -289,17 +301,76 @@ class SQLiteFtsRetrieval:
         canonical = self._audit_integrity()
         fingerprint = _query_fingerprint(query)
         index_version = _content_index_version(canonical)
+        title_evidence = self._exact_title_evidence(query, canonical)
+        if title_evidence:
+            return _evidence_set(
+                EvidenceStatus.SUFFICIENT, title_evidence, fingerprint, index_version
+            )
         with closing(self._connect()) as connection:
-            compiled = _compile_literal_query(connection, query.text)
-            if compiled is None:
+            tokens = unicode61_tokens_on(connection, query.text)
+            informative_tokens = _informative_query_tokens(tokens)
+            if not informative_tokens:
                 return _evidence_set(
                     EvidenceStatus.INSUFFICIENT, (), fingerprint, index_version
                 )
-            sql, parameters = _search_sql(query, compiled)
-            rows = connection.execute(sql, parameters).fetchall()
-        evidence = tuple(self._resolve_row(row) for row in rows)
+            rows: tuple[tuple[object, ...], ...] = ()
+            if len(informative_tokens) <= _MAX_RELEVANCE_QUERY_TERMS:
+                compiled = _quote_query_tokens(informative_tokens)
+                if compiled is not None:
+                    sql, parameters = _search_sql(query, compiled)
+                    rows = tuple(connection.execute(sql, parameters).fetchall())
+            evidence = tuple(self._resolve_row(row) for row in rows)
+            if not evidence:
+                relevance_rows = _bounded_relevance_rows(
+                    connection, query, informative_tokens
+                )
+                evidence = tuple(self._resolve_row(row) for row in relevance_rows)
         status = EvidenceStatus.SUFFICIENT if evidence else EvidenceStatus.INSUFFICIENT
         return _evidence_set(status, evidence, fingerprint, index_version)
+
+    def _exact_title_evidence(
+        self, query: RetrievalQuery, canonical: tuple[RetrievalDocument, ...]
+    ) -> tuple[RetrievalEvidence, ...]:
+        requested_title = query.text.strip().casefold()
+        matches = tuple(
+            document
+            for document in canonical
+            if document.course_id == query.course_id
+            and document.title.strip().casefold() == requested_title
+            and (query.include_superseded or document.is_current_revision)
+            and (not query.revision_ids or document.revision_id in query.revision_ids)
+            and (not query.source_kinds or document.source_kind in query.source_kinds)
+            and (not query.source_roles or document.source_role in query.source_roles)
+            and document.trust_level >= query.minimum_trust_level
+        )
+        ordered = sorted(
+            matches,
+            key=lambda item: (
+                str(item.source_id),
+                str(item.revision_id),
+                item.chunk.ordinal,
+                str(item.chunk.chunk_id),
+            ),
+        )[: query.limit]
+        return tuple(self._resolve_document(document) for document in ordered)
+
+    def _resolve_document(self, document: RetrievalDocument) -> RetrievalEvidence:
+        chunk = document.chunk
+        resolved = self._content.resolve(
+            Citation(
+                chunk.source_id,
+                chunk.revision_id,
+                chunk.chunk_id,
+                chunk.start_offset,
+                chunk.end_offset,
+                "retrieval-title-match",
+            )
+        )
+        if resolved.text != document.text:
+            raise RetrievalIndexIntegrityError(
+                "title-matched candidate does not resolve to canonical source content"
+            )
+        return RetrievalEvidence(chunk, resolved.citation, resolved.text, 1.0)
 
     def _resolve_row(self, row: tuple[object, ...]) -> RetrievalEvidence:
         try:
@@ -460,6 +531,74 @@ def _search_sql(query: RetrievalQuery, compiled: str) -> tuple[str, tuple[object
     """
     parameters.append(query.limit)
     return sql, tuple(parameters)
+
+
+def _quote_query_tokens(tokens: tuple[str, ...]) -> str | None:
+    if not tokens:
+        return None
+    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+
+
+def _bounded_relevance_rows(
+    connection: sqlite3.Connection,
+    query: RetrievalQuery,
+    tokens: tuple[str, ...],
+) -> tuple[tuple[object, ...], ...]:
+    """Recover concise agent queries without broadening arbitrary learner text."""
+
+    unique_tokens = tuple(dict.fromkeys(tokens))[:_MAX_RELEVANCE_SOURCE_TERMS]
+    if len(unique_tokens) < 2:
+        return ()
+    candidate_query = RetrievalQuery(
+        query.course_id,
+        query.text,
+        limit=max(query.limit, _RELEVANCE_CANDIDATE_LIMIT),
+        revision_ids=query.revision_ids,
+        minimum_trust_level=query.minimum_trust_level,
+        source_kinds=query.source_kinds,
+        source_roles=query.source_roles,
+        include_superseded=query.include_superseded,
+    )
+    token_rows: list[tuple[int, str, tuple[tuple[object, ...], ...]]] = []
+    for position, token in enumerate(unique_tokens):
+        compiled = _quote_query_tokens((token,))
+        if compiled is None:  # pragma: no cover - non-empty token contract
+            continue
+        sql, parameters = _search_sql(candidate_query, compiled)
+        rows = tuple(connection.execute(sql, parameters).fetchall())
+        if rows:
+            token_rows.append((position, token, rows))
+    selected = tuple(
+        sorted(token_rows, key=lambda item: (len(item[2]), item[0], item[1]))[
+            :_MAX_RELEVANCE_QUERY_TERMS
+        ]
+    )
+    if len(selected) < 2:
+        return ()
+    matches: dict[str, list[tuple[object, ...]]] = {}
+    for _position, _token, rows in selected:
+        for row in rows:
+            matches.setdefault(str(row[2]), []).append(row)
+    minimum_coverage = 2
+    ranked = tuple(
+        sorted(
+            (
+                (len(rows), sum(float(str(row[1])) for row in rows), rows[0])
+                for rows in matches.values()
+                if len(rows) >= minimum_coverage
+            ),
+            key=lambda item: (-item[0], item[1], str(item[2][2])),
+        )
+    )
+    return tuple(item[2] for item in ranked[: query.limit])
+
+
+def _informative_query_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        token
+        for token in dict.fromkeys(tokens)
+        if token not in _QUERY_STOP_WORDS
+    )
 
 
 def _metadata_tuple(document: RetrievalDocument) -> tuple[object, ...]:
