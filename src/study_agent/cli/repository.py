@@ -41,7 +41,7 @@ from study_agent.application import (
     GroundingAskService,
     GroundingEngineFactory,
 )
-from study_agent.artifacts import register_artifact_events
+from study_agent.artifacts import ProjectionArtifactView, register_artifact_events
 from study_agent.assessments import (
     ProjectionAssessmentView,
     ProjectionLearnerEvidenceView,
@@ -93,6 +93,7 @@ from study_agent.tutor_snapshot import TutorSnapshotReader
 
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry
+    from study_agent.tools.operations import AgentOperationOwners
 
 _V1 = SemanticVersion.parse("1.0.0")
 
@@ -580,6 +581,22 @@ class LocalRepository:
             content=course.content,
             sessions=self.session_service,
             grounding=GroundingAskServiceProvider(resolve_grounding),
+            owners=self._agent_operation_owners(course_id, course),
+        )
+
+    def _agent_operation_owners(
+        self, course_id: CourseId, course: CourseRepository
+    ) -> AgentOperationOwners:
+        from study_agent.tools.operations import AgentOperationOwners
+
+        return AgentOperationOwners(
+            course_id=course_id,
+            course_commands=self.course_service,
+            ingestion=course.ingestion,
+            sessions=self.session_service,
+            session_turns=self.session_turn_service,
+            artifacts=ProjectionArtifactView(self.events.projection),
+            assessments=self.assessments,
         )
 
     def close(self) -> None:

@@ -14,7 +14,10 @@ from study_agent import __version__
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.operator_skill import skill_metadata
 from study_agent.repository_config import CONFIG_SCHEMA_VERSION
-from study_agent.tools.builtin import public_study_tool_manifests
+from study_agent.tools.builtin import (
+    public_agent_operation_manifests,
+    public_study_tool_manifests,
+)
 from study_agent.tools.contracts import ToolManifest
 
 if TYPE_CHECKING:
@@ -581,20 +584,27 @@ def agent_operations_manifest() -> JsonObject:
     commands = tuple(
         item.to_json() for item in sorted(command_registrations(), key=lambda item: item.name)
     )
-    tools = tuple(_tool_entry(item) for item in public_study_tool_manifests())
+    tools = tuple(_tool_entry(item) for item in public_agent_operation_manifests())
     return {
-        "contract_version": "agent-operations@1",
+        "contract_version": "agent-operations@2",
         "harness_version": __version__,
         "repository_schema_versions": (CONFIG_SCHEMA_VERSION,),
         "offline_default": True,
         "commands": commands,
         "study_tools": tools,
+        "unavailable_operations": (
+            {"name": "recall", "available": False, "code": "owner_unavailable"},
+        ),
         "operator_skill": skill_metadata(),
     }
 
 
 def public_study_tool_entries() -> tuple[JsonObject, ...]:
     return tuple(_tool_entry(item) for item in public_study_tool_manifests())
+
+
+def public_agent_operation_entries() -> tuple[JsonObject, ...]:
+    return tuple(_tool_entry(item) for item in public_agent_operation_manifests())
 
 
 def _tool_entry(manifest: ToolManifest) -> JsonObject:
@@ -906,6 +916,7 @@ __all__ = [
     "agent_operations_manifest",
     "command_registrations",
     "configure_parser",
+    "public_agent_operation_entries",
     "public_study_tool_entries",
     "registration_for",
 ]

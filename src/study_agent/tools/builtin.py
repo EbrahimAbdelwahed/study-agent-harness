@@ -24,6 +24,7 @@ from .contracts import (
     ToolManifest,
     ToolResult,
 )
+from .operations import AgentOperationOwners, expanded_tools, public_operation_manifests
 
 if TYPE_CHECKING:
     from study_agent.application.grounding_ask import GroundingAskService, GroundingStudyEvent
@@ -470,8 +471,9 @@ def builtin_tools(
     content: SourceContentPort,
     sessions: SessionService,
     grounding: GroundingAskService | GroundingAskServiceProvider,
+    owners: AgentOperationOwners | None = None,
 ) -> tuple[object, ...]:
-    return (
+    baseline = (
         CourseGetTool(courses),
         SourceListTool(catalog),
         SourceSearchTool(retrieval),
@@ -480,6 +482,9 @@ def builtin_tools(
         SessionRecordNoteTool(sessions),
         GroundingAskTool(grounding),
     )
+    if owners is None:
+        return baseline
+    return (*baseline, *expanded_tools(owners))
 
 
 def public_study_tool_manifests() -> tuple[ToolManifest, ...]:
@@ -494,6 +499,17 @@ def public_study_tool_manifests() -> tuple[ToolManifest, ...]:
         GroundingAskTool.manifest,
     )
     return tuple(sorted(manifests, key=lambda item: item.name))
+
+
+def public_agent_operation_manifests() -> tuple[ToolManifest, ...]:
+    """Return the complete sorted runnable agent-operation inventory."""
+
+    return tuple(
+        sorted(
+            (*public_study_tool_manifests(), *public_operation_manifests()),
+            key=lambda item: item.name,
+        )
+    )
 
 
 def _citation_json(citation: Citation) -> JsonObject:

@@ -44,7 +44,7 @@ from .registry import (
     CommandRequest,
     RepositoryRequirement,
     agent_operations_manifest,
-    public_study_tool_entries,
+    public_agent_operation_entries,
     registration_for,
 )
 from .repository import (
@@ -273,7 +273,7 @@ def handle_tool_list(
     del request
     if repository is not None:
         raise RuntimeError("tool discovery cannot execute through an open repository")
-    return CommandOutcome("tool.list", {"tools": public_study_tool_entries()})
+    return CommandOutcome("tool.list", {"tools": public_agent_operation_entries()})
 
 
 def handle_tool_describe(
@@ -285,7 +285,7 @@ def handle_tool_describe(
     try:
         entry = next(
             item
-            for item in public_study_tool_entries()
+            for item in public_agent_operation_entries()
             if _tool_entry_name(item) == name
         )
     except StopIteration as error:
