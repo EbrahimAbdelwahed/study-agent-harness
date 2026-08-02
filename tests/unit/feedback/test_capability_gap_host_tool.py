@@ -68,18 +68,6 @@ class _RecordingSink:
         return self.result
 
 
-class _RecordingDispatcher:
-    def __init__(self, accepted: bool = True) -> None:
-        self.accepted = accepted
-        self.calls: list[tuple[CapabilityGapProposal, CapabilityGapHostContext]] = []
-
-    def try_submit(
-        self, proposal: CapabilityGapProposal, context: CapabilityGapHostContext
-    ) -> bool:
-        self.calls.append((proposal, context))
-        return self.accepted
-
-
 def test_manifest_is_exactly_separately_discoverable_and_proposal_is_closed() -> None:
     manifest = CapabilityGapHostTool.manifest
     assert manifest.identity == "report_capability_gap@1.0.0"
@@ -139,26 +127,6 @@ def test_sink_failure_is_bounded_and_called_once() -> None:
     with pytest.raises(CapabilityGapHostToolError, match="capability_gap_report_failed"):
         tool.report(_proposal(), _context())
     assert sink.calls == 1
-
-
-def test_nonblocking_dispatch_never_calls_sink_and_passes_closed_values() -> None:
-    sink = _RecordingSink(object())
-    dispatcher = _RecordingDispatcher()
-    tool = CapabilityGapHostTool(sink, dispatcher=dispatcher)  # type: ignore[arg-type]
-
-    tool.report_nonblocking(_proposal(), _context())
-    assert sink.calls == 0
-    assert dispatcher.calls == [(_proposal(), _context())]
-
-
-def test_nonblocking_dispatch_is_explicit_fail_soft_when_queue_is_full_or_absent() -> None:
-    sink = _RecordingSink(object())
-    full = CapabilityGapHostTool(sink, dispatcher=_RecordingDispatcher(False))  # type: ignore[arg-type]
-    absent = CapabilityGapHostTool(sink)  # type: ignore[arg-type]
-
-    full.report_nonblocking(_proposal(), _context())
-    absent.report_nonblocking(_proposal(), _context())
-    assert sink.calls == 0
 
 
 def test_context_rejects_forged_receipt_binding() -> None:

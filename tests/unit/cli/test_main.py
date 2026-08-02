@@ -5,6 +5,7 @@ import json
 import os
 import signal
 
+from study_agent import __version__
 from study_agent.cli.main import build_parser, color_enabled, main
 from study_agent.cli.output import CommandOutcome
 from study_agent.sessions import RetryableSessionConflictError
@@ -16,6 +17,36 @@ def test_parser_exposes_only_approved_top_level_commands() -> None:
         "{init,course,source,ask,session,export,doctor,operator,manifest,describe,tool}"
         in help_text
     )
+
+
+def test_human_version_reports_package_version(capsys: object) -> None:
+    assert main(("--version",)) == 0
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert captured.err == ""
+    assert captured.out == f"study-agent {__version__}\n"
+
+
+def test_json_version_is_one_success_envelope(capsys: object) -> None:
+    assert main(("--json", "--version")) == 0
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert captured.err == ""
+    assert captured.out.count("\n") == 1
+    assert json.loads(captured.out) == {
+        "command": "version",
+        "data": {"version": __version__},
+        "ok": True,
+    }
+
+
+def test_root_version_exits_before_other_global_options_and_commands(capsys: object) -> None:
+    assert main(("--json", "--version", "--repository", "/missing", "doctor")) == 0
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "command": "version",
+        "data": {"version": __version__},
+        "ok": True,
+    }
 
 
 def test_no_color_disables_color(monkeypatch: object) -> None:

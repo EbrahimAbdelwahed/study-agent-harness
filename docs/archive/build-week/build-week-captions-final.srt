@@ -1,0 +1,49 @@
+1
+00:00:00,350 --> 00:00:06,700
+Most study tools make the student adapt to a workflow.
+A real tutor does the opposite.
+
+2
+00:00:07,350 --> 00:00:14,000
+You can begin with whatever is true right now:
+“I have ten minutes. Help me understand heart valves.”
+
+3
+00:00:14,000 --> 00:00:21,700
+The tutor notices the time, the goal, and the material you already have.
+No setup wizard. No rigid lesson plan.
+
+4
+00:00:22,350 --> 00:00:29,600
+Before it teaches, the harness locks
+a trusted snapshot of your source.
+
+5
+00:00:29,600 --> 00:00:37,700
+It asks the one question that matters next—and changes direction
+without losing context.
+
+6
+00:00:38,350 --> 00:00:44,800
+Now the lesson becomes a loop.
+Explain one idea from the source. Test it immediately.
+
+7
+00:00:44,800 --> 00:00:56,700
+Record what the student understood, and schedule what should return later.
+The conversation stays flexible; the learning state keeps accumulating.
+
+8
+00:00:57,350 --> 00:01:04,800
+Underneath, every transition is an append-only event.
+Pause, resume, or change models.
+
+9
+00:01:04,800 --> 00:01:11,700
+The same continuation can be replayed and verified.
+Skills carry behavior. Provider adapters stay replaceable.
+
+10
+00:01:12,350 --> 00:01:19,700
+Study Agent Harness.
+Let the tutor adapt. Keep the learning durable.

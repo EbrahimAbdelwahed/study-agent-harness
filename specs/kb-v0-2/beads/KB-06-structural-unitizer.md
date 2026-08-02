@@ -1,6 +1,6 @@
 # KB-06: Structural unitizer and granularity ladder
 
-Status: Proposed
+Status: Done — implemented and verified 2026-07-27
 Risk: Medium
 Depends On: KB-05
 Parent coverage: §§5.1–5.2, 8.2; M2
@@ -19,18 +19,19 @@ structure-poor input.
 
 ## Acceptance criteria
 
-- [ ] Small sections emit a section and passage unit at their declared levels.
-- [ ] Large sections split only inside the node at paragraph boundaries.
-- [ ] Tables, emphasis regions, and code fences are atomic and never split.
-- [ ] No emitted span overlaps improperly, escapes its tree node, or omits
+- [x] Small sections emit a section and passage unit at their declared levels.
+- [x] Large sections split only inside the node at paragraph boundaries.
+- [x] Tables, emphasis regions, and code fences are atomic and never split.
+- [x] No emitted span overlaps improperly, escapes its tree node, or omits
   canonical text unintentionally.
-- [ ] Structure-poor input matches the frozen v0.1 window behavior.
-- [ ] Version change yields a complete remap report and never guesses an
+- [x] Structure-poor input matches the frozen v0.1 window behavior.
+- [x] Version change yields a complete remap report and never guesses an
   unmatched citation.
 
 ## Verification
 
-- Golden unitization fixtures and deterministic ID checks.
+- Golden unitization fixtures and deterministic ID checks in
+  `tests/unit/knowledge/test_unitizer.py`.
 - Boundary/property tests for exact cap, oversized paragraphs, empty nodes,
   Unicode, tables, and nested regions.
 - v0.1 fallback compatibility fixture.

@@ -22,6 +22,16 @@ from .host_file import (
     HostFileIngestionPort,
     HostFileSnapshotStore,
 )
+from .knowledge import (
+    LexicalCandidate,
+    LexicalCandidateList,
+    LexicalCatalogPort,
+    LexicalIndexPort,
+    LexicalIndexReceipt,
+    LexicalProjectionBinding,
+    LexicalQuery,
+    LexicalSurface,
+)
 from .model import (
     CancellationToken,
     MessageRole,
@@ -40,7 +50,6 @@ from .model import (
     StructuredOutputConstraint,
     ToolCall,
 )
-from .recall import RecallCommandPort, RecallViewPort
 from .retrieval import (
     EvidenceStatus,
     IndexReceipt,
@@ -50,7 +59,21 @@ from .retrieval import (
     RetrievalQuery,
     retrieval_read_set_fingerprint,
 )
-from .scheduling import SchedulingPolicyPort
+from .retrievers import (
+    RetrieverCandidate,
+    RetrieverCandidateList,
+    RetrieverCost,
+    RetrieverFilter,
+    RetrieverHostAuthority,
+    RetrieverManifest,
+    RetrieverNetwork,
+    RetrieverPort,
+    RetrieverQuery,
+    RetrieverSearchBatch,
+    RetrieverSkipCode,
+    RetrieverSkipReason,
+    RetrieverSkipReceipt,
+)
 from .session import (
     AnswerNotFoundError,
     AssistantTurnViewPort,
@@ -85,7 +108,6 @@ from .tutor_runner import (
     TutorHostAuthorityPort,
 )
 from .tutor_snapshot import TutorSnapshotPort
-from .workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
 
 __all__ = [
     "MAX_SOURCE_BYTES",
@@ -110,6 +132,14 @@ __all__ = [
     "HostFileSnapshotStore",
     "IndexReceipt",
     "LearnerEvidenceViewPort",
+    "LexicalCandidate",
+    "LexicalCandidateList",
+    "LexicalCatalogPort",
+    "LexicalIndexPort",
+    "LexicalIndexReceipt",
+    "LexicalProjectionBinding",
+    "LexicalQuery",
+    "LexicalSurface",
     "MessageRole",
     "ModelCapabilities",
     "ModelError",
@@ -123,15 +153,25 @@ __all__ = [
     "ModelStreamEvent",
     "ModelStreamEventKind",
     "ModelUsage",
-    "RecallCommandPort",
-    "RecallViewPort",
     "RetrievalEvidence",
     "RetrievalEvidenceSet",
     "RetrievalPort",
     "RetrievalQuery",
+    "RetrieverCandidate",
+    "RetrieverCandidateList",
+    "RetrieverCost",
+    "RetrieverFilter",
+    "RetrieverHostAuthority",
+    "RetrieverManifest",
+    "RetrieverNetwork",
+    "RetrieverPort",
+    "RetrieverQuery",
+    "RetrieverSearchBatch",
+    "RetrieverSkipCode",
+    "RetrieverSkipReason",
+    "RetrieverSkipReceipt",
     "RetryableTutorDecisionError",
     "RunStore",
-    "SchedulingPolicyPort",
     "ServiceDecisionPolicyPort",
     "SessionNotFoundError",
     "SessionViewPort",
@@ -153,7 +193,5 @@ __all__ = [
     "VerifiedGeneratedBatchPort",
     "VerifiedGradeOwnerStore",
     "VerifiedGradePort",
-    "WorkaroundApprovalAuthority",
-    "WorkaroundExecutor",
     "retrieval_read_set_fingerprint",
 ]

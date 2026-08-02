@@ -1,0 +1,44 @@
+STUDY AGENT HARNESS — VOICE-OVER, UNDER 3 MINUTES
+
+Generate each block separately with Eleven Multilingual v2, Jerry B,
+speed 1.0, stability 50%, similarity 65%, style 0%, speaker boost enabled.
+
+
+BLOCK 1 — Opening
+
+In high-stakes courses like medicine and engineering, study agents keep failing. <break time="0.4s" /> They lose context, <break time="0.2s" /> hallucinate details, <break time="0.2s" /> and have terrible memory. <break time="0.6s" />
+
+
+BLOCK 2 — Title
+
+Study Agent Harness is the missing layer: <break time="0.4s" /> an open-source execution core that keeps an AI tutor persistent, <break time="0.2s" /> source-grounded, <break time="0.2s" /> and replayable. <break time="0.6s" />
+
+
+BLOCK 3 — Architecture
+
+It is just one rule: <break time="0.4s" /> the model proposes, <break time="0.3s" /> the harness executes. <break time="0.5s" /> Hosts embed it, <break time="0.2s" /> skills and playbooks carry the behavior, <break time="0.2s" /> and a provider-neutral event stream keeps state outside the model. <break time="0.6s" />
+
+
+BLOCK 4 — Offline demo
+
+Here is the real offline demo. <break time="0.4s" /> A student starts wherever they are — <break time="0.3s" /> "I have ten minutes. Help me understand heart valves." <break time="0.5s" /> The harness snapshots a trusted source, <break time="0.2s" /> checksums it, <break time="0.2s" /> and pulls only the evidence that this trace needs. <break time="0.4s" /> The tutor completes one grounded step, <break time="0.3s" /> then suspends to ask the single question that matters: <break time="0.4s" /> which valve should we focus on? <break time="0.6s" />
+
+
+BLOCK 5 — Refresh / resume / replay — SHORTENED
+
+The student chooses the aortic valve. <break time="0.4s" /> The harness refreshes evidence, then resumes the exact continuation instead of inventing a new conversation. <break time="0.5s" /> State persists outside the model, so each turn can start with a fresh context window without losing what happened before. <break time="0.5s" /> The visible trace is completed, suspended for clarification, then completed again. <break time="0.5s" /> Scripted and recorded adapters replay it identically — with no network, credentials, SDK, or provider call. <break time="0.6s" />
+
+
+BLOCK 6 — State outside the model
+
+That reliability comes from one decision: <break time="0.4s" /> state lives outside the model. <break time="0.6s" /> The architecture technically forces it: <break time="0.4s" /> append-only events, <break time="0.2s" /> trusted source snapshots, <break time="0.2s" /> replayable state — <break time="0.3s" /> everything the tutor knew can be reconstructed and proven. <break time="0.5s" /> This provides a robust environment for studying, <break time="0.3s" /> where factuality and observability are needed the most. <break time="0.6s" />
+
+
+BLOCK 7 — Codex flywheel — SHORTENED
+
+The harness itself was built with the same discipline. <break time="0.4s" /> In Codex, GPT-5.6 turned approved specs into dependency-aware beads. <break time="0.4s" /> After architectural review, each bead became a bounded implementation, then closed with tests, implementation review, and a durable handoff. <break time="0.5s" /> Different GPT-5.6 instances handled orchestration and specialized work at the reasoning effort each task required. <break time="0.5s" /> Codex proposed the work — a human approved it. <break time="0.6s" />
+
+
+BLOCK 8 — Outro
+
+We are now at version 0.2.0: <break time="0.4s" /> this is the birth of an open-source core — <break time="0.3s" /> not another study chatbot, <break time="0.3s" /> but a durable execution layer students can trust. <break time="0.6s" /> Clone it, <break time="0.2s" /> and run the whole trace with one command. <break time="0.5s" /> Let's build a future of AI accelerated learning.

@@ -1,0 +1,64 @@
+STUDY AGENT HARNESS — FULL LAUNCH VOICE-OVER (2:18 master)
+
+Matches: output/Study Agent Harness - Launch Video.mp4  (138 s)
+Voice: one calm, close, confident human voice. ~130 wpm.
+Do NOT read the on-screen labels. Finish each cue ~0.5–1.0 s early so the
+picture breathes. Pauses marked with " / ".
+
+
+[00:00–00:06]  Opening — scattered study cards
+In high-stakes courses like medicine and engineering, / study agents keep failing.
+
+
+[00:06–00:16]  Title reveal — "Study Agent Harness" / "Persistent · Source-grounded · Replayable"
+Study Agent Harness is the missing layer: / an open-source execution core that keeps
+an AI tutor persistent, source-grounded, and replayable.
+
+
+[00:16–00:29]  Architecture — "Model proposes · Harness executes"
+One rule: / the model proposes, the harness executes. Hosts embed it, skills and
+playbooks carry the behavior, and a provider-neutral event stream keeps state
+outside the model.
+
+
+[00:29–00:58]  Real offline demo — command, snapshot, evidence, suspend
+Here is the real offline demo. A student starts wherever they are — / “I have ten
+minutes. Help me understand heart valves.” The harness snapshots a trusted source,
+checksums it, and pulls only the evidence this trace needs. The tutor completes one
+grounded step, then suspends to ask the single question that matters: / which valve
+should we focus on?
+
+
+[00:58–01:26]  Refresh · Resume · Replay — aortic valve, trace, offline proof
+The student answers — the aortic valve. The harness refreshes evidence from one to
+two and resumes the exact continuation; / it does not invent a new conversation.
+The visible trace is completed, suspended, completed. Scripted and recorded adapters
+replay it identically — / with no network, no credentials, no SDK, and no provider call.
+
+
+[01:26–01:40]  "State lives outside the model" — timeline
+That reliability comes from one decision: / state lives outside the model. Append-only
+events, trusted source snapshots, replayable state — everything the tutor knew can be
+reconstructed and proven.
+
+
+[01:40–02:03]  Codex · The Agent Flywheel — spec → clarification → bead → implementation → review
+The harness itself was built this way. GPT-5.6, through Codex, ran an agent flywheel:
+an approved spec becomes dependency-aware beads, each implemented in a bounded slice,
+then closed with tests, review, and a durable handoff. / Codex proposes the work — a
+human still approves it.
+
+
+[02:03–02:18]  Outro — v0.2.0 alpha · Open source · Apache-2.0 · repo link
+Version 0.2.0 alpha: / an open-source core — not another study chatbot, but a durable
+execution layer students can trust. / Clone it, and run the whole trace with one command.
+
+
+DELIVERY NOTES
+- Speak to one person, not an audience.
+- Pause after “failing”, “matters”, “state lives outside the model”, and “approves it”.
+- Keep the terminal cues (00:29–01:26) even and unhurried — the picture is doing the work.
+- “no network, no credentials, no SDK, and no provider call” should land as four clean beats.
+- Soften and slow the final line.
+
+Word count ≈ 255 · effective pace ≈ 1.9 wpm-per-second, leaving air in every cue.

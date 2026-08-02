@@ -41,7 +41,7 @@ from study_agent.application import (
     GroundingAskService,
     GroundingEngineFactory,
 )
-from study_agent.artifacts import register_artifact_events
+from study_agent.artifacts import ProjectionArtifactView, register_artifact_events
 from study_agent.assessments import (
     ProjectionAssessmentView,
     ProjectionLearnerEvidenceView,
@@ -70,14 +70,7 @@ from study_agent.playbooks import (
 from study_agent.playbooks.builtin import GROUNDED_ANSWER_FLOW
 from study_agent.ports import IndexReceipt, ModelCapabilities, ModelPort
 from study_agent.ports.retrieval import RetrievalDocument, retrieval_catalog_fingerprint
-from study_agent.ports.scheduling import SchedulingPolicyPort
 from study_agent.prompts import GROUNDED_ANSWER_PROMPT, CanonicalPromptComposer
-from study_agent.recall import register_recall_events
-from study_agent.recall.composition import (
-    RecallAvailability,
-    RecallComposition,
-    compose_recall,
-)
 from study_agent.repository_config import LocalRepositoryConfig, ModelAdapterConfig
 from study_agent.retrieval import CourseSourceContent
 from study_agent.sessions import (
@@ -100,6 +93,7 @@ from study_agent.tutor_snapshot import TutorSnapshotReader
 
 if TYPE_CHECKING:
     from study_agent.tools import StudyToolRegistry
+    from study_agent.tools.operations import AgentOperationOwners
 
 _V1 = SemanticVersion.parse("1.0.0")
 
@@ -319,11 +313,7 @@ class LocalRepository:
         model_adapters: ModelAdapterRegistry | None = None,
         environment: Mapping[str, str] | None = None,
         observation: RepositoryObservationHandle | None = None,
-        recall_scheduler: SchedulingPolicyPort | None = None,
-        recall_scheduler_factory: Callable[[], SchedulingPolicyPort] | None = None,
     ) -> None:
-        if recall_scheduler is not None and recall_scheduler_factory is not None:
-            raise TypeError("recall_scheduler and recall_scheduler_factory are mutually exclusive")
         if observation is None:
             validate_local_repository_layout(paths)
             persisted = LocalRepositoryConfig.load(paths.config)
@@ -386,7 +376,6 @@ class LocalRepository:
         register_study_context_events(registry)
         register_artifact_events(registry)
         register_assessment_events(registry)
-        register_recall_events(registry)
         self.events = SQLiteEventStore(
             events_database, registry, connection_identity_guard=events_guard
         )
@@ -412,17 +401,6 @@ class LocalRepository:
             self.events, self.clock, self.study_context, self.courses, self.sessions
         )
         self.tutor_snapshots = TutorSnapshotReader(self.events, registry)
-        self.recall_composition = compose_recall(
-            events=self.events,
-            load_projection=self.events.projection,
-            clock=self.clock,
-            scheduler=recall_scheduler,
-            scheduler_factory=recall_scheduler_factory,
-        )
-        self.recall: RecallComposition | None = (
-            self.recall_composition if self.recall_composition.availability.available else None
-        )
-        self.recall_availability: RecallAvailability = self.recall_composition.availability
         self._model_adapters = model_adapters or default_model_adapters()
         self._environment = environment
         if observation is not None:
@@ -435,8 +413,6 @@ class LocalRepository:
         *,
         model_adapters: ModelAdapterRegistry | None = None,
         environment: Mapping[str, str] | None = None,
-        recall_scheduler: SchedulingPolicyPort | None = None,
-        recall_scheduler_factory: Callable[[], SchedulingPolicyPort] | None = None,
     ) -> LocalRepository:
         paths = LocalRepositoryPaths.at(root)
         config = LocalRepositoryConfig.load(paths.config)
@@ -445,8 +421,6 @@ class LocalRepository:
             config,
             model_adapters=model_adapters,
             environment=environment,
-            recall_scheduler=recall_scheduler,
-            recall_scheduler_factory=recall_scheduler_factory,
         )
 
     @classmethod
@@ -457,8 +431,6 @@ class LocalRepository:
         *,
         model_adapters: ModelAdapterRegistry | None = None,
         environment: Mapping[str, str] | None = None,
-        recall_scheduler: SchedulingPolicyPort | None = None,
-        recall_scheduler_factory: Callable[[], SchedulingPolicyPort] | None = None,
     ) -> LocalRepository:
         """Compose mutable adapters while retaining an inspected repository owner."""
         if not isinstance(observation, RepositoryObservationHandle):
@@ -471,8 +443,6 @@ class LocalRepository:
             model_adapters=model_adapters,
             environment=environment,
             observation=observation,
-            recall_scheduler=recall_scheduler,
-            recall_scheduler_factory=recall_scheduler_factory,
         )
 
     def for_course(self, course_id: CourseId) -> CourseRepository:
@@ -611,6 +581,22 @@ class LocalRepository:
             content=course.content,
             sessions=self.session_service,
             grounding=GroundingAskServiceProvider(resolve_grounding),
+            owners=self._agent_operation_owners(course_id, course),
+        )
+
+    def _agent_operation_owners(
+        self, course_id: CourseId, course: CourseRepository
+    ) -> AgentOperationOwners:
+        from study_agent.tools.operations import AgentOperationOwners
+
+        return AgentOperationOwners(
+            course_id=course_id,
+            course_commands=self.course_service,
+            ingestion=course.ingestion,
+            sessions=self.session_service,
+            session_turns=self.session_turn_service,
+            artifacts=ProjectionArtifactView(self.events.projection),
+            assessments=self.assessments,
         )
 
     def close(self) -> None:

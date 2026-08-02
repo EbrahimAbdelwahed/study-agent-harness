@@ -1,6 +1,6 @@
 # KB-11: Retriever registry and candidate contract
 
-Status: Proposed
+Status: Implementation complete
 Risk: High
 Depends On: KB-09B, KB-10
 Parent coverage: §§10.1–10.2; M5
@@ -22,15 +22,15 @@ implementations.
 
 ## Acceptance criteria
 
-- [ ] `lex_projection` alone forms a functioning registry and search path.
-- [ ] Missing optional capabilities skip only their retriever with an explicit
+- [x] `lex_projection` alone forms a functioning registry and search path.
+- [x] Missing optional capabilities skip only their retriever with an explicit
   manifest reason.
-- [ ] Adding a conforming retriever requires registration, not caller/fusion
+- [x] Adding a conforming retriever requires registration, not caller/fusion
   code changes.
-- [ ] Candidate scores remain surface-local until fusion; adapter semantics do
+- [x] Candidate scores remain surface-local until fusion; adapter semantics do
   not leak into public evidence.
-- [ ] Registry order and candidate ties are deterministic.
-- [ ] Query/scope/filter data remains untrusted and cannot select arbitrary code.
+- [x] Registry order and candidate ties are deterministic.
+- [x] Query/scope/filter data remains untrusted and cannot select arbitrary code.
 
 ## Verification
 
@@ -38,6 +38,15 @@ implementations.
 - Duplicate/spoofed manifest, capability mismatch, oversized results, invalid
   ranks, and nondeterministic ordering tests.
 - Architecture test that fusion imports only registry contracts.
+
+## Review fixes
+
+- Registry-owned manifest snapshots are detached from port-owned objects and
+  all live manifests are revalidated before publishing a search batch.
+- Search batches bind the exact registry fingerprint and complete manifest
+  identity/fingerprint snapshot.
+- Equal-score ordering covers non-adjacent recurring scores, and a public
+  registry-size bound is enforced before manifest inspection.
 
 ## Out of scope
 

@@ -23,14 +23,10 @@ from study_agent.feedback.contracts import (
     ImpactKind,
     RequestedOperationKind,
     SafeTargetKind,
-    TrustedLimitationCode,
     TrustedLimitationReceipt,
 )
 from study_agent.feedback.view import CapabilityGapCompactView
-from study_agent.ports.capability_gap import (
-    CapabilityGapReportDispatcher,
-    FeatureGapSink,
-)
+from study_agent.ports.capability_gap import FeatureGapSink
 from study_agent.state import canonical_json_bytes, canonical_json_object
 from study_agent.tools.schema import validate_schema_definition
 
@@ -45,41 +41,6 @@ class WorkaroundSuggestionKind(StrEnum):
 
 class CapabilityGapHostToolError(RuntimeError):
     """A bounded host-facing failure; storage/provider details never escape."""
-
-
-@dataclass(frozen=True, slots=True)
-class CapabilityGapCapabilityComparison:
-    """Typed host proof that a closed operation is not available."""
-
-    requested_operation_kind: RequestedOperationKind
-    safe_target_kind: SafeTargetKind
-    supported: bool
-    contract_identity: str
-    contract_major: int
-    comparison_fingerprint: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.requested_operation_kind, RequestedOperationKind):
-            raise CapabilityGapValidationError("invalid_requested_operation_kind")
-        if not isinstance(self.safe_target_kind, SafeTargetKind):
-            raise CapabilityGapValidationError("invalid_safe_target_kind")
-        if type(self.supported) is not bool or self.supported:
-            raise CapabilityGapValidationError("capability_available")
-        # TrustedLimitationReceipt performs the opaque identity/digest checks.
-        TrustedLimitationReceipt(
-            self.contract_identity,
-            self.contract_major,
-            TrustedLimitationCode.MISSING_CAPABILITY,
-            self.comparison_fingerprint,
-        )
-
-    def limitation_receipt(self) -> TrustedLimitationReceipt:
-        return TrustedLimitationReceipt(
-            self.contract_identity,
-            self.contract_major,
-            TrustedLimitationCode.MISSING_CAPABILITY,
-            self.comparison_fingerprint,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,7 +130,6 @@ class CapabilityGapHostContext:
     idempotency_fingerprint: str
     observed_at: datetime
     limitation_receipt: TrustedLimitationReceipt | None = None
-    capability_comparison: CapabilityGapCapabilityComparison | None = None
 
     def __post_init__(self) -> None:
         # Reuse GAP-01 trusted validation without exposing a context codec.
@@ -189,29 +149,14 @@ class CapabilityGapHostContext:
             or self.limitation_receipt.contract_major != self.contract_major
         ):
             raise CapabilityGapValidationError("limitation_receipt_context_mismatch")
-        if self.capability_comparison is not None:
-            if not isinstance(self.capability_comparison, CapabilityGapCapabilityComparison):
-                raise CapabilityGapValidationError("invalid_capability_comparison")
-            if (
-                self.capability_comparison.contract_identity != self.contract_identity
-                or self.capability_comparison.contract_major != self.contract_major
-            ):
-                raise CapabilityGapValidationError("capability_comparison_context_mismatch")
-            if self.limitation_receipt is not None and (
-                self.limitation_receipt != self.capability_comparison.limitation_receipt()
-            ):
-                raise CapabilityGapValidationError("limitation_receipt_context_mismatch")
 
     def to_write_context(self) -> CapabilityGapWriteContext:
-        receipt = self.limitation_receipt
-        if receipt is None and self.capability_comparison is not None:
-            receipt = self.capability_comparison.limitation_receipt()
         return CapabilityGapWriteContext(
             self.harness_version,
             self.correlation_id,
             self.idempotency_fingerprint,
             self.observed_at,
-            receipt,
+            self.limitation_receipt,
         )
 
 
@@ -285,10 +230,9 @@ class CapabilityGapReportResult:
     local_only: bool = True
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.report_id, str)
-            or re.fullmatch(r"[0-9a-f]{64}", self.report_id) is None
-        ):
+        if not isinstance(self.report_id, str) or re.fullmatch(
+            r"[0-9a-f]{64}", self.report_id
+        ) is None:
             raise CapabilityGapValidationError("invalid_report_id")
         if not isinstance(self.gap_key, GapKeyV1):
             raise CapabilityGapValidationError("invalid_gap_key")
@@ -305,14 +249,8 @@ class CapabilityGapHostTool:
 
     manifest = CapabilityGapHostToolManifest()
 
-    def __init__(
-        self,
-        sink: FeatureGapSink,
-        *,
-        dispatcher: CapabilityGapReportDispatcher | None = None,
-    ) -> None:
+    def __init__(self, sink: FeatureGapSink) -> None:
         self._sink = sink
-        self._dispatcher = dispatcher
 
     def report(
         self,
@@ -324,14 +262,6 @@ class CapabilityGapHostTool:
                 raise CapabilityGapValidationError("invalid_proposal")
             if not isinstance(context, CapabilityGapHostContext):
                 raise CapabilityGapValidationError("invalid_host_context")
-            if context.limitation_receipt is None and context.capability_comparison is None:
-                raise CapabilityGapValidationError("unsupported_evidence_required")
-            if context.capability_comparison is not None and (
-                context.capability_comparison.requested_operation_kind
-                is not proposal.requested_operation_kind
-                or context.capability_comparison.safe_target_kind is not proposal.safe_target_kind
-            ):
-                raise CapabilityGapValidationError("capability_comparison_mismatch")
             observation = CapabilityGapObservation(
                 proposal.category,
                 proposal.requested_operation_kind,
@@ -350,37 +280,8 @@ class CapabilityGapHostTool:
         except Exception:
             raise CapabilityGapHostToolError("capability_gap_report_failed") from None
 
-    def report_nonblocking(
-        self,
-        proposal: CapabilityGapProposal,
-        context: CapabilityGapHostContext,
-    ) -> None:
-        """Try bounded host dispatch without touching sink/storage.
-
-        The dispatcher is injected by the host and must implement a bounded,
-        non-blocking ``try_submit``.  With no dispatcher this is an explicit
-        fail-soft no-op; synchronous persistence remains available through
-        :meth:`report`.
-        """
-
-        if not isinstance(proposal, CapabilityGapProposal) or not isinstance(
-            context, CapabilityGapHostContext
-        ):
-            return None
-        dispatcher = self._dispatcher
-        if dispatcher is None:
-            return None
-        try:
-            dispatcher.try_submit(proposal, context)
-        except Exception:
-            # Queue-full, closed, and host integration failures must never
-            # interrupt the learner thread or fall back to synchronous I/O.
-            return None
-        return None
-
 
 __all__ = [
-    "CapabilityGapCapabilityComparison",
     "CapabilityGapHostContext",
     "CapabilityGapHostTool",
     "CapabilityGapHostToolError",

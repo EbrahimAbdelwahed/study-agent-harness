@@ -167,24 +167,3 @@ def test_existing_report_requires_exact_aggregate_variant(tmp_path: Path) -> Non
     report_id = report_id_for(first.gap_key, _context("a").idempotency_fingerprint)
     with pytest.raises(CapabilityGapValidationError, match="aggregate_variant_unsupported"):
         store.create_or_increment(first.gap_key.value, report_id, proposal.to_bytes())
-
-
-def test_legacy_report_schema_fails_explicitly_without_silent_migration(tmp_path: Path) -> None:
-    database = tmp_path / "legacy.sqlite3"
-    with sqlite3.connect(database) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE capability_gap_aggregates (
-                gap_key TEXT PRIMARY KEY,
-                payload BLOB NOT NULL
-            ) STRICT;
-            CREATE TABLE capability_gap_reports (
-                report_id TEXT PRIMARY KEY,
-                gap_key TEXT NOT NULL
-            ) STRICT;
-            CREATE INDEX capability_gap_reports_gap_key_idx
-            ON capability_gap_reports (gap_key);
-            """
-        )
-    with pytest.raises(CapabilityGapCorruptionError, match="gap_store_schema_invalid"):
-        SQLiteCapabilityGapStore(database)

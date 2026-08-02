@@ -1,23 +1,23 @@
 # Knowledge Base v0.2 implementation beads
 
-Status: Active — KB-00 and KB-01 complete; KB-02 and KB-04 dependency-ready
-Last updated: 2026-07-26
+Status: Active — offline text evidence baseline complete; KB-13 primitive surface partial
+Last updated: 2026-08-01
 Parent spec: [`../../docs/specs/kb-v0-2-retrieval-architecture.md`](../../docs/specs/kb-v0-2-retrieval-architecture.md)
 
 ## Next Agent Prompt
 
-Read ADR-0014, the parent spec, and either
-[KB-02](beads/KB-02-supersession-lineage.md) or
-[KB-04](beads/KB-04-document-tree.md). These are the two independent
-dependency-ready continuations after the canonical substrate tracer. Preserve
-v0.1 ingestion and retrieval behavior through versioned successors and
-explicit migration tests; do not add model, vector, OCR, vision, transport,
-UI, or tutor behavior to the offline trunk. Before ending a pass, update this
-section, the owning bead status, and the checklist below.
+Read ADR-0014 and begin the remaining source-extension or incremental work at
+[KB-14](beads/KB-14-connector-protocol.md) or
+[KB-16](beads/KB-16-incremental-maintenance.md). The plain-text and Markdown
+source path is already proven end-to-end through the existing immutable v0.1
+ingestion service; new connector types must preserve that canonical evidence
+spine. Do not add model, vector, OCR, vision, transport, UI, or tutor behavior
+to the offline trunk without its own approved bead.
 
-Current pickup: KB-02 supersession/lineage and KB-04 document tree.
+Current pickup: KB-14 connector protocol or KB-16 incrementality.
 
-Active blockers: none for KB-02 or KB-04.
+Active blockers: no blocker for the offline file-to-evidence path. Figure,
+item, and model-backed primitives remain later scoped work.
 
 ## Goal
 
@@ -134,20 +134,25 @@ KB-20, KB-21, and KB-22A/B/C are optional inputs to KB-23 adapter-specific gates
 
 - [x] [KB-00 architecture closure](beads/KB-00-architecture-closure.md)
 - [x] [KB-01 canonical substrate](beads/KB-01-canonical-substrate.md)
-- [ ] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
-- [ ] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
-- [ ] [KB-04 document tree](beads/KB-04-document-tree.md)
-- [ ] [KB-05 uniform retrievable units](beads/KB-05-uniform-retrievable-units.md)
-- [ ] [KB-06 structural unitizer](beads/KB-06-structural-unitizer.md)
-- [ ] [KB-07 typed fragments and promotion](beads/KB-07-typed-fragments.md)
-- [ ] [KB-08 projection core](beads/KB-08-projection-core.md)
-- [ ] [KB-09 lexical projection and indexes parent](beads/KB-09-lexical-projection-indexes.md)
-  - [ ] [KB-09A lexical projector](beads/KB-09A-lexical-projector.md)
-  - [ ] [KB-09B SQLite lexical surfaces](beads/KB-09B-sqlite-lexical-surfaces.md)
-- [ ] [KB-10 scopes and manifest](beads/KB-10-scopes-manifest.md)
-- [ ] [KB-11 retriever registry](beads/KB-11-retriever-registry.md)
-- [ ] [KB-12 fusion pipeline](beads/KB-12-fusion-pipeline.md)
-- [ ] [KB-13 agent-facing primitives](beads/KB-13-agent-primitives.md)
+- [x] [KB-02 supersession and lineage](beads/KB-02-supersession-lineage.md)
+- [x] [KB-03 citation v2 verification](beads/KB-03-citation-v2-verification.md)
+- [x] [KB-04 document tree](beads/KB-04-document-tree.md)
+- [x] [KB-05 uniform retrievable units](beads/KB-05-uniform-retrievable-units.md)
+- [x] [KB-06 structural unitizer](beads/KB-06-structural-unitizer.md)
+- [x] [KB-07 typed fragments and promotion](beads/KB-07-typed-fragments.md)
+- [x] [KB-08 projection core](beads/KB-08-projection-core.md)
+- [ ] KB admission hardening: add instance authenticity only when every
+  projector, fragment, and lexical trust gate enforces the same stored marker
+  and an `object.__new__` forgery test proves the boundary; a marker with no
+  consumer provides no guarantee.
+- [x] [KB-09 lexical projection and indexes parent](beads/KB-09-lexical-projection-indexes.md)
+  - [x] [KB-09A lexical projector](beads/KB-09A-lexical-projector.md)
+  - [x] [KB-09B SQLite lexical surfaces](beads/KB-09B-sqlite-lexical-surfaces.md)
+- [x] [KB-10 scopes and manifest](beads/KB-10-scopes-manifest.md)
+- [x] [KB-11 retriever registry](beads/KB-11-retriever-registry.md)
+- [x] [KB-12 fusion pipeline](beads/KB-12-fusion-pipeline.md)
+- [~] [KB-13 agent-facing primitives](beads/KB-13-agent-primitives.md) (verified
+  lexical evidence baseline; remaining primitive surface follows)
 - [ ] [KB-14 connector protocol](beads/KB-14-connector-protocol.md)
 - [ ] [KB-15 baseline connectors parent](beads/KB-15-baseline-connectors.md)
   - [ ] [KB-15A Markdown and notes](beads/KB-15A-markdown-notes-connectors.md)

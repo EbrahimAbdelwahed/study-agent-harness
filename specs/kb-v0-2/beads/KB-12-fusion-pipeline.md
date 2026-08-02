@@ -1,6 +1,6 @@
 # KB-12: Deterministic fusion, collapse, diversity, and expansion
 
-Status: Proposed
+Status: Implementation complete — semantic review findings fixed
 Risk: Medium
 Depends On: KB-05, KB-07, KB-11
 Parent coverage: §§10.2–10.4; M5
@@ -21,14 +21,17 @@ expansion.
 
 ## Acceptance criteria
 
-- [ ] Consensus and weights follow the documented RRF formula.
-- [ ] Multiple granularities of the same content occupy one result group.
-- [ ] Dedupe and diversity caps have deterministic tie-breaking.
-- [ ] Source class and review priors are reported; uncertainty is demoted and
+- [x] Consensus and weights follow the documented RRF formula.
+- [x] Multiple granularities of the same content occupy one result group.
+- [x] Collapse traverses full canonical parent ancestry, including unmatched
+  intermediates, with stable assignment of coarse matches to one narrow
+  descendant while preserving matched sibling primaries.
+- [x] Dedupe and diversity caps have deterministic tie-breaking.
+- [x] Source class and review priors are reported; uncertainty is demoted and
   always preserved as a flag.
-- [ ] No recency prior exists.
-- [ ] Parent/sibling/window expansion cannot alter the narrow cited span.
-- [ ] Empty candidates produce an explicit insufficient result.
+- [x] No recency prior exists.
+- [x] Parent/sibling/window expansion cannot alter the narrow cited span.
+- [x] Empty candidates produce an explicit insufficient result.
 
 ## Verification
 

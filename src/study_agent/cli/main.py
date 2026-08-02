@@ -13,6 +13,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Never, cast
 
+from study_agent import __version__
 from study_agent.application import GroundingAskError
 from study_agent.domain._validation import JsonObject
 from study_agent.lifecycle import RetryableLifecycleConflictError, StaleLifecyclePlanError
@@ -48,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(prog="study-agent", description="Local event-sourced study harness")
     parser.add_argument("--repository", type=Path, default=Path.cwd(), help="repository root")
     parser.add_argument("--json", action="store_true", help="emit one JSON document")
+    parser.add_argument(
+        "--version",
+        dest="show_version",
+        action="store_true",
+        help="show package version and exit",
+    )
     configure_parser(parser)
     return parser
 
@@ -60,6 +67,15 @@ def main(
 ) -> int:
     raw = tuple(sys.argv[1:] if argv is None else argv)
     json_mode = "--json" in raw
+    if _global_version_requested(raw):
+        if json_mode:
+            emit_success(
+                CommandOutcome("version", {"version": __version__}),
+                json_mode=True,
+            )
+        else:
+            sys.stdout.write(f"study-agent {__version__}\n")
+        return 0
     try:
         parse_arguments = tuple(item for item in raw if item != "--json")
         if json_mode and any(item in {"-h", "--help"} for item in parse_arguments):
@@ -190,6 +206,7 @@ def _request(namespace: argparse.Namespace) -> CommandRequest:
     values = vars(namespace).copy()
     repository = Path(values.pop("repository"))
     values.pop("json", None)
+    values.pop("show_version", None)
     values.pop("group", None)
     values.pop("action", None)
     name = str(values.pop("command_name"))
@@ -236,6 +253,23 @@ def _safe_message(error: BaseException) -> str:
 
 def _automatic_session_ask(request: CommandRequest) -> bool:
     return request.name == "ask" and request.values.get("session_id") is None
+
+
+def _global_version_requested(raw: tuple[str, ...]) -> bool:
+    """Recognize the root flag without stealing a subcommand's `--version`."""
+    index = 0
+    while index < len(raw):
+        argument = raw[index]
+        if argument == "--version":
+            return True
+        if argument == "--json" or argument.startswith("--repository="):
+            index += 1
+            continue
+        if argument == "--repository":
+            index += 2
+            continue
+        return False
+    return False
 
 
 def color_enabled() -> bool:

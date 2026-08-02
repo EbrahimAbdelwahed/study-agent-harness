@@ -1,0 +1,561 @@
+"""Pure, deterministic document-tree construction over a frozen substrate.
+
+The builder consumes normalized substrate text plus a connector-declared
+:class:`~study_agent.domain.tree.DialectProfile`.  It performs no I/O, imports
+no connector, calls no model, and produces a byte-identical tree for the same
+substrate, profile, and format version.
+"""
+
+from __future__ import annotations
+
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass, field
+
+from study_agent.domain.identifiers import NodeId, SubstrateId, node_id_for, substrate_id_for
+from study_agent.domain.tree import (
+    MALFORMED_FLAG,
+    DialectProfile,
+    DocumentTree,
+    HeadingSyntax,
+    RegionKind,
+    TreeNode,
+)
+
+#: Bumping this version changes every derived ``node_id`` and forces a rebuild.
+TREE_FORMAT_VERSION = "document-tree-v1"
+
+_ADMISSION_SEAL = object()
+
+_FENCE = "```"
+_LIST_BULLETS = ("- ", "* ", "+ ")
+
+
+@dataclass(frozen=True, slots=True)
+class _Line:
+    start: int
+    end: int
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Heading:
+    level: int
+    start: int
+    title: str
+    anchor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Region:
+    kind: RegionKind
+    start: int
+    end: int
+    flags: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class AdmittedDocumentTree:
+    """Canonical tree context that can only be produced by :func:`admit_tree`.
+
+    A persisted :class:`DocumentTree` is merely data.  Projection code must
+    receive this runtime value so it cannot accidentally trust a caller-built
+    tree or a fabricated node sequence.  The private factory below is the
+    only construction path used by this module.
+    """
+
+    tree: DocumentTree
+    text: str
+    profile: DialectProfile
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("AdmittedDocumentTree values must come from admit_tree")
+
+    @property
+    def substrate_id(self) -> SubstrateId:
+        return self.tree.substrate_id
+
+    @property
+    def tree_format_version(self) -> str:
+        return self.tree.tree_format_version
+
+    @property
+    def profile_name(self) -> str:
+        return self.tree.profile_name
+
+    @property
+    def profile_version(self) -> str:
+        return self.tree.profile_version
+
+    @property
+    def nodes(self) -> tuple[TreeNode, ...]:
+        return self.tree.nodes
+
+    @property
+    def root(self) -> TreeNode:
+        return self.tree.root
+
+    def node(self, node_id: NodeId) -> TreeNode:
+        return self.tree.node(node_id)
+
+    def children(self, node_id: NodeId) -> tuple[TreeNode, ...]:
+        return self.tree.children(node_id)
+
+
+def _make_admitted_tree(
+    tree: DocumentTree,
+    text: str,
+    profile: DialectProfile,
+    *,
+    seal: object,
+) -> AdmittedDocumentTree:
+    if seal is not _ADMISSION_SEAL:
+        raise TypeError("AdmittedDocumentTree values must come from admit_tree")
+    admitted = object.__new__(AdmittedDocumentTree)
+    object.__setattr__(admitted, "tree", tree)
+    object.__setattr__(admitted, "text", text)
+    object.__setattr__(admitted, "profile", profile)
+    return admitted
+
+
+@dataclass
+class _Outline:
+    """Mutable scaffold used only while nesting headings."""
+
+    level: int
+    title: str
+    anchor: str | None
+    start: int
+    end: int
+    children: list[_Outline] = field(default_factory=list)
+
+
+def build_document_tree(
+    text: str,
+    profile: DialectProfile,
+    *,
+    substrate_id: SubstrateId,
+) -> DocumentTree:
+    """Project one frozen substrate into its bounded document tree."""
+    if not isinstance(text, str):
+        raise TypeError("document tree requires normalized substrate text")
+    if not text:
+        raise ValueError("document tree requires non-empty substrate text")
+    if not isinstance(profile, DialectProfile):
+        raise TypeError("document tree requires a DialectProfile")
+    if not isinstance(substrate_id, SubstrateId):
+        raise TypeError("document tree requires SubstrateId")
+
+    lines = _scan_lines(text)
+    starts = tuple(line.start for line in lines)
+    code_spans = _code_spans(lines, profile)
+    headings = _headings(lines, code_spans, profile)
+    outline = _nest(headings, len(text))
+    nodes: list[TreeNode] = []
+    _emit(
+        outline,
+        parent_id=None,
+        path=(),
+        lines=lines,
+        starts=starts,
+        code_spans=code_spans,
+        profile=profile,
+        substrate_id=substrate_id,
+        nodes=nodes,
+    )
+    return DocumentTree(
+        substrate_id,
+        TREE_FORMAT_VERSION,
+        profile.profile_name,
+        profile.profile_version,
+        tuple(nodes),
+    )
+
+
+def admit_tree(tree: DocumentTree, text: str, profile: DialectProfile) -> AdmittedDocumentTree:
+    """Re-derive a persisted tree against the canonical substrate before trust."""
+    if not isinstance(tree, DocumentTree):
+        raise TypeError("tree admission requires a DocumentTree")
+    if not isinstance(text, str):
+        raise TypeError("tree admission requires canonical substrate text")
+    if not isinstance(profile, DialectProfile):
+        raise TypeError("tree admission requires a DialectProfile")
+    substrate_id = substrate_id_for(text.encode("utf-8"))
+    if tree.substrate_id != substrate_id:
+        raise ValueError("tree substrate_id does not match canonical substrate bytes")
+    rebuilt = build_document_tree(text, profile, substrate_id=substrate_id)
+    if tree.to_json() != rebuilt.to_json():
+        raise ValueError("persisted document tree fails canonical admission")
+    return _make_admitted_tree(tree, text, profile, seal=_ADMISSION_SEAL)
+
+
+def _scan_lines(text: str) -> tuple[_Line, ...]:
+    """Split into newline-inclusive lines so spans tile the document exactly."""
+    lines: list[_Line] = []
+    start = 0
+    length = len(text)
+    while start < length:
+        break_index = text.find("\n", start)
+        end = length if break_index == -1 else break_index + 1
+        lines.append(_Line(start, end, text[start : end if break_index == -1 else break_index]))
+        start = end
+    return tuple(lines)
+
+
+def _code_spans(lines: tuple[_Line, ...], profile: DialectProfile) -> tuple[_Region, ...]:
+    """Return fenced-code spans; an unterminated fence is flagged, not dropped."""
+    if not profile.fenced_code:
+        return ()
+    spans: list[_Region] = []
+    open_line: _Line | None = None
+    for line in lines:
+        if not line.content.lstrip().startswith(_FENCE):
+            continue
+        if open_line is None:
+            open_line = line
+        else:
+            spans.append(_Region(RegionKind.CODE, open_line.start, line.end, frozenset()))
+            open_line = None
+    if open_line is not None:
+        spans.append(
+            _Region(
+                RegionKind.CODE,
+                open_line.start,
+                lines[-1].end,
+                frozenset({MALFORMED_FLAG}),
+            )
+        )
+    return tuple(spans)
+
+
+def _inside(offset: int, spans: tuple[_Region, ...]) -> bool:
+    return any(span.start <= offset < span.end for span in spans)
+
+
+def _line_window(
+    lines: tuple[_Line, ...], starts: tuple[int, ...], start: int, end: int
+) -> tuple[int, int]:
+    """Index range of the lines fully contained in ``[start, end)``.
+
+    Lines are already ordered, so a bounded slice replaces a full rescan of the
+    document for every node.
+    """
+    first = bisect_left(starts, start)
+    last = bisect_right(starts, end)
+    while last > first and lines[last - 1].end > end:
+        last -= 1
+    return first, last
+
+
+def _headings(
+    lines: tuple[_Line, ...],
+    code_spans: tuple[_Region, ...],
+    profile: DialectProfile,
+) -> tuple[_Heading, ...]:
+    if profile.heading_syntax is not HeadingSyntax.ATX:
+        return ()
+    headings: list[_Heading] = []
+    for line in lines:
+        if _inside(line.start, code_spans):
+            continue
+        stripped = line.content.lstrip()
+        level = len(stripped) - len(stripped.lstrip("#"))
+        if level < 1 or level > profile.max_heading_depth:
+            continue
+        remainder = stripped[level:]
+        if not remainder.startswith(" "):
+            continue
+        title, anchor = _split_anchor(remainder.strip())
+        if not title and anchor is None:
+            continue
+        headings.append(_Heading(level, line.start, title, anchor))
+    return tuple(headings)
+
+
+def _split_anchor(text: str) -> tuple[str, str | None]:
+    """Extract a trailing authored ``{#anchor}`` declaration."""
+    if not text.endswith("}"):
+        return text, None
+    opening = text.rfind("{#")
+    if opening == -1:
+        return text, None
+    anchor = text[opening + 2 : -1].strip()
+    if not anchor:
+        return text, None
+    return text[:opening].strip(), anchor
+
+
+def _nest(headings: tuple[_Heading, ...], document_end: int) -> _Outline:
+    root = _Outline(0, "", None, 0, document_end)
+    stack: list[_Outline] = [root]
+    for heading in headings:
+        node = _Outline(heading.level, heading.title, heading.anchor, heading.start, document_end)
+        # Closing the open sections here also fixes their end offset, which
+        # avoids a second scan over the remaining headings per heading.
+        while stack[-1].level >= heading.level:
+            stack.pop().end = heading.start
+        stack[-1].children.append(node)
+        stack.append(node)
+    return root
+
+
+def _emit(
+    outline: _Outline,
+    *,
+    parent_id: NodeId | None,
+    path: tuple[str, ...],
+    lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
+    code_spans: tuple[_Region, ...],
+    profile: DialectProfile,
+    substrate_id: SubstrateId,
+    nodes: list[TreeNode],
+) -> frozenset[str]:
+    """Append one outline node and its children in document order.
+
+    Returns the node's flags after propagation so that every containing node
+    accumulates the uncertainty declared by its typed regions.
+    """
+    own_end = outline.children[0].start if outline.children else outline.end
+    regions = _regions(outline.start, own_end, lines, starts, code_spans, profile)
+    children: list[tuple[int, RegionKind, _Region | _Outline]] = [
+        (region.start, region.kind, region) for region in regions
+    ]
+    children.extend((child.start, RegionKind.BODY, child) for child in outline.children)
+    children.sort(key=lambda entry: entry[0])
+    segments = _unique_segments(children)
+
+    node_id = node_id_for(
+        substrate_id=substrate_id,
+        tree_format_version=TREE_FORMAT_VERSION,
+        profile_name=profile.profile_name,
+        profile_version=profile.profile_version,
+        path=path,
+    )
+    index = len(nodes)
+    placeholder = TreeNode(
+        node_id,
+        parent_id,
+        path,
+        outline.title,
+        RegionKind.BODY,
+        (outline.start, outline.end),
+        frozenset(),
+    )
+    nodes.append(placeholder)
+
+    flags = _markers_in(outline.start, own_end, lines, starts, profile)
+    for segment, (_, _, child) in zip(segments, children, strict=True):
+        child_path = (*path, segment)
+        if isinstance(child, _Outline):
+            flags |= _emit(
+                child,
+                parent_id=node_id,
+                path=child_path,
+                lines=lines,
+                starts=starts,
+                code_spans=code_spans,
+                profile=profile,
+                substrate_id=substrate_id,
+                nodes=nodes,
+            )
+        else:
+            flags |= _emit_region(
+                child,
+                parent_id=node_id,
+                path=child_path,
+                lines=lines,
+                starts=starts,
+                profile=profile,
+                substrate_id=substrate_id,
+                nodes=nodes,
+            )
+    nodes[index] = TreeNode(
+        node_id,
+        parent_id,
+        path,
+        outline.title,
+        RegionKind.BODY,
+        (outline.start, outline.end),
+        flags,
+    )
+    return flags
+
+
+def _emit_region(
+    region: _Region,
+    *,
+    parent_id: NodeId,
+    path: tuple[str, ...],
+    lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
+    profile: DialectProfile,
+    substrate_id: SubstrateId,
+    nodes: list[TreeNode],
+) -> frozenset[str]:
+    flags = region.flags | _markers_in(region.start, region.end, lines, starts, profile)
+    nodes.append(
+        TreeNode(
+            node_id_for(
+                substrate_id=substrate_id,
+                tree_format_version=TREE_FORMAT_VERSION,
+                profile_name=profile.profile_name,
+                profile_version=profile.profile_version,
+                path=path,
+            ),
+            parent_id,
+            path,
+            "",
+            region.kind,
+            (region.start, region.end),
+            flags,
+        )
+    )
+    return flags
+
+
+def _unique_segments(
+    children: list[tuple[int, RegionKind, _Region | _Outline]],
+) -> tuple[str, ...]:
+    """Assign deterministic, collision-free path segments in document order."""
+    counters: dict[RegionKind, int] = {}
+    proposed: list[str] = []
+    for _, kind, child in children:
+        if isinstance(child, _Outline):
+            proposed.append(child.anchor or _slugify(child.title))
+        else:
+            counters[kind] = counters.get(kind, 0) + 1
+            proposed.append(f"{kind.value}-{counters[kind]}")
+    used: dict[str, int] = {}
+    taken: set[str] = set()
+    segments: list[str] = []
+    for segment in proposed:
+        candidate = segment
+        # A renamed segment can itself collide with a sibling that is literally
+        # named "intro-2", so keep bumping until the label is actually free.
+        while candidate in taken:
+            used[segment] = used.get(segment, 1) + 1
+            candidate = f"{segment}-{used[segment]}"
+        taken.add(candidate)
+        used.setdefault(segment, 1)
+        segments.append(candidate)
+    return tuple(segments)
+
+
+def _slugify(title: str) -> str:
+    characters: list[str] = []
+    dashed = False
+    for character in title.lower():
+        if character.isalnum():
+            characters.append(character)
+            dashed = False
+        elif not dashed:
+            characters.append("-")
+            dashed = True
+    slug = "".join(characters).strip("-")
+    return slug or "section"
+
+
+def _regions(
+    start: int,
+    end: int,
+    lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
+    code_spans: tuple[_Region, ...],
+    profile: DialectProfile,
+) -> tuple[_Region, ...]:
+    """Classify the node's own content into ordered, non-overlapping regions."""
+    if end <= start:
+        return ()
+    regions: list[_Region] = []
+    for span in code_spans:
+        if start <= span.start and span.end <= end:
+            regions.append(span)
+    open_kind: RegionKind | None = None
+    open_start = 0
+    open_end = 0
+    first, last = _line_window(lines, starts, start, end)
+    for line in lines[first:last]:
+        if _inside(line.start, code_spans):
+            # A fenced block is its own region; it must never be swallowed by
+            # an open merged region that started before it.
+            if open_kind is not None:
+                regions.append(_Region(open_kind, open_start, open_end, frozenset()))
+                open_kind = None
+            continue
+        kind = _classify(line.content, profile)
+        if open_kind is not None:
+            # A merged region continues through its own kind and through
+            # unclassified continuation lines (for example the body lines of a
+            # callout), and closes on a blank line or a different region.
+            if kind is open_kind or (kind is None and line.content.strip()):
+                open_end = line.end
+                continue
+            regions.append(_Region(open_kind, open_start, open_end, frozenset()))
+            open_kind = None
+        if kind is None:
+            continue
+        if kind in _MERGEABLE:
+            open_kind, open_start, open_end = kind, line.start, line.end
+        else:
+            regions.append(_Region(kind, line.start, line.end, frozenset()))
+    if open_kind is not None:
+        regions.append(_Region(open_kind, open_start, open_end, frozenset()))
+    regions.sort(key=lambda region: region.start)
+    return tuple(regions)
+
+
+_MERGEABLE = frozenset(
+    {RegionKind.TABLE, RegionKind.EMPHASIS, RegionKind.SUMMARY, RegionKind.DEFINITION}
+)
+
+
+def _classify(content: str, profile: DialectProfile) -> RegionKind | None:
+    stripped = content.strip()
+    if not stripped:
+        return None
+    for marker in profile.emphasis_markers:
+        if stripped.startswith(marker):
+            return RegionKind.EMPHASIS
+    for marker in profile.summary_markers:
+        if stripped.startswith(marker):
+            return RegionKind.SUMMARY
+    for marker in profile.definition_markers:
+        if stripped.startswith(marker):
+            return RegionKind.DEFINITION
+    if profile.pipe_tables and stripped.startswith("|"):
+        return RegionKind.TABLE
+    for marker in profile.figure_reference_markers:
+        if marker in stripped:
+            return RegionKind.FIGURE_REF
+    if profile.list_items and _is_list_item(stripped):
+        return RegionKind.ITEM
+    return None
+
+
+def _is_list_item(stripped: str) -> bool:
+    if stripped.startswith(_LIST_BULLETS):
+        return True
+    head, separator, remainder = stripped.partition(". ")
+    return bool(separator) and head.isdigit() and bool(remainder.strip())
+
+
+def _markers_in(
+    start: int,
+    end: int,
+    lines: tuple[_Line, ...],
+    starts: tuple[int, ...],
+    profile: DialectProfile,
+) -> frozenset[str]:
+    if end <= start or not profile.uncertainty_markers:
+        return frozenset()
+    first, last = _line_window(lines, starts, start, end)
+    content = "".join(line.content for line in lines[first:last])
+    return frozenset(marker for marker in profile.uncertainty_markers if marker in content)
+
+
+__all__ = [
+    "TREE_FORMAT_VERSION",
+    "AdmittedDocumentTree",
+    "admit_tree",
+    "build_document_tree",
+]

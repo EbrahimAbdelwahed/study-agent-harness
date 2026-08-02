@@ -260,11 +260,20 @@ def test_offline_release_journey_survives_restart_and_is_deterministic(
     with LocalRepository.open(root, model_adapters=registry, environment={}) as repository:
         tool_registry = repository.study_tools(CourseId("course-anatomy"))
         assert tuple(item.name for item in tool_registry.manifests) == (
+            "artifact.proposal_list",
+            "assessment.get",
             "citation.resolve",
+            "course.create",
             "course.get",
             "grounding.ask",
+            "session.end",
             "session.get_context",
+            "session.record_learner_turn",
             "session.record_note",
+            "session.resume",
+            "session.start",
+            "session.suspend",
+            "source.ingest_text",
             "source.list",
             "source.search",
         )

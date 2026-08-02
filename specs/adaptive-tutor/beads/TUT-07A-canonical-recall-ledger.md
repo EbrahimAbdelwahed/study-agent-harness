@@ -1,6 +1,6 @@
 # Task Bead: TUT-07A canonical recall ledger and scheduler port
 
-Status: Done — canonical recall ledger and scheduler port verified 2026-07-24
+Status: Blocked on TUT-05
 Priority: P1
 Type: tracer-bullet
 Depends On: TUT-04, TUT-05

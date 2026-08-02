@@ -2,7 +2,7 @@
 
 Status: Proposed
 Risk: Medium
-Depends On: KB-05, KB-12, KB-14
+Depends On: KB-05, KB-12, KB-14, KB-15A
 Parent coverage: §§9.6, 10.1, 12
 
 ## Outcome

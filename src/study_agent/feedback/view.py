@@ -9,9 +9,7 @@ from .contracts import (
     CapabilityGapAggregate,
     CapabilityGapDimensions,
     GapDisposition,
-    GapExportState,
     GapKeyV1,
-    GapResolutionKind,
     ImpactKind,
     VerificationKind,
 )
@@ -36,8 +34,6 @@ class CapabilityGapDetailView:
     last_seen: datetime
     occurrence_count: int
     local_only: bool = True
-    resolution: GapResolutionKind = GapResolutionKind.UNRESOLVED
-    export_state: GapExportState = GapExportState.LOCAL
 
     @classmethod
     def from_aggregate(cls, aggregate: CapabilityGapAggregate) -> CapabilityGapDetailView:
@@ -49,8 +45,6 @@ class CapabilityGapDetailView:
             first_seen=aggregate.first_seen,
             last_seen=aggregate.last_seen,
             occurrence_count=aggregate.occurrence_count,
-            resolution=aggregate.resolution,
-            export_state=aggregate.export_state,
         )
 
 

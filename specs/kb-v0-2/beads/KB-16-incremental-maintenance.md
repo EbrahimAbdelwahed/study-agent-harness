@@ -2,7 +2,7 @@
 
 Status: Proposed
 Risk: High
-Depends On: KB-02, KB-05, KB-08, KB-09B
+Depends On: KB-02, KB-05, KB-08, KB-09B, KB-15C
 Parent coverage: §§7.2, 11, 14; M6
 
 ## Outcome
@@ -15,8 +15,8 @@ citations remain resolvable.
 
 - Unit diff plan based on the accepted KB-00 identity/cache decision.
 - SQLite sync state is colocated transactionally with operational indexes.
-- Fingerprint-keyed operational invalidation and audit state never becomes a
-  canonical domain event; regenerated artifacts remain derived.
+- `derived.artifact_invalidated@1` records authoritative invalidation intent;
+  regenerated artifacts remain derived.
 - Deterministic checkpoint/recovery contract for interrupted updates.
 
 ## Acceptance criteria

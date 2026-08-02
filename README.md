@@ -1,187 +1,204 @@
- ciao 
-
 # Study Agent Harness
 
-**A durable, inspectable execution layer for AI tutoring agents — provider-neutral, event-sourced, and verifiable offline.**
+`study-agent-harness` is an alpha Python library and reference CLI for building
+source-grounded study agents. It provides a local, provider-neutral execution
+core: the host supplies trusted authority and the model may propose only
+schema-bounded actions.
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/Python-3.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Status: Alpha](https://img.shields.io/badge/Status-v0.1.0%20alpha-orange.svg)](https://github.com/EbrahimAbdelwahed/study-agent-harness/releases)
+The harness is designed to sit behind different agent hosts, models, providers,
+and user interfaces without making any of them canonical. It has no runtime
+dependency on a hosted product or agent SDK.
 
-Models are great at *proposing* what to do next. They are terrible custodians of
-learner state, source truth, and long-running execution. Every team building a
-tutoring agent ends up rebuilding the same missing layer: durable state,
-grounded sources, suspend/resume, and a way to prove what actually happened.
+## Core principles
 
-**Study Agent Harness is that layer, as an open-source core.** A model may
-decide; it never owns. The harness keeps canonical state in an append-only
-event stream, snapshots trusted sources, runs versioned skills through
-playbooks, and replays the same session deterministically — with any provider
-behind a thin technical adapter, or no provider at all.
+The append-only domain event stream is canonical state. Course, source, session,
+artifact, assessment, and knowledge projections are derived read models. SQLite
+checkpoints, the lexical index, local configuration, and filesystem layout are
+operational state: they support recovery and performance but do not redefine the
+study record.
 
-## Why this is a dev tool, not another chatbot
+Versioned skills describe capabilities, and playbooks compose study behaviour.
+Model adapters translate technical protocols only; they do not own prompts,
+policy, authority, or domain state. An embedding host creates trusted execution
+context separately from model-proposed tool arguments.
 
-| The model proposes | The harness owns |
-|---|---|
-| Which skill to invoke, with what arguments | Canonical learner state (append-only events) |
-| When to ask the learner a clarifying question | Source truth (immutable snapshots) |
-| How to phrase an explanation | Execution, suspension, and resumption |
-| — | Deterministic replay and verification |
+The architectural rationale and compatibility rules are recorded in
+[`docs/decisions/`](docs/decisions/). The original v0.1 specifications remain in
+[`docs/specs/`](docs/specs/) as design history.
 
-This boundary is the product. Everything else — UI, domain packs, providers —
-is replaceable by design.
+## Install
 
-## See it run in 60 seconds (no API key)
+Python 3.12 or newer is required. The core runtime uses only the standard
+library.
 
-```bash
-python3.12 -m venv .venv && .venv/bin/python -m pip install -e .
-.venv/bin/study-agent --help
-```
+CI verifies Python 3.12 and 3.13 on Ubuntu. Other operating systems are expected
+to work, but are not yet a release-support promise.
 
-The Build Week demo starts where a real student starts: *"I have ten minutes.
-Help me understand heart valves."* The recorded offline trace:
-
-1. **Snapshots** a sanitized anatomy source
-2. **Completes** a grounded study action
-3. **Suspends** to ask which valve deserves focus
-4. **Refreshes** evidence after the learner picks the aortic valve
-5. **Resumes** the exact continuation — `completed → suspended → completed`
-
-Scripted and recorded-provider decision adapters reproduce the full trace
-**without a single network request**. What you see in the demo video is what
-`pytest` verifies in CI.
+From a checkout:
 
 ```bash
-# Full offline quality gates — no API key, no provider SDK, no hosted service
-python3.12 -m pip install -e '.[dev]'
-python3.12 -m pytest
-python3.12 -m ruff check .
-python3.12 -m mypy
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+study-agent --version
+study-agent --help
 ```
 
-## Architecture
+Development tools are isolated in an optional extra:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Hosts (CLI, embedding host, your product)              │
-├─────────────────────────────────────────────────────────┤
-│  Skills + Playbooks   (versioned, portable behavior)    │
-├─────────────────────────────────────────────────────────┤
-│  Application services (suspend/resume, fail-closed)     │
-├──────────────────────────┬──────────────────────────────┤
-│  Canonical event stream  │  Provider adapters           │
-│  Source snapshots        │  (technical transport only:  │
-│  Projections (read-only) │   scripted, recorded, HTTP)  │
-└──────────────────────────┴──────────────────────────────┘
+```bash
+python -m pip install -e '.[dev]'
 ```
 
-- **Events are canonical.** Course, source, and session projections are read
-  models: rebuildable from events, never independently authoritative. SQLite
-  checkpoints and the lexical index are operational state — they aid recovery
-  and performance but never redefine the study record.
-- **Skills and playbooks are the behavior layer.** Versioned skills describe
-  study capabilities; playbooks compose them. They travel across providers
-  and hosts unchanged.
-- **Adapters are boundaries, not brains.** Model adapters translate transport.
-  They own no prompts, no policy, no authority, no domain state. Any
-  OpenAI-compatible endpoint works; none is privileged. See
-  [`docs/examples/external_agent.py`](docs/examples/external_agent.py) for the
-  trusted-context boundary without coupling to any agent SDK.
-- **The CLI is just another host** over the same application services — not a
-  second behavior layer.
+## First offline workflow
 
-The approved v0.1 contract lives in
-[`docs/specs/oss-study-agent-harness-v0-1.md`](docs/specs/oss-study-agent-harness-v0-1.md);
-the reference CLI and export boundary in
-[`docs/specs/oss-harness-v0-1-reference-cli-and-export.md`](docs/specs/oss-harness-v0-1-reference-cli-and-export.md);
-architecture rationale in [`docs/decisions/`](docs/decisions).
-
-## Reliability guarantees
-
-**Deterministic replay.** The same event stream replays to the same state.
-`doctor` verifies event replay and retrieval rebuildability without contacting
-a provider.
-
-**Honest interruption semantics.** The current OpenAI-compatible call has no
-in-flight cancellation primitive, so the harness refuses to pretend otherwise:
-a pre-run interruption produces no mutation; once a durable operation starts,
-SIGINT is deferred until the authoritative outcome is emitted. The harness
-never invents a canonical `cancelled` transition for work it could not
-actually cancel.
-
-**Commit-then-index recovery.** Source ingestion commits the canonical source
-revision *before* rebuilding the discardable retrieval index. If indexing
-fails, that is reported as a recoverable operational failure — never rolled
-back, never concealed.
-
-**Deterministic, credential-free export.** Repeated exports at the same event
-high-water mark are byte-identical. The allowlisted bundle excludes
-credentials, credential-variable names, endpoints, provider bodies,
-checkpoints, host paths, and source bytes. The checksummed manifest is the
-integrity boundary; the event stream remains the recovery boundary.
-
-**Credentials never touch disk.** Adapter configuration stores the *name* of a
-credential environment variable; the value is read from the environment at
-open time and is never written to configuration, transcripts, or exports.
-
-## First workflow
+The core is an installed library and CLI, not a server. Create a local
+repository, add a course and a UTF-8 Markdown source, then verify replay and
+retrieval without credentials or network access:
 
 ```bash
 study-agent init ./my-study-repository
-study-agent --repository ./my-study-repository course create \
-  --title "Example course" --learning-goal "Explain the core concepts"
-study-agent --repository ./my-study-repository source add COURSE_ID notes.md
+cd ./my-study-repository
+printf '# Example notes\nThe aortic valve opens into the aorta.\n' > notes.md
+study-agent --repository . course create \
+  --course-id example-course \
+  --title "Example course" \
+  --learning-goal "Explain the core concepts"
+study-agent --repository . source add example-course notes.md \
+  --source-id example-notes
+study-agent --repository . doctor
 ```
 
-Continue with `source list`, `ask`, the session commands, `export`, or
-`doctor`. Use `--json` for one machine-clean success or safe-error document on
-stdout. The default repository is fully offline; only `ask` requires an
+`doctor` should report `status: ok`, `event_replay: ok`, and
+`retrieval_rebuild: ok`. The default repository has no model configured, so
+replay, retrieval, export, and diagnostics remain offline. `ask` requires an
 explicitly configured model adapter.
 
-## Built at OpenAI Build Week
+Command help is the source of truth for arguments. Add the global `--json` flag
+for a single machine-clean success or safe error document on stdout.
 
-This project began as a medical student's frustration: a year of disconnected
-tools for sources, study-material generation, exam questions, fact-checking,
-and correction. The missing piece was never another chatbot — it was a durable
-execution layer that lets a tutor meet a student where they are without
-forgetting what happened before.
+## Public integration points
 
-For Build Week we deliberately built the **reusable core** instead of a single
-rigid study app. Codex and GPT-5.6 were used through an adapted Agent Flywheel:
-approved specs decomposed into dependency-aware beads, implemented in bounded
-slices, closed with focused tests, architecture/semantic review, and durable
-handoffs — making the workflow itself inspectable, without Codex ever owning
-architecture approval or canonical learner state. The demo UI in the
-submission video is a demonstrative visualization; the behavior and trace it
-shows are the real offline harness.
+There are two supported alpha entry points:
 
-## Roadmap
+- `study-agent` is the reference process boundary. Run
+  `study-agent --json describe` to discover commands, effects, retry guidance,
+  tool manifests, contract versions, and unavailable capabilities.
+- `study_agent.tools` is the low-level Python integration surface for immutable
+  tool contracts, manifests, schema validation, trusted owner composition, and
+  `StudyToolRegistry` invocation.
 
-1. **Harden the core** — stable contributor contracts for hosts, skills,
-   playbooks, persistence, and replay.
-2. **Self-improvement proposal loop** — when an agent hits a capability
-   boundary (e.g., an unsupported material type), it records a structured
-   proposal instead of silently inventing behavior. Proposals pass through
-   explicit human review, validation, scoped implementation, tests, and
-   replay checks before entering the harness.
-3. **Vertical products on the same core** — biomedical, medical, legal, and
-   other learning domains own their UI and subject skills while reusing the
-   same durable execution and trust boundary.
+The [integration guide](docs/integrations.md) explains how an agent host binds
+trusted execution context and canonical service owners without duplicating
+business logic. The [external-agent example](docs/examples/external_agent.py)
+demonstrates the installed CLI boundary without depending on an agent SDK.
 
-The goal: a free, community-maintained core that students, teachers, and
-builders **embed** instead of each rebuilding their own tutor runtime.
+This is not yet a general-purpose stable Python SDK. Repository composition is
+a reference implementation, not a promised top-level facade. Recall scheduling
+is reported honestly as unavailable until a contemporary canonical owner is
+integrated and verified.
 
-## Status and contributing
+### Agent-operated setup
 
-v0.1.0 is an alpha release; the public API is not yet stable. Release
-acceptance requires deterministic replay/export checks, the credential-free
-end-to-end CLI fixture, a clean-wheel install and CLI smoke test, and
-independent semantic review. Network smoke tests are strictly opt-in.
+Automation should negotiate the machine contract and extract the versioned
+operator workflow from the installed distribution:
 
-- Contributor guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- Vulnerability reporting: [`SECURITY.md`](SECURITY.md)
-- License: [Apache-2.0](LICENSE)
-- Platform: Python 3.12/3.13 · stdlib-only runtime · CI on Ubuntu · Build Week
-  verification on macOS arm64
+```bash
+study-agent --json describe
+study-agent --json operator skill \
+  --output ./agent-skills/study-agent-operator/SKILL.md
+```
 
+Verify the extracted file against the fingerprint returned by `describe`. Use
+stable course, source, session, and idempotency identities. For `ask`, supply an
+explicit `--session-id` and `--idempotency-key`; after lost output, retry the
+same question with the same identities.
 
+For desired-state setup, lifecycle manifests provide validation, planning, and
+fingerprint-gated application while leaving canonical mutations with their
+existing services:
+
+```bash
+study-agent --json manifest validate study-agent.manifest.json
+study-agent --json manifest plan study-agent.manifest.json
+study-agent --json manifest apply study-agent.manifest.json \
+  --expect-plan PLAN_SHA256
+```
+
+Initialization is a separate first convergence step. Replan after any manifest,
+source, or canonical-state change.
+
+## Bundled offline demo
+
+Run the deterministic tutor-host trace from any directory:
+
+```bash
+study-agent-demo "I have ten minutes. Help me understand heart valves."
+```
+
+The demo uses a bundled sanitized Markdown fixture and an in-process recorded
+provider response. It exercises the real tutor runner, trusted-context boundary,
+evidence refresh, and suspension/resumption contracts without an API key, model
+SDK, local repository, or network call. Add `--json` for its inspectable trace.
+
+It is a contract demonstration, not a live-provider benchmark and not a
+substitute for the repository workflow above.
+
+## Models and credentials
+
+The bundled network adapter speaks an OpenAI-compatible HTTP protocol. Its
+configuration stores technical values plus the name of a credential environment
+variable. The credential value is read only when the repository is opened and
+is never written to repository configuration.
+
+Never put an API key in a model setting, committed file, transcript, fixture, or
+export. Use `study-agent init --help` for adapter configuration. The
+[reference tutor-host guide](docs/reference-tutor-host.md) documents optional
+provider-backed execution, privacy behaviour, retries, costs, and limitations.
+
+## Recovery and portable export
+
+Recovery starts from current evidence: inspect status, obtain a fresh plan, and
+apply only its reported fingerprint. Source ingestion commits the canonical
+revision before rebuilding the discardable retrieval index; an index failure is
+reported as a recoverable operational error rather than concealed or rolled
+back.
+
+Export is a deterministic, credential-free view of canonical course state.
+Repeated exports at the same event high-water mark are byte-identical. The
+allowlisted bundle excludes credentials, provider payloads, host paths, run
+checkpoints, blob references, and source bytes. Its manifest is an integrity
+boundary; the event stream remains the recovery boundary.
+
+## Verify a checkout
+
+Run the offline quality gates:
+
+```bash
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check .
+.venv/bin/python -m mypy
+```
+
+Release acceptance additionally requires wheel and source-distribution content
+checks, a clean-wheel install, CLI/demo/discovery/operator-skill smokes, and the
+external-agent example. The exact local procedure lives in the
+[release checklist](docs/maintainer/release-checklist.md).
+
+Network smoke tests are opt-in. Default tests must not require credentials, a
+provider SDK, or a hosted service.
+
+## Status and project policies
+
+Version 0.2.0 is alpha software and its public API is not stable. This checkout
+is being prepared as a source release candidate; this work does not create a
+tag, publish a package, or make an online release.
+
+The project is available under the [Apache License 2.0](LICENSE). See
+[`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md),
+[`SUPPORT.md`](SUPPORT.md), and [`GOVERNANCE.md`](GOVERNANCE.md) for project
+policies, and [`CHANGELOG.md`](CHANGELOG.md) for release-facing changes.
+
+The original Build Week submission material is preserved under
+[`docs/archive/build-week/`](docs/archive/build-week/README.md). It is historical
+evidence, not current installation or release guidance.

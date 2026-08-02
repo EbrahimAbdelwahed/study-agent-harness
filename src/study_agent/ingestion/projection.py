@@ -10,6 +10,7 @@ from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import DomainEvent
 from study_agent.domain.identifiers import BlobId, SubstrateId
 from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument
+from study_agent.knowledge.scopes import register_scope_events
 from study_agent.state import EventRegistry
 
 from .events import (
@@ -31,6 +32,12 @@ from .substrate_events import (
     decode_substrate_produced_event,
 )
 from .substrate_projection import reduce_substrate_produced
+from .succession import (
+    SOURCE_SUPERSEDED_BY,
+    SOURCE_SUPERSEDED_BY_SCHEMA_VERSION,
+    decode_source_superseded_by_event,
+    reduce_source_superseded_by,
+)
 
 
 def _timestamp(value: datetime) -> str:
@@ -299,3 +306,10 @@ def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoad
         lambda event: decode_substrate_produced_event(event, load_blob),
         reduce_substrate_produced,
     )
+    registry.register_event(
+        SOURCE_SUPERSEDED_BY,
+        SOURCE_SUPERSEDED_BY_SCHEMA_VERSION,
+        decode_source_superseded_by_event,
+        reduce_source_superseded_by,
+    )
+    register_scope_events(registry)

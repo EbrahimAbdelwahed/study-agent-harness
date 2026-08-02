@@ -29,6 +29,12 @@ class SourceId(Identifier):
     pass
 
 
+class ScopeId(Identifier):
+    """Identity of one named exam/search scope."""
+
+    pass
+
+
 class RevisionId(Identifier):
     pass
 
@@ -80,8 +86,10 @@ class SubstrateId(Identifier):
         super().__post_init__()
         prefix = "substrate:sha256:"
         digest = self.value.removeprefix(prefix)
-        if not self.value.startswith(prefix) or len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError("substrate id must be substrate:sha256:<lowercase sha256>")
 
@@ -93,13 +101,44 @@ class SubstrateProductionId(Identifier):
         super().__post_init__()
         prefix = "substrate-production:sha256:"
         digest = self.value.removeprefix(prefix)
-        if not self.value.startswith(prefix) or len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError(
-                "substrate production id must be "
-                "substrate-production:sha256:<lowercase sha256>"
+                "substrate production id must be substrate-production:sha256:<lowercase sha256>"
             )
+
+
+class NodeId(Identifier):
+    """Identity of one document-tree node occurrence."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        prefix = "node:sha256:"
+        digest = self.value.removeprefix(prefix)
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("node id must be node:sha256:<lowercase sha256>")
+
+
+class UnitId(Identifier):
+    """Identity of one revision-local retrievable unit occurrence."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        prefix = "unit:sha256:"
+        digest = self.value.removeprefix(prefix)
+        if (
+            not self.value.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("unit id must be unit:sha256:<lowercase sha256>")
 
 
 class ArtifactId(Identifier):
@@ -150,6 +189,36 @@ def artifact_event_id_for(
         f"artifact-event@1\0{course_id}\0{session_id}\0{retry_identity}\0{command_kind}"
     ).encode()
     return EventId(f"event-sha256:{sha256(payload).hexdigest()}")
+
+
+def scope_event_id_for(
+    course_id: CourseId,
+    scope_id: ScopeId,
+    action: str,
+    payload: Mapping[str, object],
+    course_sequence: int,
+) -> EventId:
+    """Derive one deterministic scope-event identity from its exact payload."""
+    if not isinstance(course_id, CourseId) or not isinstance(scope_id, ScopeId):
+        raise TypeError("scope event identity requires CourseId and ScopeId")
+    require_text(action, "scope event action")
+    if len(action) > 128:
+        raise ValueError("scope event action is too long")
+    if type(course_sequence) is not int or course_sequence < 1:
+        raise ValueError("scope event course_sequence must be positive")
+    from study_agent.state.serialization import canonical_json_bytes
+
+    identity = {
+        "action": action,
+        "course_id": str(course_id),
+        "course_sequence": course_sequence,
+        "payload": dict(payload),
+        "scope_id": str(scope_id),
+    }
+    digest = sha256(
+        b"study-agent/knowledge-scope-event/v1\0" + canonical_json_bytes(cast(JsonObject, identity))
+    ).hexdigest()
+    return EventId(f"event-sha256:{digest}")
 
 
 def substrate_id_for(content: bytes) -> SubstrateId:
@@ -211,9 +280,7 @@ def substrate_production_id_for(
         raise TypeError("substrate production requires SubstrateId")
     if page_count is not None and (type(page_count) is not int or page_count < 1):
         raise ValueError("page_count must be positive when present")
-    if character_length is not None and (
-        type(character_length) is not int or character_length < 1
-    ):
+    if character_length is not None and (type(character_length) is not int or character_length < 1):
         raise ValueError("character_length must be positive when present")
     if page_count is not None and character_length is None:
         raise ValueError("character_length is required when pagination is present")
@@ -266,10 +333,106 @@ def substrate_production_id_for(
         "substrate_id": str(substrate_id),
     }
     digest = sha256(
-        b"study-agent/substrate-production/v1\0"
-        + canonical_json_bytes(cast(JsonObject, identity))
+        b"study-agent/substrate-production/v1\0" + canonical_json_bytes(cast(JsonObject, identity))
     ).hexdigest()
     return SubstrateProductionId(f"substrate-production:sha256:{digest}")
+
+
+def node_id_for(
+    *,
+    substrate_id: SubstrateId,
+    tree_format_version: str,
+    profile_name: str,
+    profile_version: str,
+    path: Sequence[str],
+) -> NodeId:
+    """Derive a document-tree node identity from its placement alone.
+
+    Identity commits to the substrate bytes, the tree format, the declaring
+    profile, and the revision-local placement path.  It deliberately excludes
+    node text so that a rebuild of the same structure is byte-identical, and it
+    is never a citation or unit identity: KB-05 owns ``unit_id``.
+    """
+    if not isinstance(substrate_id, SubstrateId):
+        raise TypeError("node identity requires SubstrateId")
+    for value, field_name in (
+        (tree_format_version, "tree_format_version"),
+        (profile_name, "profile_name"),
+        (profile_version, "profile_version"),
+    ):
+        require_text(value, field_name)
+    if isinstance(path, (str, bytes, bytearray)) or not isinstance(path, Sequence):
+        raise TypeError("node path must be a sequence of segments")
+    segments = tuple(path)
+    for segment in segments:
+        if not isinstance(segment, str):
+            raise TypeError("node path segments must be strings")
+        require_text(segment, "node path segment")
+    from study_agent.state.serialization import canonical_json_bytes
+
+    payload = canonical_json_bytes(
+        {
+            "path": segments,
+            "profile_name": profile_name,
+            "profile_version": profile_version,
+            "substrate_id": str(substrate_id),
+            "tree_format_version": tree_format_version,
+        }
+    )
+    digest = sha256(b"study-agent/document-tree-node/v1\0" + payload).hexdigest()
+    return NodeId(f"node:sha256:{digest}")
+
+
+def unit_id_for(
+    *,
+    revision_id: RevisionId,
+    structural_path: Sequence[str],
+    unit_kind: str,
+    granularity: int,
+    canonical_ref: Mapping[str, object],
+    unitizer_version: str,
+) -> UnitId:
+    """Derive a revision-local unit occurrence identity (ADR-0014 §5.3).
+
+    Identity commits to the revision, the placement (structural path plus the
+    canonical reference), the kind/granularity pair, and the unitizer version.
+    Duplicate passages therefore stay distinct, and changing the unitizer
+    deliberately changes every ``unit_id``.
+    """
+    if not isinstance(revision_id, RevisionId):
+        raise TypeError("unit identity requires RevisionId")
+    for value, field_name in ((unit_kind, "unit_kind"), (unitizer_version, "unitizer_version")):
+        require_text(value, field_name)
+    if type(granularity) is not int or not 0 <= granularity <= 4:
+        raise ValueError("granularity must be an integer between 0 and 4")
+    if isinstance(structural_path, (str, bytes, bytearray)) or not isinstance(
+        structural_path, Sequence
+    ):
+        raise TypeError("structural_path must be a sequence of segments")
+    segments = tuple(structural_path)
+    for segment in segments:
+        if not isinstance(segment, str):
+            raise TypeError("structural_path segments must be strings")
+        require_text(segment, "structural_path segment")
+    if not isinstance(canonical_ref, Mapping) or not canonical_ref:
+        raise TypeError("canonical_ref must be a non-empty object")
+    from study_agent.state.serialization import canonical_json_bytes
+
+    payload = canonical_json_bytes(
+        cast(
+            JsonObject,
+            {
+                "canonical_ref": dict(canonical_ref),
+                "granularity": granularity,
+                "revision_id": str(revision_id),
+                "structural_path": segments,
+                "unit_kind": unit_kind,
+                "unitizer_version": unitizer_version,
+            },
+        )
+    )
+    digest = sha256(b"study-agent/retrievable-unit/v1\0" + payload).hexdigest()
+    return UnitId(f"unit:sha256:{digest}")
 
 
 def substrate_production_event_id_for(
@@ -277,9 +440,7 @@ def substrate_production_event_id_for(
     production_id: SubstrateProductionId,
     course_sequence: int,
 ) -> EventId:
-    if not isinstance(course_id, CourseId) or not isinstance(
-        production_id, SubstrateProductionId
-    ):
+    if not isinstance(course_id, CourseId) or not isinstance(production_id, SubstrateProductionId):
         raise TypeError("substrate production event requires typed ids")
     if type(course_sequence) is not int or course_sequence < 1:
         raise ValueError("course_sequence must be positive")
@@ -375,8 +536,7 @@ def schedule_decision_id_for(
     require_text(trigger, "trigger")
     require_text(identity, "identity")
     raw = (
-        f"recall-schedule@1\0{course_id}\0{session_id}\0"
-        f"{revision_id}\0{trigger}\0{identity}"
+        f"recall-schedule@1\0{course_id}\0{session_id}\0{revision_id}\0{trigger}\0{identity}"
     ).encode()
     return ScheduleDecisionId(f"schedule-sha256:{sha256(raw).hexdigest()}")
 
@@ -400,9 +560,7 @@ def review_decision_id_for(
 ) -> ScheduleDecisionId:
     if not isinstance(review_id, ReviewId):
         raise TypeError("review decision identity requires ReviewId")
-    return schedule_decision_id_for(
-        course_id, session_id, revision_id, "review", str(review_id)
-    )
+    return schedule_decision_id_for(course_id, session_id, revision_id, "review", str(review_id))
 
 
 def recall_event_id_for(
@@ -500,8 +658,7 @@ def session_turn_event_id_for(
     require_text(idempotency_key, "idempotency_key")
     require_text(event_type, "event_type")
     identity = (
-        f"session-turn-event@1\0{course_id}\0{session_id}\0"
-        f"{idempotency_key}\0{event_type}"
+        f"session-turn-event@1\0{course_id}\0{session_id}\0{idempotency_key}\0{event_type}"
     ).encode()
     return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
 
@@ -515,8 +672,7 @@ def session_event_id_for(
 ) -> EventId:
     require_text(event_type, "event_type")
     return EventId(
-        "event-sha256:"
-        f"{_retry_digest(course_id, session_id, run_id, idempotency_key, event_type)}"
+        f"event-sha256:{_retry_digest(course_id, session_id, run_id, idempotency_key, event_type)}"
     )
 
 

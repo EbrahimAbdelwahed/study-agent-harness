@@ -24,6 +24,7 @@ _KEYWORDS = frozenset(
         "minimum",
         "maximum",
         "minLength",
+        "maxLength",
         "minItems",
         "maxItems",
     }
@@ -32,7 +33,7 @@ _COMMON = frozenset({"type", "enum"})
 _BY_TYPE = {
     "object": _COMMON | {"properties", "required", "additionalProperties"},
     "array": _COMMON | {"items", "minItems", "maxItems"},
-    "string": _COMMON | {"minLength"},
+    "string": _COMMON | {"minLength", "maxLength"},
     "integer": _COMMON | {"minimum", "maximum"},
     "number": _COMMON | {"minimum", "maximum"},
     "boolean": _COMMON,
@@ -95,7 +96,7 @@ def validate_schema_definition(schema: JsonObject, path: str = "$") -> None:
         for item in enum:
             if isinstance(item, float) and not math.isfinite(item):
                 raise ValueError(f"{path}: enum numbers must be finite")
-    for keyword in ("minimum", "maximum", "minLength", "minItems", "maxItems"):
+    for keyword in ("minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"):
         value = schema.get(keyword)
         if value is not None and (
             isinstance(value, bool)
@@ -104,7 +105,7 @@ def validate_schema_definition(schema: JsonObject, path: str = "$") -> None:
         ):
             raise ValueError(f"{path}: {keyword} must be finite numeric data")
         if (
-            keyword in {"minLength", "minItems", "maxItems"}
+            keyword in {"minLength", "maxLength", "minItems", "maxItems"}
             and value is not None
             and (type(value) is not int or value < 0)
         ):
@@ -117,6 +118,10 @@ def validate_schema_definition(schema: JsonObject, path: str = "$") -> None:
     max_items = schema.get("maxItems")
     if min_items is not None and max_items is not None and min_items > max_items:  # type: ignore[operator]
         raise ValueError(f"{path}: minItems cannot exceed maxItems")
+    min_length = schema.get("minLength")
+    max_length = schema.get("maxLength")
+    if min_length is not None and max_length is not None and min_length > max_length:  # type: ignore[operator]
+        raise ValueError(f"{path}: minLength cannot exceed maxLength")
 
 
 def validate_json(value: JsonValue, schema: JsonObject, path: str = "$") -> None:
@@ -164,6 +169,9 @@ def validate_json(value: JsonValue, schema: JsonObject, path: str = "$") -> None
         minimum = schema.get("minLength")
         if minimum is not None and len(value) < minimum:  # type: ignore[operator]
             raise SchemaValidationError(f"{path}: string is too short")
+        maximum = schema.get("maxLength")
+        if maximum is not None and len(value) > maximum:  # type: ignore[operator]
+            raise SchemaValidationError(f"{path}: string is too long")
         if minimum and (not value or value != value.strip()):
             raise SchemaValidationError(f"{path}: string must be non-blank trimmed text")
     elif kind in {"integer", "number"}:

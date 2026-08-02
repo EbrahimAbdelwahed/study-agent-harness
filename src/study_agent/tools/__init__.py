@@ -35,8 +35,10 @@ if TYPE_CHECKING:
         SourceListTool,
         SourceSearchTool,
         builtin_tools,
+        public_agent_operation_manifests,
         public_study_tool_manifests,
     )
+    from .operations import AgentOperationOwners
     from .registry import StudyToolRegistry
 
 _LAZY_BUILTINS = frozenset(
@@ -49,6 +51,7 @@ _LAZY_BUILTINS = frozenset(
         "SourceListTool",
         "SourceSearchTool",
         "builtin_tools",
+        "public_agent_operation_manifests",
         "public_study_tool_manifests",
     }
 )
@@ -59,6 +62,10 @@ def __getattr__(name: str) -> Any:
         from . import builtin
 
         return getattr(builtin, name)
+    if name == "AgentOperationOwners":
+        from .operations import AgentOperationOwners
+
+        return AgentOperationOwners
     if name == "StudyToolRegistry":
         from .registry import StudyToolRegistry
 
@@ -67,6 +74,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "AgentOperationOwners",
     "BoundSessionContextExecutor",
     "BoundSourceSearchExecutor",
     "CitationResolveTool",
@@ -88,6 +96,7 @@ __all__ = [
     "ToolResult",
     "builtin_tools",
     "grounding_playbook_tools",
+    "public_agent_operation_manifests",
     "public_study_tool_manifests",
     "validate_json",
     "validate_schema_definition",

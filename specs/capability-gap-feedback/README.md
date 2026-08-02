@@ -230,7 +230,7 @@ the feature will be built.
 - `GAP-02`: agent-facing host report tool and service.
 - `GAP-03`: unsupported source-format tracer bullet.
 - `GAP-04A`: allowlisted workaround registry and receipts.
-- `GAP-04B`: verified local text-bearing PDF-to-Markdown workaround adapter.
+- `GAP-04B`: first explicitly approved source-format workaround adapter.
 - `GAP-05`: outbox-to-proposal parent.
   - `GAP-05A`: strict redacted harness outbox.
   - `GAP-05B`: devkit import, deduplication, and reproduction.
@@ -260,7 +260,6 @@ GAP-05B + GAP-05D → GAP-07B hosted transport closure
 GAP-07 → GAP-08 optional GitHub adapter
 ```
 
-Completed in the public harness: `GAP-00`, `GAP-01`, `GAP-02`, `GAP-03`,
-`GAP-04A`, `GAP-04B`, and `GAP-05A`. The private devkit owns `GAP-05B` through
-`GAP-08`. `GAP-05D` and `GAP-07B` remain deferred pending a separately approved
-hosted transport and deployment/auth decision.
+Ready now: `GAP-01` and optional parallel `GAP-04A`. All other beads are
+approved but dependency-blocked. `GAP-04B`, `GAP-05D`, `GAP-07B`, and `GAP-08`
+also require the named concrete adapter decision before dispatch.

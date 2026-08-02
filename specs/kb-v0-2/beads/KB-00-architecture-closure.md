@@ -1,6 +1,6 @@
 # KB-00: Architecture closure and v0.1 compatibility
 
-Status: Done — ADR-0014 accepted 2026-07-26
+Status: Proposed — blocking decision bead
 Risk: High
 Depends On: none
 Parent coverage: §§3–5.3, 6.1, 11, 13–17
@@ -28,15 +28,15 @@ ownership contracts internally consistent before a public schema is written.
 
 ## Acceptance criteria
 
-- [x] The ADR resolves all three listed contradictions without hand-waving.
-- [x] Every identity has a canonical derivation and collision domain.
-- [x] Existing v0.1 events and exports remain readable and their migration
+- [ ] The ADR resolves all three listed contradictions without hand-waving.
+- [ ] Every identity has a canonical derivation and collision domain.
+- [ ] Existing v0.1 events and exports remain readable and their migration
   behavior is explicit.
-- [x] One owner is named for substrate, units, citations, projections,
+- [ ] One owner is named for substrate, units, citations, projections,
   connectors, registry, and operational sync.
-- [x] Any compatibility bridge has an owner, removal condition, and removal
+- [ ] Any compatibility bridge has an owner, removal condition, and removal
   bead.
-- [x] The parent spec and bead graph are corrected if the accepted decision
+- [ ] The parent spec and bead graph are corrected if the accepted decision
   changes dependencies.
 
 ## Verification
@@ -49,10 +49,3 @@ ownership contracts internally consistent before a public schema is written.
 ## Out of scope
 
 - Runtime implementation or choosing vector/OCR/model dependencies.
-
-## Closure
-
-ADR-0014 resolves occurrence versus reuse identity, versioned v0.1
-compatibility, selection versus succession, deterministic versus regenerated
-replay, admission versus conformance, and one-owner package boundaries. KB-01
-is the next dependency-ready bead.

@@ -44,8 +44,7 @@ replay satisfy the parent architecture.
 - Independent review of eval fixtures, leakage, target construction, and
   non-vacuous assertions.
 - Manual inspection of representative medical search, exact citation,
-  inactive citation with explicit successor, outline, figure attachment, and
-  lineage.
+  superseded citation, outline, figure attachment, and lineage.
 
 ## Out of scope
 

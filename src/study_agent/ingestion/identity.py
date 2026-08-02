@@ -109,3 +109,26 @@ def source_revision_selected_event_id_for(
         }
     )
     return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
+
+
+def source_superseded_by_event_id_for(
+    course_id: CourseId,
+    predecessor_source_id: SourceId,
+    predecessor_revision_id: RevisionId,
+    successor_source_id: SourceId,
+    successor_revision_id: RevisionId,
+    course_sequence: int,
+) -> EventId:
+    """Identify one explicit succession at a canonical stream position."""
+
+    identity = b"study-agent-source-superseded-by-v1\0" + canonical_json_bytes(
+        {
+            "course_id": str(course_id),
+            "course_sequence": course_sequence,
+            "predecessor_revision_id": str(predecessor_revision_id),
+            "predecessor_source_id": str(predecessor_source_id),
+            "successor_revision_id": str(successor_revision_id),
+            "successor_source_id": str(successor_source_id),
+        }
+    )
+    return EventId(f"event-sha256:{sha256(identity).hexdigest()}")

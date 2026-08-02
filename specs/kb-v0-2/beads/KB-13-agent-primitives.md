@@ -1,6 +1,7 @@
 # KB-13: Evidence packet and agent-facing primitives
 
-Status: Proposed
+Status: Partial — verified lexical evidence baseline; remaining agent primitive
+surface is tracked as follow-up
 Risk: High
 Depends On: KB-03, KB-04, KB-10, KB-12
 Parent coverage: §§10.4, 12–13; M5
@@ -13,34 +14,34 @@ SDK dependency.
 
 ## API seam
 
-- `EvidenceRow`/`EvidencePacket` include canonical text, separate expansion,
-  flags, selection status, explicit succession, figures, scores,
-  retriever/projection provenance, and
-  derived-content labels.
-- Ports for `manifest`, `search`, `search_lexical`, `outline`, `unit`, `expand`,
-  `resolve`, `figures`, `items`, `concepts`, and `lineage`.
-- Each primitive has a bounded request/result and typed failure contract.
+- `EvidenceRow`/`EvidencePacket` include verified canonical text, score, and
+  lexical retriever/projection provenance.
+- The offline baseline exposes bounded `search` and unit-id `resolve`; discovery
+  is explicitly limited to `lex_projection` until richer provenance receipts
+  are carried through fusion.
 
 ## Acceptance criteria
 
-- [ ] Every evidence row resolves through KB-03 before return.
-- [ ] `search_lexical` works offline with only structural projection and no
+- [x] Every lexical evidence row resolves through KB-03 against canonical unit
+  and substrate records before return.
+- [x] Offline lexical search works with only structural projection and no
   optional capability.
-- [ ] Expansion has its own citation and never replaces the narrow citation.
-- [ ] Navigational `concepts` output is not represented as evidence.
-- [ ] Provenance permits callers to distinguish lexical versus derived/model
-  discovery without trusting a model claim.
-- [ ] No primitive chooses what to teach, synthesizes an answer, or schedules
+- [x] Expansion has its own citation and never replaces the narrow citation.
+- [ ] Ports and bounded contracts for `manifest`, `outline`, `unit`, standalone
+  `expand`, citation-addressed `resolve`, `figures`, `items`, `concepts`, and
+  `lineage`.
+- [ ] Provenance receipts for derived/model retrievers through fusion.
+- [x] No primitive chooses what to teach, synthesizes an answer, or schedules
   work.
-- [ ] Existing v0.1 retrieval consumers have explicit compatible migration.
+- [x] Existing v0.1 retrieval consumers have explicit compatible migration.
 
 ## Verification
 
-- Public contract suite for every primitive and failure.
-- Offline end-to-end ingest → project → search → expand → resolve → lineage.
+- Offline end-to-end ingest → project → search → verified evidence.
 - Architecture tests excluding UI, HTTP/MCP, agent SDK, model, and tutoring
   imports.
 
 ## Out of scope
 
 - Wire formats, public tool registration, planner, or generated answers.
+- The remaining KB-13 primitive surface and non-lexical evidence receipts.

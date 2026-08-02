@@ -78,7 +78,28 @@ def _required_int(envelope: Mapping[str, JsonValue], key: str) -> int:
 def event_from_bytes(data: bytes) -> DomainEvent:
     """Deserialize a canonical event envelope into the public domain type."""
     envelope = canonical_json_object(data)
+    if canonical_json_bytes(envelope) != data:
+        raise ValueError("event bytes are not canonical")
+    expected_envelope_fields = frozenset(
+        {
+            "actor",
+            "causation_id",
+            "correlation_id",
+            "course_id",
+            "course_sequence",
+            "event_id",
+            "event_type",
+            "occurred_at",
+            "payload",
+            "schema_version",
+            "session_id",
+        }
+    )
+    if frozenset(envelope) != expected_envelope_fields:
+        raise ValueError("event envelope fields are unknown or incomplete")
     actor = cast(Mapping[str, JsonValue], _required(envelope, "actor", Mapping))
+    if frozenset(actor) != frozenset({"kind", "principal_id"}):
+        raise ValueError("event actor fields are unknown or incomplete")
     payload = cast(Mapping[str, JsonValue], _required(envelope, "payload", Mapping))
     occurred_at = str(_required(envelope, "occurred_at", str))
     session_id = envelope.get("session_id")

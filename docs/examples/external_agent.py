@@ -24,11 +24,20 @@ from study_agent.domain import (
 )
 
 EXPECTED_TOOLS = (
+    "artifact.proposal_list",
+    "assessment.get",
     "citation.resolve",
+    "course.create",
     "course.get",
     "grounding.ask",
+    "session.end",
     "session.get_context",
+    "session.record_learner_turn",
     "session.record_note",
+    "session.resume",
+    "session.start",
+    "session.suspend",
+    "source.ingest_text",
     "source.list",
     "source.search",
 )
@@ -64,7 +73,7 @@ def _run(*arguments: str, cwd: Path | None = None) -> dict[str, Any]:
 def discover_and_extract_skill(destination: Path) -> dict[str, Any]:
     """Negotiate the versioned contract before allowing an agent to act."""
     described = _run("describe")["data"]
-    if described["contract_version"] != "agent-operations@1":
+    if described["contract_version"] != "agent-operations@2":
         raise RuntimeError("unsupported study-agent operation contract")
     names = tuple(item["manifest"]["name"] for item in described["study_tools"])
     if names != EXPECTED_TOOLS:

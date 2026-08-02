@@ -22,11 +22,32 @@ jobs:
       - run: python -m pytest
       - run: python -m ruff check .
       - run: python -m mypy
+      - run: git diff --check
       - run: python -m pip install --disable-pip-version-check build
       - run: python -m build --wheel --sdist --outdir dist
+      - run: python -m pytest tests/quality/test_distribution_contents.py
+        env:
+          STUDY_AGENT_REQUIRE_DIST: "1"
       - run: python -m venv clean-install
       - run: clean-install/bin/python -m pip install --disable-pip-version-check dist/*.whl
+      - run: >-
+          clean-install/bin/python -c
+          'import study_agent.tools as tools;
+          from study_agent import __version__;
+          from study_agent.tools import StudyToolRegistry, public_agent_operation_manifests, public_study_tool_manifests;
+          assert __version__ == "0.2.0";
+          assert tools.StudyToolRegistry is StudyToolRegistry;
+          assert public_study_tool_manifests();
+          assert public_agent_operation_manifests()'
       - run: clean-install/bin/study-agent --help
+      - run: >-
+          clean-install/bin/python -c
+          'import json, subprocess;
+          result = subprocess.run(
+          ["clean-install/bin/study-agent", "--json", "--version", "--repository", "/missing", "doctor"],
+          check=True, capture_output=True, text=True);
+          assert result.stderr == "";
+          assert json.loads(result.stdout) == {"command": "version", "data": {"version": "0.2.0"}, "ok": True}'
       - run: clean-install/bin/study-agent-demo
       - run: clean-install/bin/study-agent --json describe
       - run: >-
@@ -45,62 +66,3 @@ jobs:
           clean-install/example-project
         env:
           STUDY_AGENT_BIN: ${{ github.workspace }}/clean-install/bin/study-agent
-
-  recall:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install --disable-pip-version-check -e '.[dev,recall]'
-      - run: >-
-          python -m pytest
-          tests/unit/adapters/scheduling/test_py_fsrs.py
-          tests/integration/test_recall_real_fsrs_e2e.py
-          tests/architecture/test_fsrs_adapter_boundaries.py
-          tests/architecture/test_recall_boundaries.py
-      - run: python -m pip install --disable-pip-version-check build
-      - run: python -m build --wheel --outdir dist
-      - run: python -m venv clean-recall-install
-      - run: >-
-          clean-recall-install/bin/python -m pip install
-          --disable-pip-version-check dist/*.whl fsrs==6.3.1
-      - run: >-
-          clean-recall-install/bin/python -c
-          'from datetime import UTC, datetime;
-          from study_agent.adapters.scheduling.py_fsrs import PyFsrsSchedulingPolicy;
-          from study_agent.domain import ArtifactRevisionId;
-          from study_agent.recall.contracts import SchedulingPolicyConfigV1, SchedulingRequest;
-          request = SchedulingRequest(ArtifactRevisionId("clean-wheel"), datetime(2026, 7, 24, tzinfo=UTC), (), SchedulingPolicyConfigV1());
-          result = PyFsrsSchedulingPolicy().decide(request);
-          assert result.implementation_version == "6.3.1"'
-
-  pdf:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install --disable-pip-version-check -e '.[dev,pdf]'
-      - run: >-
-          python -m pytest
-          tests/integration/adapters/workarounds/test_pdf_markdown_real.py
-          tests/adversarial/adapters/workarounds/test_worker_renderer_architecture.py
-      - run: python -m pip install --disable-pip-version-check build
-      - run: python -m build --wheel --outdir dist
-      - run: python -m venv clean-pdf-install
-      - run: >-
-          clean-pdf-install/bin/python -m pip install
-          --disable-pip-version-check dist/*.whl pypdf==6.14.2
-      - run: >-
-          cd /tmp &&
-          ${{ github.workspace }}/clean-pdf-install/bin/python -c
-          'import base64,pypdf; from study_agent.adapters.workarounds.worker import parse_in_worker; output=parse_in_worker(base64.b64decode("JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0MSA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDcyIDcyMCBUZCAoSGVsbG8gUERGKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMzMSAwMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDEKJSVFT0YK"),5.0); assert b"Hello PDF" in output and pypdf.__version__=="6.14.2" and parse_in_worker.__module__=="study_agent.adapters.workarounds.worker"'

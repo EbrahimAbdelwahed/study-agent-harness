@@ -1,6 +1,6 @@
 # Task Bead: GAP-05A strict redacted harness outbox
 
-Status: Done — redacted schema v2, atomic claim, and CAS finalization verified 2026-07-24
+Status: Approved — blocked on GAP-02 implementation
 Priority: P1
 Type: tracer-bullet
 Depends On: GAP-02
@@ -40,11 +40,11 @@ reuse `implementer`; independent `security-reviewer`
 
 ## Acceptance Criteria
 
-- [x] Bundle cannot express learner/model free text, material/path/filename,
+- [ ] Bundle cannot express learner/model free text, material/path/filename,
   credential/principal/provider-private data, command, or executable payload.
-- [x] Tamper, unknown schema, key/payload mismatch, and collision fail closed.
-- [x] Same snapshot exports byte-identically and performs no network operation.
-- [x] Harness core imports no devkit/Flywheel/GitHub dependency.
+- [ ] Tamper, unknown schema, key/payload mismatch, and collision fail closed.
+- [ ] Same snapshot exports byte-identically and performs no network operation.
+- [ ] Harness core imports no devkit/Flywheel/GitHub dependency.
 
 ## Verification
 

@@ -24,6 +24,7 @@ from study_agent.ports.retrieval import (
 )
 
 from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
+from .literal_query import compile_unicode61_query_on
 
 INDEX_VERSION = "sqlite-fts5-unicode61-v1"
 RETRIEVAL_STRATEGY_ID = "sqlite_fts5_bm25"
@@ -68,30 +69,13 @@ def compile_literal_query(text: str) -> str | None:
     """Compile untrusted input to an AND of quoted tokenizer literals."""
 
     with closing(sqlite3.connect(":memory:")) as connection:
-        return _compile_literal_query(connection, text)
+        return compile_unicode61_query_on(connection, text)
 
 
 def _compile_literal_query(connection: sqlite3.Connection, text: str) -> str | None:
-    """Tokenize with the same SQLite FTS5 unicode61 configuration as the index."""
+    """Compatibility alias for the shared v0.1 query-safety owner."""
 
-    connection.execute(
-        "CREATE VIRTUAL TABLE temp.retrieval_query_tokens "
-        "USING fts5(text, tokenize='unicode61')"
-    )
-    connection.execute(
-        "CREATE VIRTUAL TABLE temp.retrieval_query_vocab "
-        "USING fts5vocab(retrieval_query_tokens, 'instance')"
-    )
-    connection.execute("INSERT INTO retrieval_query_tokens(text) VALUES (?)", (text,))
-    tokens = tuple(
-        str(row[0])
-        for row in connection.execute(
-            "SELECT term FROM retrieval_query_vocab ORDER BY doc, offset"
-        )
-    )
-    if not tokens:
-        return None
-    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+    return compile_unicode61_query_on(connection, text)
 
 
 def normalize_bm25_score(raw_score: float) -> float:

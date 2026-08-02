@@ -1,6 +1,6 @@
 # Task Bead: GAP-01 capability-gap contracts and operational registry
 
-Status: Done — strict registry, lifecycle, retention, and atomic rate policy verified 2026-07-24
+Status: Essential tracer implemented — full bead remains open
 Priority: P0
 Type: tracer-bullet
 Depends On: GAP-00
