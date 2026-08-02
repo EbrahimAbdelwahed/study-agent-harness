@@ -448,13 +448,6 @@ class SQLiteLexicalSurfaces:
             if SQLiteLexicalSurfaces._columns(connection, table) != columns:
                 raise LexicalIndexIntegrityError(f"lexical schema columns are invalid: {table}")
         for table in _SURFACE_TABLES.values():
-            if SQLiteLexicalSurfaces._columns(connection, table) != (
-                "scope_id",
-                "unit_id",
-                "projection_id",
-                "text",
-            ):
-                raise LexicalIndexIntegrityError(f"lexical FTS columns are invalid: {table}")
             row = connection.execute(
                 "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
             ).fetchone()
@@ -468,6 +461,13 @@ class SQLiteLexicalSurfaces:
             )
             if sql != expected:
                 raise LexicalIndexIntegrityError(f"lexical FTS configuration is invalid: {table}")
+            if SQLiteLexicalSurfaces._columns(connection, table) != (
+                "scope_id",
+                "unit_id",
+                "projection_id",
+                "text",
+            ):
+                raise LexicalIndexIntegrityError(f"lexical FTS columns are invalid: {table}")
         rows = connection.execute(
             "SELECT schema_name, schema_version, index_version, generation, catalog_fingerprint "
             "FROM kb_lex_schema ORDER BY schema_name"
