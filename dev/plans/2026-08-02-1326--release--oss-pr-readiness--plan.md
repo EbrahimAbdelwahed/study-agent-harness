@@ -37,7 +37,7 @@ changing the candidate's approved public boundary.
    textual/add-add conflicts without importing the 52 main-only commits that
    violate the approved RC scope; the resulting PR diff will explicitly remove
    those legacy surfaces from `main`.
-4. Audit the merge tree, Cardine/private references, staged paths, and untracked
+4. Audit the merge tree, private-product references, staged paths, and untracked
    preservation before pushing.
 5. Inspect the new remote workflow through completion and classify any
    remaining failures.
