@@ -127,6 +127,9 @@ def test_decision_schema_is_closed_and_context_advertised() -> None:
     assert len(branches) == 5
     serialized = json.dumps(schema, sort_keys=True, default=list)
     assert "grounding.ask" in serialized
+    assert '"completed"' in serialized
+    assert '"no_safe_action"' in serialized
+    assert "needs_learner_input" not in serialized
     assert "provider" not in serialized
 
 
@@ -188,6 +191,7 @@ def test_host_file_count_and_scalar_bounds_fail_closed() -> None:
         AskLearnerDecision("What should we review?"),
         AssistantMessageDecision("Let's begin."),
         StopDecision(TutorStopReason.COMPLETED),
+        StopDecision(TutorStopReason.NO_SAFE_ACTION),
     ),
 )
 def test_closed_decision_union_round_trips_and_has_stable_fingerprint(
@@ -198,6 +202,14 @@ def test_closed_decision_union_round_trips_and_has_stable_fingerprint(
 
     assert recovered == decision
     assert decision_fingerprint(recovered) == decision_fingerprint(decision)
+
+
+def test_legacy_learner_input_stop_reason_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        decision_from_bytes(
+            b'{"kind":"stop","reason":"needs_learner_input"}',
+            _context(),
+        )
 
 
 def test_decisions_bind_equal_noninterned_capability_schema_and_exact_continuation() -> None:
