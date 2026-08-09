@@ -7,7 +7,7 @@
   "lanes": [
     {
       "id": "pf05-source",
-      "agent_name": "AmberQuartz",
+      "agent_name": "BrightRiver",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -33,7 +33,7 @@
     },
     {
       "id": "pf05-ingestion",
-      "agent_name": "BlueRiver",
+      "agent_name": "SilentForest",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -59,7 +59,7 @@
     },
     {
       "id": "pf05-citation",
-      "agent_name": "CedarFlame",
+      "agent_name": "GentleBrook",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -85,7 +85,7 @@
     },
     {
       "id": "pf06-manifest",
-      "agent_name": "DeltaStone",
+      "agent_name": "BoldPine",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -113,7 +113,7 @@
     },
     {
       "id": "pf06-registry",
-      "agent_name": "EmberLake",
+      "agent_name": "QuietLake",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -141,7 +141,7 @@
     },
     {
       "id": "pf06-gateway",
-      "agent_name": "FrostPine",
+      "agent_name": "BlueRiver",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -170,7 +170,7 @@
     },
     {
       "id": "pf05-tests",
-      "agent_name": "GoldenField",
+      "agent_name": "CalmRiver",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
@@ -196,7 +196,7 @@
     },
     {
       "id": "pf06-tests",
-      "agent_name": "HazelBrook",
+      "agent_name": "GreenRiver",
       "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
       "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
