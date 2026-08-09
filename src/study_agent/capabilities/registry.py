@@ -8,14 +8,21 @@ this module.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from .contracts import CapabilityManifest, TutorCapabilityId
+from .contracts import CapabilityId, CapabilityManifest, TutorCapabilityId
 
 if TYPE_CHECKING:
     from study_agent.kernel.module import KernelModule
+
+
+_CANONICAL_DOT_NAMESPACE = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)*$")
+_CANONICAL_DOT_CAPABILITY_ID = re.compile(
+    r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$"
+)
 
 
 def _manifest_id(manifest: CapabilityManifest) -> object:
@@ -31,26 +38,30 @@ def _manifest_identity(manifest: CapabilityManifest) -> str:
     return identity
 
 
-def _namespace(value: object) -> str | None:
-    candidate = value.value if isinstance(value, TutorCapabilityId) else value
-    if not isinstance(candidate, str):
-        return None
-    prefix, separator, _ = candidate.partition(".")
-    return prefix if separator else None
-
-
 def _validate_namespace(value: object) -> str:
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise ValueError("capability namespace must be non-empty and trimmed")
-    if any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for character in value):
+    if _CANONICAL_DOT_NAMESPACE.fullmatch(value) is None:
         raise ValueError("capability namespace must be lowercase and namespaced")
-    if value[0] not in "abcdefghijklmnopqrstuvwxyz0123456789":
-        raise ValueError("capability namespace must start with an alphanumeric character")
     return value
 
 
-def _manifest_namespace(manifest: CapabilityManifest) -> str | None:
-    return _namespace(_manifest_id(manifest))
+def _validate_manifest_id(manifest: CapabilityManifest) -> None:
+    identifier = _manifest_id(manifest)
+    if isinstance(identifier, CapabilityId) and _CANONICAL_DOT_CAPABILITY_ID.fullmatch(
+        identifier.value
+    ) is None:
+        raise ValueError("capability id must use one canonical dot namespace")
+
+
+def _manifest_in_namespace(manifest: CapabilityManifest, namespace: str) -> bool:
+    identifier = _manifest_id(manifest)
+    if not isinstance(identifier, CapabilityId):
+        # TutorCapabilityId is the compatibility surface for the pre-PF-06
+        # built-ins and is intentionally not assigned to a host namespace.
+        return True
+    value = identifier.value
+    return value == namespace or value.startswith(f"{namespace}.")
 
 
 class StudyCapabilityRegistry:
@@ -69,6 +80,8 @@ class StudyCapabilityRegistry:
         values = tuple(manifests)
         if not all(isinstance(item, CapabilityManifest) for item in values):
             raise TypeError("capability registry accepts only CapabilityManifest values")
+        for item in values:
+            _validate_manifest_id(item)
         normalized_namespace = (
             None if namespace is None else _validate_namespace(namespace)
         )
@@ -80,8 +93,7 @@ class StudyCapabilityRegistry:
             raise ValueError("v1 permits only one version of each capability id")
         if normalized_namespace is not None:
             for item in values:
-                item_namespace = _manifest_namespace(item)
-                if item_namespace is not None and item_namespace != normalized_namespace:
+                if not _manifest_in_namespace(item, normalized_namespace):
                     raise ValueError("capability manifest is outside the trusted namespace")
 
         self._manifests = tuple(sorted(values, key=lambda item: item.identity))
@@ -111,6 +123,8 @@ class StudyCapabilityRegistry:
         trusted_namespace = namespace
         if trusted_namespace is None:
             trusted_namespace = getattr(module, "module_id", None)
+        if trusted_namespace is not None:
+            trusted_namespace = _validate_namespace(trusted_namespace)
         typed: list[CapabilityManifest] = []
         for registration in registrations:
             if not isinstance(registration, tuple) or len(registration) != 2:
@@ -118,6 +132,10 @@ class StudyCapabilityRegistry:
             name, candidate = registration
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("capability registration name must be non-empty text")
+            if _CANONICAL_DOT_CAPABILITY_ID.fullmatch(name) is None:
+                raise ValueError(
+                    "capability registration name must use one canonical dot namespace"
+                )
             if isinstance(candidate, CapabilityManifest):
                 if trusted_namespace is not None and not name.startswith(
                     f"{trusted_namespace}."

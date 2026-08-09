@@ -1,7 +1,27 @@
 import pytest
 
+from study_agent.capabilities import CapabilityManifest
+from study_agent.capabilities.contracts import CapabilityId
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
 from study_agent.kernel.module import EventSchema, KernelModule, KernelModuleRegistry
+from study_agent.skills import SemanticVersion
+
+
+def capability(identifier: str) -> CapabilityManifest:
+    schema = {
+        "type": "object",
+        "required": (),
+        "properties": {},
+        "additionalProperties": False,
+    }
+    return CapabilityManifest(
+        CapabilityId(identifier),
+        SemanticVersion.parse("1.0.0"),
+        schema,
+        schema,
+        ("study:write",),
+        False,
+    )
 
 
 def module(module_id: str, event_type: str = "cardine.card.created") -> KernelModule:
@@ -18,10 +38,10 @@ def module(module_id: str, event_type: str = "cardine.card.created") -> KernelMo
 
 def test_module_is_immutable_and_registry_is_deterministically_closed() -> None:
     registry = KernelModuleRegistry()
-    registry.register(module("z-module"))
-    registry.register(module("a-module", "cardine.card.reviewed"))
+    registry.register(module("z"))
+    registry.register(module("a", "cardine.card.reviewed"))
     registry.close()
-    assert tuple(item.module_id for item in registry.snapshot()) == ("a-module", "z-module")
+    assert tuple(item.module_id for item in registry.snapshot()) == ("a", "z")
     with pytest.raises(ValidationFailure):
         registry.register(module("late"))
 
@@ -98,3 +118,43 @@ def test_closed_snapshot_compiles_callable_schema_reducer_and_upcaster() -> None
     assert not hasattr(snapshot, "upcasters")
     with pytest.raises(ValidationFailure):
         registry.register(module("late", "cardine.card.late"))
+
+
+@pytest.mark.parametrize(
+    "registration_name",
+    ("study:read", "study/read", "study_agent.read", "study-agent.read"),
+)
+def test_kernel_module_rejects_noncanonical_capability_registration_name(
+    registration_name: str,
+) -> None:
+    with pytest.raises(ValidationFailure, match="lowercase namespaced"):
+        KernelModule(
+            module_id="study",
+            version="1",
+            capabilities=((registration_name, object()),),
+        )
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ("study:read", "study/read", "study_agent.read", "study-agent.read"),
+)
+def test_kernel_module_rejects_noncanonical_typed_capability_id(identifier: str) -> None:
+    with pytest.raises(ValidationFailure, match="canonical dot namespace"):
+        KernelModule(
+            module_id="study",
+            version="1",
+            capabilities=(("study.read", capability(identifier)),),
+        )
+
+
+def test_kernel_module_registry_rejects_duplicate_typed_capability_manifest_identity() -> None:
+    manifest = capability("study.read")
+    registry = KernelModuleRegistry()
+    module = KernelModule(
+        module_id="study",
+        version="1",
+        capabilities=(("study.read", manifest), ("study.other", manifest)),
+    )
+    with pytest.raises(ConflictFailure, match="capability manifest identity"):
+        registry.register(module)
