@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
@@ -90,3 +91,13 @@ print(json.dumps({"loaded": loaded, "fingerprint": manifest.fingerprint}))
     result = json.loads(process.stdout)
     assert result["loaded"] == []
     assert result["fingerprint"] == api.public_manifest().fingerprint
+
+
+def test_legacy_event_store_and_domain_upcast_surface_are_not_public() -> None:
+    import study_agent.ports as ports
+    from study_agent.api.runtime import EventUpcasterRegistry
+
+    assert "EventStore" not in ports.__all__
+    assert not hasattr(ports, "EventStore")
+    annotations = inspect.signature(EventUpcasterRegistry.upcast).parameters["event"].annotation
+    assert "DomainEvent" not in str(annotations)

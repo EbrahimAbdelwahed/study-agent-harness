@@ -247,7 +247,6 @@ class EventRegistry:
             occurred_at=event.occurred_at,
             correlation_id=event.correlation_id,
             payload=event.payload,
-            session_id=event.session_id,
             causation_id=event.causation_id,
         )
 
@@ -322,9 +321,11 @@ class EventRegistry:
                 f"no reducer registered for {event.event_type}@{event.schema_version}"
             )
         if normalized.schema_version < target:
-            normalized = self._upcasters.upcast(normalized, target)
-            if not isinstance(normalized, (DomainEvent, EventEnvelope)):
-                raise ValidationFailure("upcaster returned an invalid event")
+            normalized = (
+                self._upcasters._upcast_legacy(normalized, target)
+                if isinstance(normalized, DomainEvent)
+                else self._upcasters.upcast(normalized, target)
+            )
         prepared = (
             normalized
             if isinstance(normalized, DomainEvent)

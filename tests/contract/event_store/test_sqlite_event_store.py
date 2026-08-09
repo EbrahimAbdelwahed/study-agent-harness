@@ -16,8 +16,8 @@ from study_agent.domain import (
     PrincipalKind,
 )
 from study_agent.domain._validation import JsonObject, JsonValue
-from study_agent.ports import EventStore
-from study_agent.ports.storage import EventSequenceConflictError
+from study_agent.domain.events import EventEnvelope
+from study_agent.ports.storage import EventSequenceConflictError, _LegacyEventStore
 from study_agent.state import EventRegistry
 
 
@@ -55,14 +55,20 @@ def registry() -> EventRegistry:
     return result
 
 
-def exercise_event_store_contract(store: EventStore) -> None:
+def exercise_event_store_contract(store: _LegacyEventStore) -> None:
     course_id = CourseId("course-contract")
     events = (make_event(course_id, 1), make_event(course_id, 2))
 
     assert store.read(course_id) == ()
     assert store.append(course_id, 0, events) == 2
-    assert store.read(course_id) == events
-    assert store.read(course_id, after_sequence=1) == (events[1],)
+    public_events = store.read(course_id)
+    assert all(isinstance(event, EventEnvelope) for event in public_events)
+    assert tuple(event.event_id for event in public_events) == tuple(
+        event.event_id for event in events
+    )
+    assert tuple(event.event_id for event in store.read(course_id, after_sequence=1)) == (
+        events[1].event_id,
+    )
     assert store.append(course_id, 2, ()) == 2
 
 

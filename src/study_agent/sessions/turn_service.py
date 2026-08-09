@@ -34,9 +34,9 @@ from study_agent.ports import (
     AssistantTurnViewPort,
     ClockPort,
     EventSequenceConflictError,
-    EventStore,
     SessionViewPort,
 )
+from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
 
 from .events import (
     SESSION_ASSISTANT_TURN_RECORDED,
@@ -57,7 +57,7 @@ from .turns import verified_tutor_message
 class SessionTurnService:
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         sessions: SessionViewPort,
         assistant_turns: AssistantTurnViewPort,
@@ -281,7 +281,7 @@ class SessionTurnService:
         return candidates[0]
 
     def _expect_sequence(self, context: ExecutionContext, expected: int) -> None:
-        stream = self._events.read(context.course_id)
+        stream = _read_domain_events(self._events, context.course_id)
         actual = stream[-1].course_sequence if stream else 0
         if actual != expected:
             raise RetryableSessionConflictError(

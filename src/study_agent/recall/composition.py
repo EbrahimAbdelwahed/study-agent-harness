@@ -17,7 +17,7 @@ from study_agent.domain import CourseId
 from study_agent.ports.artifact import ArtifactViewPort
 from study_agent.ports.clock import ClockPort
 from study_agent.ports.scheduling import SchedulingPolicyPort
-from study_agent.ports.storage import EventStore
+from study_agent.ports.storage import _LegacyEventStore
 from study_agent.state import Projection
 
 from .due import DueRecallView
@@ -66,7 +66,7 @@ class RecallComposition:
 
 def compose_recall(
     *,
-    events: EventStore,
+    events: _LegacyEventStore,
     load_projection: Callable[[CourseId], Projection],
     clock: ClockPort,
     scheduler: SchedulingPolicyPort | None = None,

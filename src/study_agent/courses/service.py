@@ -6,8 +6,12 @@ from study_agent.domain.context import ExecutionContext
 from study_agent.domain.course import CourseProfile
 from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
 from study_agent.domain.identifiers import CourseId
-from study_agent.ports import ClockPort, CourseNotFoundError, CourseViewPort, EventStore
-from study_agent.ports.storage import EventSequenceConflictError
+from study_agent.ports import ClockPort, CourseNotFoundError, CourseViewPort
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    _LegacyEventStore,
+    _read_domain_events,
+)
 
 from .events import (
     COURSE_CREATED,
@@ -31,7 +35,7 @@ class RetryableCourseConflictError(RuntimeError):
 
 class CourseService:
     def __init__(
-        self, events: EventStore, clock: ClockPort, view: CourseViewPort
+        self, events: _LegacyEventStore, clock: ClockPort, view: CourseViewPort
     ) -> None:
         self._events = events
         self._clock = clock
@@ -53,7 +57,7 @@ class CourseService:
             PrincipalKind.SERVICE,
         ):
             raise CourseCommandError("course creation requires a trusted human or service actor")
-        stream = tuple(self._events.read(profile.id))
+        stream = _read_domain_events(self._events, profile.id)
         sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and sequence != expected_sequence:
             raise RetryableCourseConflictError(
@@ -63,7 +67,7 @@ class CourseService:
         existing = self._existing(profile.id)
         if existing is not None:
             if expected_sequence is not None:
-                latest = tuple(self._events.read(profile.id))
+                latest = _read_domain_events(self._events, profile.id)
                 latest_sequence = latest[-1].course_sequence if latest else 0
                 if latest_sequence != expected_sequence:
                     raise RetryableCourseConflictError(

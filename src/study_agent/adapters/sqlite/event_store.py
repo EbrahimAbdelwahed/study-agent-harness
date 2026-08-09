@@ -8,7 +8,7 @@ import stat
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 from urllib.parse import quote
 
 from study_agent.domain.events import DomainEvent, EventEnvelope
@@ -150,7 +150,7 @@ class SQLiteEventStore:
             registry.close()
             registry = registry.compile()
         self._registry = (
-            registry.event_registry if isinstance(registry, KernelSnapshot) else registry
+            registry._event_registry() if isinstance(registry, KernelSnapshot) else registry
         )
         if not read_only:
             with closing(self._connect()) as connection:
@@ -322,7 +322,17 @@ class SQLiteEventStore:
 
     def read(
         self, course_id: CourseId, after_sequence: int = 0
-    ) -> Sequence[Any]:
+    ) -> Sequence[EventEnvelope]:
+        """Read the curated envelope stream, including legacy rows."""
+        return tuple(
+            _event_to_envelope(event)
+            for event in self._read_records(course_id, after_sequence)
+        )
+
+    def _read_records(
+        self, course_id: CourseId, after_sequence: int = 0
+    ) -> Sequence[EventInput]:
+        """Read typed legacy records for reducers and projection replay."""
         if type(after_sequence) is not int or after_sequence < 0:
             raise ValueError("after_sequence cannot be negative")
         with closing(self._connect()) as connection:
@@ -376,9 +386,28 @@ class SQLiteEventStore:
     def verify_projection(self, course_id: CourseId) -> bool:
         """Compare persisted projection bytes with an independent in-memory replay."""
         persisted = self.projection_bytes(course_id)
-        events = tuple(self.read(course_id))
+        events = tuple(self._read_records(course_id))
         replayed = replay(course_id, events, self._registry).canonical_bytes()
         return persisted == replayed
+
+
+def _event_to_envelope(event: EventInput) -> EventEnvelope:
+    """Convert a stored legacy record to the curated public envelope."""
+
+    if isinstance(event, EventEnvelope):
+        return event
+    return EventEnvelope(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        schema_version=event.schema_version,
+        stream_id=event.course_id,
+        stream_sequence=event.course_sequence,
+        occurred_at=event.occurred_at,
+        correlation_id=event.correlation_id,
+        actor=event.actor,
+        payload=event.payload,
+        causation_id=event.causation_id,
+    )
 
 
 def _writable_nofollow_uri(database: str) -> str:

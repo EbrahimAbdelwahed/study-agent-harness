@@ -131,7 +131,6 @@ class EventEnvelope:
     correlation_id: CorrelationId
     actor: Actor
     payload: JsonObject = field(default_factory=dict)
-    session_id: SessionId | None = None
     causation_id: EventId | None = None
 
     def __init__(
@@ -145,7 +144,6 @@ class EventEnvelope:
         correlation_id: CorrelationId | str,
         actor: Actor,
         payload: JsonObject | None = None,
-        session_id: SessionId | str | None = None,
         causation_id: EventId | str | None = None,
     ) -> None:
         object.__setattr__(self, "event_id", event_id)
@@ -157,7 +155,6 @@ class EventEnvelope:
         object.__setattr__(self, "correlation_id", correlation_id)
         object.__setattr__(self, "actor", actor)
         object.__setattr__(self, "payload", {} if payload is None else payload)
-        object.__setattr__(self, "session_id", session_id)
         object.__setattr__(self, "causation_id", causation_id)
         self.__post_init__()
 
@@ -182,11 +179,6 @@ class EventEnvelope:
         event_id = _normalize_id(self.event_id, EventId, "event_id")
         stream_id = _normalize_id(self.stream_id, CourseId, "stream_id")
         correlation_id = _normalize_id(self.correlation_id, CorrelationId, "correlation_id")
-        session_id = (
-            None
-            if self.session_id is None
-            else _normalize_id(self.session_id, SessionId, "session_id")
-        )
         if self.causation_id is not None:
             causation_id = _normalize_id(self.causation_id, EventId, "causation_id")
             if causation_id == event_id:
@@ -203,12 +195,11 @@ class EventEnvelope:
         object.__setattr__(self, "event_id", event_id)
         object.__setattr__(self, "stream_id", stream_id)
         object.__setattr__(self, "correlation_id", correlation_id)
-        object.__setattr__(self, "session_id", session_id)
         object.__setattr__(self, "causation_id", causation_id)
         object.__setattr__(self, "payload", frozen_payload)
 
     @property
-    def course_id(self) -> CourseId | str:
+    def course_id(self) -> CourseId:
         """Compatibility alias for the historical course event stream."""
         return self.stream_id
 
@@ -234,8 +225,6 @@ class EventEnvelope:
             "stream_id": _text_id(self.stream_id, "stream_id"),
             "stream_sequence": self.stream_sequence,
         }
-        if self.session_id is not None:
-            result["session_id"] = _text_id(self.session_id, "session_id")
         return result
 
     def canonical_bytes(self) -> bytes:
@@ -262,7 +251,7 @@ class EventEnvelope:
             "stream_sequence",
         }
         keys = set(value)
-        if keys not in (expected, expected | {"session_id"}):
+        if keys != expected:
             raise ValidationFailure("event envelope fields are not canonical")
         actor_value = value["actor"]
         if not isinstance(actor_value, Mapping) or set(actor_value) != {"kind", "principal_id"}:
@@ -288,7 +277,6 @@ class EventEnvelope:
                 correlation_id=cast(CorrelationId | str, value["correlation_id"]),
                 actor=actor,
                 payload=cast(JsonObject, payload),
-                session_id=cast(SessionId | str | None, value.get("session_id")),
                 causation_id=cast(EventId | str | None, value["causation_id"]),
             )
         except (TypeError, ValueError, KeyError) as error:

@@ -92,7 +92,6 @@ from .source_input import (
 from .storage import (
     BlobStore,
     EventSequenceConflictError,
-    EventStore,
     RunStore,
     SourceContentPort,
 )
@@ -150,7 +149,6 @@ __all__ = [
     "CourseViewPort",
     "DeterministicClosedGradingPolicyPort",
     "EventSequenceConflictError",
-    "EventStore",
     "EvidenceStatus",
     "HostFileIdentityPort",
     "HostFileIngestionPort",

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Protocol, runtime_checkable
 
-from study_agent.domain.events import EventEnvelope
+from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId, RevisionId, RunId
 from study_agent.domain.source import BlobRef, Citation, ResolvedCitation
 
@@ -32,28 +32,11 @@ class SourceContentPort(Protocol):
     def resolve(self, citation: Citation) -> ResolvedCitation: ...
 
 
+type _EventRecord = DomainEvent | EventEnvelope
+
+
 class EventStore(Protocol):
-    """Private compatibility seam for pre-envelope domain consumers.
-
-    The curated API publishes an envelope-only protocol.  Internal services
-    still accept this deliberately erased adapter while legacy DomainEvent
-    reducers are migrated; no DomainEvent symbol is exported through the API.
-    """
-
-    def append(
-        self,
-        course_id: CourseId,
-        expected_sequence: int,
-        events: Sequence[Any],
-    ) -> int: ...
-
-    def read(
-        self, course_id: CourseId, after_sequence: int = 0
-    ) -> Sequence[Any]: ...
-
-
-class CanonicalEventStore(Protocol):
-    """Envelope-only store contract used by the curated facade."""
+    """Canonical envelope-only event-store contract."""
 
     def append(
         self,
@@ -65,6 +48,52 @@ class CanonicalEventStore(Protocol):
     def read(
         self, stream_id: CourseId, after_sequence: int = 0
     ) -> Sequence[EventEnvelope]: ...
+
+
+class _LegacyEventStore(Protocol):
+    """Private compatibility seam for legacy DomainEvent consumers."""
+
+    def append(
+        self,
+        course_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[DomainEvent],
+    ) -> int: ...
+
+    def read(
+        self, course_id: CourseId, after_sequence: int = 0
+    ) -> Sequence[_EventRecord]: ...
+
+
+@runtime_checkable
+class _LegacyRecordReader(Protocol):
+    """Optional private reader preserving legacy session metadata for replay."""
+
+    def _read_records(
+        self, course_id: CourseId, after_sequence: int = 0
+    ) -> Sequence[_EventRecord]: ...
+
+
+def _read_legacy(
+    store: _LegacyEventStore, course_id: CourseId, after_sequence: int = 0
+) -> tuple[_EventRecord, ...]:
+    """Read private legacy records when an adapter provides that seam."""
+
+    if isinstance(store, _LegacyRecordReader):
+        return tuple(store._read_records(course_id, after_sequence))
+    return tuple(store.read(course_id, after_sequence))
+
+
+def _read_domain_events(
+    store: _LegacyEventStore, course_id: CourseId, after_sequence: int = 0
+) -> tuple[DomainEvent, ...]:
+    """Read only legacy records for consumers that require session metadata."""
+
+    return tuple(
+        event
+        for event in _read_legacy(store, course_id, after_sequence)
+        if isinstance(event, DomainEvent)
+    )
 
 
 class RunStore(Protocol):

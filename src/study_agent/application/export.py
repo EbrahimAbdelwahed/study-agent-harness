@@ -59,7 +59,7 @@ from study_agent.ingestion.succession import (
     reduce_source_superseded_by,
 )
 from study_agent.knowledge import register_scope_events
-from study_agent.ports import EventStore
+from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
 from study_agent.recall.contracts import AppliedSchedule, ReviewRecord
 from study_agent.recall.events import (
     RECALL_EVENT_TYPES,
@@ -210,7 +210,7 @@ class ExportService:
 
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
     ) -> None:
         self._events = events
 
@@ -219,7 +219,7 @@ class ExportService:
     ) -> ExportBundle | ExportBundleV2 | ExportBundleV3:
         if not isinstance(version, ExportVersion):
             raise TypeError("version must be an ExportVersion")
-        stream = tuple(self._events.read(course_id))
+        stream = _read_domain_events(self._events, course_id)
         if version is ExportVersion.V2:
             return self._assemble_v2(course_id, stream)
         if version is ExportVersion.V3:

@@ -121,12 +121,22 @@ class KernelModule:
 
 
 @dataclass(frozen=True, slots=True)
-class KernelSnapshot:
-    """Closed module metadata compiled into immutable runtime registries."""
+class _KernelRuntimeSnapshot:
+    """Private executable registries compiled from one closed module set."""
 
-    modules: tuple[KernelModule, ...]
     event_registry: EventRegistry
     upcasters: EventUpcasterRegistry
+
+
+@dataclass(frozen=True, slots=True)
+class KernelSnapshot:
+    """Opaque public snapshot of the closed host module metadata."""
+
+    modules: tuple[KernelModule, ...]
+    _runtime: _KernelRuntimeSnapshot = field(repr=False, compare=False)
+
+    def _event_registry(self) -> EventRegistry:
+        return self._runtime.event_registry
 
 
 class KernelModuleRegistry:
@@ -136,6 +146,7 @@ class KernelModuleRegistry:
         self._modules: dict[str, KernelModule] = {}
         self._closed = False
         self._compiled: KernelSnapshot | None = None
+        self._runtime: _KernelRuntimeSnapshot | None = None
 
     @property
     def closed(self) -> bool:
@@ -176,7 +187,8 @@ class KernelModuleRegistry:
 
     def close(self) -> KernelModuleRegistry:
         self._validate_dependencies()
-        self._compiled = self.compile()
+        self._runtime = self._compile_runtime()
+        self._compiled = KernelSnapshot(self.modules, self._runtime)
         self._closed = True
         return self
 
@@ -188,9 +200,14 @@ class KernelModuleRegistry:
         return self.modules
 
     def compile(self) -> KernelSnapshot:
-        """Compile registered metadata into closed reducer/upcaster registries."""
+        """Return an opaque snapshot of the executable closed module set."""
         if self._closed and self._compiled is not None:
             return self._compiled
+        runtime = self._compile_runtime()
+        return KernelSnapshot(self.modules, runtime)
+
+    def _compile_runtime(self) -> _KernelRuntimeSnapshot:
+        """Compile metadata into private reducer/upcaster registries."""
         self._validate_dependencies()
         from study_agent.events.upcasting import EventUpcasterRegistry
         from study_agent.state.registry import EventRegistry
@@ -223,7 +240,7 @@ class KernelModuleRegistry:
                 )
         upcasters.close()
         event_registry.close()
-        return KernelSnapshot(self.modules, event_registry, upcasters)
+        return _KernelRuntimeSnapshot(event_registry, upcasters)
 
     compiled_snapshot = compile
 

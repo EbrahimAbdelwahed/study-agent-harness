@@ -13,8 +13,12 @@ from study_agent.domain.events import Actor, DomainEvent
 from study_agent.domain.identifiers import BlobId, RevisionId, SourceId
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
 from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, SourceKind
-from study_agent.ports import BlobStore, ClockPort, CourseViewPort, EventStore
-from study_agent.ports.storage import EventSequenceConflictError
+from study_agent.ports import BlobStore, ClockPort, CourseViewPort
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    _LegacyEventStore,
+    _read_domain_events,
+)
 
 from .chunking import CHUNKER_VERSION, DEFAULT_CHUNKING_CONFIG, ChunkingConfig, chunk_text
 from .events import (
@@ -74,7 +78,7 @@ class TextIngestionService:
         self,
         *,
         blobs: BlobStore,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         courses: CourseViewPort,
         chunking: ChunkingConfig = DEFAULT_CHUNKING_CONFIG,
@@ -98,7 +102,7 @@ class TextIngestionService:
         expected_sequence: int | None = None,
     ) -> TextIngestionResult:
         self._courses.get(context.course_id)
-        stream = tuple(self._events.read(context.course_id))
+        stream = _read_domain_events(self._events, context.course_id)
         current_sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and current_sequence != expected_sequence:
             raise TextIngestionError(
@@ -165,7 +169,7 @@ class TextIngestionService:
         current = _current_revision(stream, source_id)
         if current is not None and _matches_request(current, source, self._chunking):
             if expected_sequence is not None:
-                latest = tuple(self._events.read(context.course_id))
+                latest = _read_domain_events(self._events, context.course_id)
                 latest_sequence = latest[-1].course_sequence if latest else 0
                 if latest_sequence != expected_sequence:
                     raise TextIngestionError(
@@ -231,7 +235,7 @@ class TextIngestionService:
         try:
             committed = self._events.append(context.course_id, current_sequence, (event,))
         except EventSequenceConflictError as error:
-            concurrent_stream = tuple(self._events.read(context.course_id))
+            concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(concurrent_stream, source_id)
             if (
                 expected_sequence is None
@@ -292,7 +296,7 @@ class TextIngestionService:
         try:
             committed = self._events.append(context.course_id, current_sequence, (event,))
         except EventSequenceConflictError as error:
-            concurrent_stream = tuple(self._events.read(context.course_id))
+            concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(
                 concurrent_stream, revision.source.source_id
             )

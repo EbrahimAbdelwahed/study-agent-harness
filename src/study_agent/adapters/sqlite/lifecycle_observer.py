@@ -105,7 +105,7 @@ def observe_local_repository(
                 events = SQLiteEventStore(events_path, registry, read_only=True)
                 course_ids = events.list_course_ids()
                 projections = {
-                    course_id: replay(course_id, events.read(course_id), registry)
+                    course_id: replay(course_id, events._read_records(course_id), registry)
                     for course_id in course_ids
                 }
                 view = ProjectionCourseView(projections.__getitem__)

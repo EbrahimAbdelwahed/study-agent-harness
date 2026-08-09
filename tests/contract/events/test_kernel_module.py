@@ -94,7 +94,7 @@ def test_closed_snapshot_compiles_callable_schema_reducer_and_upcaster() -> None
     )
     registry.close()
     snapshot = registry.compile()
-    assert snapshot.event_registry.closed
-    assert snapshot.upcasters.closed
+    assert not hasattr(snapshot, "event_registry")
+    assert not hasattr(snapshot, "upcasters")
     with pytest.raises(ValidationFailure):
         registry.register(module("late", "cardine.card.late"))

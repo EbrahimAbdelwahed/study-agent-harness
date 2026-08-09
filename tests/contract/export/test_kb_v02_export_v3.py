@@ -76,7 +76,7 @@ def test_v3_replays_kb_v02_substrate_lineage_and_scope_events(tmp_path: Path) ->
         source_role="primary",
         context=_context(),
     )
-    base = tuple(events.read(COURSE))
+    base = tuple(events._read_records(COURSE))
     predecessor = decode_source_revision_ingested(base[1].payload).source
     successor = decode_source_revision_ingested(base[3].payload).source
 

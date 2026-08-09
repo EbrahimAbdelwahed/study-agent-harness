@@ -28,7 +28,11 @@ from study_agent.domain._validation import JsonObject
 from study_agent.ports.artifact import ArtifactViewPort
 from study_agent.ports.clock import ClockPort
 from study_agent.ports.scheduling import SchedulingPolicyPort
-from study_agent.ports.storage import EventSequenceConflictError, EventStore
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    _LegacyEventStore,
+    _read_domain_events,
+)
 from study_agent.state import canonical_json_bytes
 
 from .contracts import (
@@ -77,7 +81,7 @@ class RecallService:
 
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         artifacts: ArtifactViewPort,
         scheduler: SchedulingPolicyPort,
@@ -373,7 +377,11 @@ class RecallService:
         return self._recall_view.get(course_id)
 
     def _find_event(self, course_id: CourseId, event_id: EventId) -> DomainEvent | None:
-        matches = tuple(item for item in self._events.read(course_id) if item.event_id == event_id)
+        matches = tuple(
+            item
+            for item in _read_domain_events(self._events, course_id)
+            if item.event_id == event_id
+        )
         if len(matches) > 1:
             raise RecallConflictError("course stream contains duplicate recall event identity")
         return matches[0] if matches else None

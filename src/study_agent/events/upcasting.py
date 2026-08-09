@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Any, overload
+from typing import Any
 
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
@@ -104,24 +104,14 @@ class EventUpcasterRegistry:
             current = next_version
         return current, migrated
 
-    @overload
-    def upcast(
-        self, event: EventEnvelope, target_schema_version: int | None = None
-    ) -> EventEnvelope: ...
-
-    @overload
-    def upcast(
-        self, event: DomainEvent, target_schema_version: int | None = None
-    ) -> DomainEvent: ...
-
     def upcast(
         self,
-        event: EventEnvelope | DomainEvent,
+        event: EventEnvelope,
         target_schema_version: int | None = None,
-    ) -> EventEnvelope | DomainEvent:
-        """Upcast an envelope or transitional legacy event without changing identity."""
+    ) -> EventEnvelope:
+        """Upcast a public envelope without changing identity."""
 
-        if not isinstance(event, (EventEnvelope, DomainEvent)):
+        if not isinstance(event, EventEnvelope):
             raise ValidationFailure("upcast requires an event envelope")
         event_type = event.event_type
         validate_event_type(event_type)
@@ -131,8 +121,21 @@ class EventUpcasterRegistry:
         target, payload = self._payload(
             event_type, event.payload, current_version, target_schema_version
         )
-        if isinstance(event, EventEnvelope):
-            return replace(event, schema_version=target, payload=payload)
+        return replace(event, schema_version=target, payload=payload)
+
+    def _upcast_legacy(
+        self, event: DomainEvent, target_schema_version: int | None = None
+    ) -> DomainEvent:
+        """Private transitional adapter for legacy reducers and replay."""
+
+        event_type = event.event_type
+        validate_event_type(event_type)
+        current_version = event.schema_version
+        if target_schema_version is None:
+            target_schema_version = self.current_version(event_type)
+        target, payload = self._payload(
+            event_type, event.payload, current_version, target_schema_version
+        )
         return replace(event, schema_version=target, payload=payload)
 
     migrate = upcast

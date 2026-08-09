@@ -86,7 +86,10 @@ def test_expected_sequence_conflict_has_no_partial_mutation(tmp_path: Path) -> N
         store.append(first.course_id, 0, (make_event(1, "other.event"),))
 
     assert (raised.value.expected, raised.value.actual) == (0, 1)
-    assert store.read(first.course_id) == (first,)
+    public_stream = store.read(first.course_id)
+    assert len(public_stream) == 1
+    assert isinstance(public_stream[0], EventEnvelope)
+    assert public_stream[0].event_id == first.event_id
     assert store.projection_bytes(first.course_id) == before
 
 
@@ -177,7 +180,7 @@ def test_failed_rebuild_preserves_previous_projection(tmp_path: Path) -> None:
     assert store.projection_bytes(first.course_id) == before
 
 
-def test_prepare_upcasts_envelope_ids_and_preserves_session() -> None:
+def test_prepare_upcasts_legacy_ids_and_preserves_session() -> None:
     upcasters = EventUpcasterRegistry()
     upcasters.register("note.recorded", 1, lambda payload: {**payload, "v2": True})
     registry = EventRegistry(upcasters)
@@ -195,17 +198,17 @@ def test_prepare_upcasts_envelope_ids_and_preserves_session() -> None:
 
     registry.register("note.recorded", 1, decode, reduce)
     registry.register("note.recorded", 2, decode, reduce)
-    envelope = EventEnvelope(
-        event_id="event-envelope",
+    envelope = DomainEvent(
+        event_id=EventId("event-envelope"),
+        course_id=CourseId("course-1"),
+        course_sequence=1,
         event_type="note.recorded",
         schema_version=1,
-        stream_id="course-1",
-        stream_sequence=1,
         occurred_at=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
-        correlation_id="correlation-1",
+        correlation_id=CorrelationId("correlation-1"),
         actor=Actor(PrincipalKind.HUMAN, "local-user"),
         payload={"note": "hello"},
-        session_id="session-1",
+        session_id=SessionId("session-1"),
     )
 
     prepared = registry.prepare(envelope)
@@ -264,10 +267,38 @@ def test_sqlite_mixed_event_inputs_share_one_stream_and_preserve_original_bytes(
     assert [(row[0], row[1]) for row in rows] == [("course-1", 1), ("course-1", 2)]
     assert bytes(rows[0][2]) == legacy_bytes
     assert bytes(rows[1][2]) == envelope_bytes
-    assert isinstance(store.read(CourseId("course-1"))[0], DomainEvent)
-    assert isinstance(store.read(CourseId("course-1"))[1], EventEnvelope)
+    public_events = store.read(CourseId("course-1"))
+    assert all(isinstance(event, EventEnvelope) for event in public_events)
     before = store.projection_bytes(CourseId("course-1"))
     assert store.rebuild_projection(CourseId("course-1")) == before
+
+
+def test_public_read_converts_legacy_row_while_private_replay_keeps_session(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite3", note_registry())
+    legacy = DomainEvent(
+        EventId("legacy-session-event"),
+        CourseId("course-1"),
+        1,
+        "note.recorded",
+        1,
+        Actor(PrincipalKind.HUMAN, "local-user"),
+        datetime(2026, 7, 10, 12, 35, tzinfo=UTC),
+        CorrelationId("correlation-1"),
+        {"note": "legacy"},
+        SessionId("session-1"),
+    )
+
+    store.append(legacy.course_id, 0, (legacy,))
+    public_event = store.read(legacy.course_id)[0]
+    assert isinstance(public_event, EventEnvelope)
+    assert not hasattr(public_event, "session_id")
+    private_event = store._read_records(legacy.course_id)[0]
+    assert isinstance(private_event, DomainEvent)
+    assert private_event.session_id == SessionId("session-1")
+    persisted = store.projection_bytes(legacy.course_id)
+    assert store.rebuild_projection(legacy.course_id) == persisted
 
 
 def test_closed_host_module_drives_opaque_append_and_replay(tmp_path: Path) -> None:
