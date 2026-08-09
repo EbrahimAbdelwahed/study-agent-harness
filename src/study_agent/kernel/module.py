@@ -5,20 +5,21 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from study_agent.domain._validation import JsonObject
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
 from study_agent.domain.events import validate_event_type
 
 if TYPE_CHECKING:
+    from study_agent.capabilities.contracts import CapabilityManifest
     from study_agent.capabilities.registry import StudyCapabilityRegistry
     from study_agent.events.upcasting import EventUpcasterRegistry
     from study_agent.state.registry import EventRegistry
 
 
 _CAPABILITY_REGISTRATION_NAME = re.compile(
-    r"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+    r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$"
 )
 
 
@@ -135,7 +136,7 @@ class KernelModule:
         the stricter PF-06 namespace and ownership checks.
         """
 
-        from study_agent.capabilities.contracts import CapabilityManifest
+        from study_agent.capabilities.contracts import CapabilityId, CapabilityManifest
 
         for name, candidate in self.capabilities:
             if _CAPABILITY_REGISTRATION_NAME.fullmatch(name) is None:
@@ -151,6 +152,12 @@ class KernelModule:
             manifest_id = getattr(candidate.id, "value", candidate.id)
             if not isinstance(manifest_id, str):
                 raise ValidationFailure("capability manifest id must be text")
+            if isinstance(candidate.id, CapabilityId) and _CAPABILITY_REGISTRATION_NAME.fullmatch(
+                manifest_id
+            ) is None:
+                raise ValidationFailure(
+                    "capability manifest id must use one canonical dot namespace"
+                )
             if "." in manifest_id and not manifest_id.startswith(f"{self.module_id}."):
                 raise ValidationFailure(
                     "capability manifest is outside its module namespace"
@@ -320,7 +327,7 @@ class KernelModuleRegistry:
         )
 
     @staticmethod
-    def _is_capability_manifest(candidate: object) -> bool:
+    def _is_capability_manifest(candidate: object) -> TypeGuard[CapabilityManifest]:
         from study_agent.capabilities.contracts import CapabilityManifest
 
         return isinstance(candidate, CapabilityManifest)

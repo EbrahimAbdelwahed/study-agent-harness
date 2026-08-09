@@ -7,6 +7,7 @@ from study_agent.capabilities import (
     StudyCapabilityRegistry,
     TutorCapabilityId,
 )
+from study_agent.capabilities.contracts import CapabilityId
 from study_agent.domain._validation import JsonObject
 from study_agent.skills import SemanticVersion
 
@@ -24,6 +25,23 @@ def _manifest(
     return CapabilityManifest(
         identifier,
         SemanticVersion.parse(version),
+        schema,
+        schema,
+        ("study:write",),
+        False,
+    )
+
+
+def _namespaced_manifest(identifier: str) -> CapabilityManifest:
+    schema: JsonObject = {
+        "type": "object",
+        "required": (),
+        "properties": {},
+        "additionalProperties": False,
+    }
+    return CapabilityManifest(
+        CapabilityId(identifier),
+        SemanticVersion.parse("1.0.0"),
         schema,
         schema,
         ("study:write",),
@@ -80,3 +98,18 @@ def test_manifest_output_never_advertises_policy_or_runtime_selection() -> None:
         "learner_hypothesis",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ("study:read", "study/read", "study_agent.read", "study-agent.read"),
+)
+def test_registry_rejects_noncanonical_capability_namespace(identifier: str) -> None:
+    with pytest.raises(ValueError, match="canonical dot namespace"):
+        StudyCapabilityRegistry((_namespaced_manifest(identifier),))
+
+
+@pytest.mark.parametrize("namespace", ("study:agent", "study/agent", "study_agent", "study-agent"))
+def test_registry_rejects_noncanonical_trusted_namespace(namespace: str) -> None:
+    with pytest.raises(ValueError, match="lowercase and namespaced"):
+        StudyCapabilityRegistry((), namespace=namespace)
