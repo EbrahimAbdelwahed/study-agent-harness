@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -11,8 +12,14 @@ from study_agent.domain.errors import ConflictFailure, ValidationFailure
 from study_agent.domain.events import validate_event_type
 
 if TYPE_CHECKING:
+    from study_agent.capabilities.registry import StudyCapabilityRegistry
     from study_agent.events.upcasting import EventUpcasterRegistry
     from study_agent.state.registry import EventRegistry
+
+
+_CAPABILITY_REGISTRATION_NAME = re.compile(
+    r"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+)
 
 
 def _name(value: object, field_name: str) -> str:
@@ -118,6 +125,36 @@ class KernelModule:
                         f"{field_name} must contain named registrations"
                     ) from error
             object.__setattr__(self, field_name, normalized)
+        self._validate_capabilities()
+
+    def _validate_capabilities(self) -> None:
+        """Validate typed capability contributions without scanning imports.
+
+        ``capabilities`` historically also carries opaque host registrations,
+        so those values remain valid. A typed ``CapabilityManifest`` receives
+        the stricter PF-06 namespace and ownership checks.
+        """
+
+        from study_agent.capabilities.contracts import CapabilityManifest
+
+        for name, candidate in self.capabilities:
+            if _CAPABILITY_REGISTRATION_NAME.fullmatch(name) is None:
+                raise ValidationFailure(
+                    "capability registration name must be a lowercase namespaced name"
+                )
+            if not isinstance(candidate, CapabilityManifest):
+                continue
+            if not name.startswith(f"{self.module_id}."):
+                raise ValidationFailure(
+                    "capability registration must be owned by its module namespace"
+                )
+            manifest_id = getattr(candidate.id, "value", candidate.id)
+            if not isinstance(manifest_id, str):
+                raise ValidationFailure("capability manifest id must be text")
+            if "." in manifest_id and not manifest_id.startswith(f"{self.module_id}."):
+                raise ValidationFailure(
+                    "capability manifest is outside its module namespace"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +163,7 @@ class _KernelRuntimeSnapshot:
 
     event_registry: EventRegistry
     upcasters: EventUpcasterRegistry
+    capability_registry: StudyCapabilityRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,12 +176,16 @@ class KernelSnapshot:
     def _event_registry(self) -> EventRegistry:
         return self._runtime.event_registry
 
+    def _capability_registry(self) -> StudyCapabilityRegistry:
+        return self._runtime.capability_registry
+
 
 class KernelModuleRegistry:
     """Host-owned, explicit module registry with a closed runtime snapshot."""
 
     def __init__(self) -> None:
         self._modules: dict[str, KernelModule] = {}
+        self._capability_identities: dict[str, str] = {}
         self._closed = False
         self._compiled: KernelSnapshot | None = None
         self._runtime: _KernelRuntimeSnapshot | None = None
@@ -181,6 +223,7 @@ class KernelModuleRegistry:
         self._ensure_unique_names(module, "projections")
         self._ensure_unique_names(module, "services")
         self._ensure_unique_names(module, "capabilities")
+        self._ensure_unique_capability_manifests(module)
         self._modules[module.module_id] = module
 
     register_module = register
@@ -240,7 +283,16 @@ class KernelModuleRegistry:
                 )
         upcasters.close()
         event_registry.close()
-        return _KernelRuntimeSnapshot(event_registry, upcasters)
+        from study_agent.capabilities.registry import StudyCapabilityRegistry
+
+        manifests = tuple(
+            candidate
+            for module in self.modules
+            for _, candidate in module.capabilities
+            if self._is_capability_manifest(candidate)
+        )
+        capability_registry = StudyCapabilityRegistry(manifests)
+        return _KernelRuntimeSnapshot(event_registry, upcasters, capability_registry)
 
     compiled_snapshot = compile
 
@@ -253,6 +305,25 @@ class KernelModuleRegistry:
         }
         if existing.intersection(names):
             raise ConflictFailure(f"{field_name} registration collides")
+
+    def _ensure_unique_capability_manifests(self, module: KernelModule) -> None:
+        identities: list[str] = []
+        for _, candidate in module.capabilities:
+            if not self._is_capability_manifest(candidate):
+                continue
+            identity = candidate.identity
+            if identity in identities or identity in self._capability_identities:
+                raise ConflictFailure("capability manifest identity collides")
+            identities.append(identity)
+        self._capability_identities.update(
+            {identity: module.module_id for identity in identities}
+        )
+
+    @staticmethod
+    def _is_capability_manifest(candidate: object) -> bool:
+        from study_agent.capabilities.contracts import CapabilityManifest
+
+        return isinstance(candidate, CapabilityManifest)
 
     def _validate_dependencies(self) -> None:
         schema_keys = {
