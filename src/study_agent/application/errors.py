@@ -103,7 +103,13 @@ def _translate_model_error(
         )
     if code == "cancelled":
         return ValidationFailure("model operation was cancelled", correlation_id=correlation_id)
-    if code in {"protocol_error", "unsupported_operation"}:
+    if code == "protocol_error":
+        return UnavailableDependencyFailure(
+            "model dependency returned an invalid response",
+            retryable=False,
+            correlation_id=correlation_id,
+        )
+    if code == "unsupported_operation":
         return ValidationFailure(
             "model dependency returned an invalid response", correlation_id=correlation_id
         )

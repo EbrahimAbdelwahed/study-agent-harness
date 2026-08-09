@@ -62,21 +62,24 @@ _SECRET_FIELD = re.compile(
     r"chain[-_ ]of[-_ ]thought|traceback|stack[_ -]?trace|exception|provider)",
     re.IGNORECASE,
 )
+_SECRET_CREDENTIAL = re.compile(
+    r"(?i)(?:\b(?:basic|bearer)\s+[^\s,;]+|\bsk-[A-Za-z0-9][A-Za-z0-9_-]*\b)"
+)
 
 
 def _has_sensitive_marker(value: str) -> bool:
-    return _SECRET_FIELD.search(value) is not None
+    return _SECRET_FIELD.search(value) is not None or _SECRET_CREDENTIAL.search(value) is not None
 
 
 def _bounded_text(value: str) -> str:
+    if _has_sensitive_marker(value):
+        return _REDACTED
     try:
         encoded = value.encode("utf-8")
     except UnicodeEncodeError:
         return _UNSUPPORTED
     if len(encoded) > MAX_ERROR_STRING_BYTES:
         return _STRING_LIMIT
-    if _has_sensitive_marker(value):
-        return _REDACTED
     return value
 
 

@@ -149,6 +149,10 @@ class HostAuthority:
     ) -> AuthorityContext:
         if not isinstance(kind, PrincipalKind):
             raise TypeError("kind must be PrincipalKind")
+        if isinstance(grants, (str, bytes, bytearray)):
+            raise TypeError("grants must be a collection of values")
+        if isinstance(scopes, (str, bytes, bytearray)):
+            raise TypeError("scopes must be a collection of values")
         principal = Principal._mint(self._marker, kind, principal_id)
         issued_grants: list[Grant] = []
         for grant_value in grants:

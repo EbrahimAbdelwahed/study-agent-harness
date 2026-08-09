@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import pickle
+from collections.abc import Iterable
 from typing import cast
 
 import pytest
@@ -71,6 +72,25 @@ def test_cross_issuer_context_is_rejected_before_claims() -> None:
         issuer_b.port.require(context_a, (object(),), (object(),))  # type: ignore[arg-type]
     with pytest.raises(UnauthorizedFailure, match="different host"):
         issuer_a.port.require(context_b, (object(),), (object(),))  # type: ignore[arg-type]
+
+
+def test_issue_rejects_scalar_grant_and_scope_collections() -> None:
+    issuer = HostAuthority()
+    for scalar in ("study:write", b"study:write"):
+        with pytest.raises(TypeError):
+            issuer.issue(
+                PrincipalKind.HUMAN,
+                "caller",
+                grants=cast(Iterable[str | Grant], scalar),
+                correlation_id="corr",
+            )
+        with pytest.raises(TypeError):
+            issuer.issue(
+                PrincipalKind.HUMAN,
+                "caller",
+                scopes=cast(Iterable[str | Scope], scalar),
+                correlation_id="corr",
+            )
 
 
 def test_model_is_rejected_before_schema_or_adapter_access() -> None:

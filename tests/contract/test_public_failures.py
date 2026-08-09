@@ -21,6 +21,7 @@ from study_agent.api.authority import (
 )
 from study_agent.application.errors import _ERROR_CODE_TO_FAILURE
 from study_agent.domain.errors import ErrorCode, StudyError
+from study_agent.ports.model import ModelError, ModelErrorCode
 
 PUBLIC_FAILURES = (
     ValidationFailure,
@@ -46,6 +47,9 @@ def test_public_failure_taxonomy_is_closed_and_safe() -> None:
                 "headers": {"Authorization": "Bearer secret"},
                 "query": "prompt=private prompt",
             },
+            "neutral_basic": "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+            "neutral_bearer": "Bearer opaque-access-token",
+            "neutral_sk": "sk-live_1234567890abcdef",
         },
     )
     serialized = failure.to_json()
@@ -58,6 +62,15 @@ def test_public_failure_taxonomy_is_closed_and_safe() -> None:
     rendered = json.dumps(serialized, sort_keys=True)
     for secret in ("top-secret", "secret-key", "Bearer secret", "private prompt"):
         assert secret not in rendered
+    for secret in (
+        "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+        "Bearer opaque-access-token",
+        "sk-live_1234567890abcdef",
+    ):
+        assert secret not in rendered
+    assert details["neutral_basic"] == "[REDACTED]"
+    assert details["neutral_bearer"] == "[REDACTED]"
+    assert details["neutral_sk"] == "[REDACTED]"
     assert details["nested"] != {"headers": {"Authorization": "Bearer secret"}}
     with pytest.raises(TypeError):
         failure.details["safe"] = "changed"  # type: ignore[index]
@@ -148,6 +161,17 @@ def test_every_legacy_error_code_maps_explicitly() -> None:
         translated = translate_study_error(StudyError(code, "private internal detail"))
         assert isinstance(translated, failure_type)
         assert "private internal detail" not in json.dumps(translated.to_json())
+
+
+def test_model_protocol_error_matches_legacy_protocol_mapping() -> None:
+    model_failure = translate_exception(
+        ModelError(ModelErrorCode.PROTOCOL_ERROR, "private protocol detail")
+    )
+    legacy_failure = translate_study_error(
+        StudyError(ErrorCode.MODEL_PROTOCOL_ERROR, "private protocol detail")
+    )
+    assert type(model_failure) is type(legacy_failure) is UnavailableDependencyFailure
+    assert model_failure.retryable is legacy_failure.retryable is False
 
 
 def test_failure_cause_is_local_only() -> None:
