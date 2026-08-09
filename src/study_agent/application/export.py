@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC
 from enum import StrEnum
 
 from study_agent.artifacts import (
@@ -18,7 +19,12 @@ from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.course import CourseProfile
 from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
 from study_agent.domain.grounding import GroundedAnswer
-from study_agent.domain.identifiers import CorrelationId, CourseId, EventId
+from study_agent.domain.identifiers import (
+    CorrelationId,
+    CourseId,
+    EventId,
+    substrate_production_event_id_for,
+)
 from study_agent.domain.session import (
     AnswerRecord,
     ContinuationSummaryV1,
@@ -27,10 +33,14 @@ from study_agent.domain.session import (
     StudySessionRecord,
 )
 from study_agent.domain.source import Citation, SourceChunk
+from study_agent.domain.substrate import SubstrateProduction
 from study_agent.ingestion import (
     SOURCE_REVISION_SELECTED,
     SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+    SOURCE_SUBSTRATE_PRODUCED,
+    SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION,
     decode_source_revision_selected_event,
+    decode_source_substrate_produced,
     reduce_source_revision,
     reduce_source_revision_selected,
 )
@@ -41,6 +51,14 @@ from study_agent.ingestion.events import (
     decode_source_revision_ingested,
 )
 from study_agent.ingestion.identity import source_event_id_for
+from study_agent.ingestion.substrate_projection import reduce_substrate_produced
+from study_agent.ingestion.succession import (
+    SOURCE_SUPERSEDED_BY,
+    SOURCE_SUPERSEDED_BY_SCHEMA_VERSION,
+    decode_source_superseded_by_event,
+    reduce_source_superseded_by,
+)
+from study_agent.knowledge import register_scope_events
 from study_agent.ports import EventStore
 from study_agent.recall.contracts import AppliedSchedule, ReviewRecord
 from study_agent.recall.events import (
@@ -462,6 +480,35 @@ def _decode_source_event(event: DomainEvent) -> SourceRevisionIngested:
     return decoded
 
 
+def _decode_substrate_event(event: DomainEvent) -> SubstrateProduction:
+    """Decode a substrate receipt without requiring the blob store.
+
+    Export replays the canonical event stream from an ``EventStore`` only;
+    unlike the ingestion registry, it has no blob loader.  The payload codec
+    still validates the complete receipt shape, while the envelope checks
+    preserve the identity and authority guarantees that are independent of
+    blob contents.
+    """
+    if (
+        event.event_type != SOURCE_SUBSTRATE_PRODUCED
+        or event.schema_version != SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION
+    ):
+        raise ValueError("event envelope does not match source.substrate_produced@1")
+    decoded = decode_source_substrate_produced(event.payload)
+    expected_id = substrate_production_event_id_for(
+        event.course_id,
+        decoded.substrate_production_id,
+        event.course_sequence,
+    )
+    if event.event_id != expected_id:
+        raise ValueError("event_id does not match substrate production identity")
+    if event.actor.kind is not PrincipalKind.SERVICE:
+        raise ValueError("substrate production events require a service actor")
+    if decoded.produced_at != event.occurred_at.astimezone(UTC):
+        raise ValueError("production produced_at must equal event.occurred_at")
+    return decoded
+
+
 def _validate_stream(course_id: CourseId, stream: Sequence[DomainEvent]) -> None:
     if type(course_id) is not CourseId:
         raise TypeError("course_id must be a CourseId")
@@ -549,6 +596,19 @@ def _replay_v3(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
         decode_source_revision_selected_event,
         reduce_source_revision_selected,
     )
+    registry.register_event(
+        SOURCE_SUBSTRATE_PRODUCED,
+        SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION,
+        _decode_substrate_event,
+        reduce_substrate_produced,
+    )
+    registry.register_event(
+        SOURCE_SUPERSEDED_BY,
+        SOURCE_SUPERSEDED_BY_SCHEMA_VERSION,
+        decode_source_superseded_by_event,
+        reduce_source_superseded_by,
+    )
+    register_scope_events(registry)
     register_session_events(registry)
     register_study_context_events(registry)
     register_artifact_events(registry)
