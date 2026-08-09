@@ -493,7 +493,6 @@ def dispatch(manifest: Manifest, *, execute: bool) -> int:
                 f'model_reasoning_effort="{REASONING_EFFORT}"',
                 "--sandbox",
                 "workspace-write",
-                "--approve-for-me",
                 "--cd",
                 str(worktree),
                 "--json",
