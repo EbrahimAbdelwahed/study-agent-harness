@@ -329,10 +329,11 @@ Required verification:
 
 On success, send the orchestrator a completion message with commit SHA,
 changed files, exact test outcomes, and residual risks:
-  am mail send --project {lane.project_key} --from {lane.agent_name} \\
-    --to {manifest.orchestrator_agent} --thread-id {lane.bead_id} \\
-    --subject '[{lane.bead_id}] lane {lane.lane_id} complete' \\
-    --body '<summary>'
+  am macros contact-handshake --project {lane.project_key} \\
+    --from {lane.agent_name} --to {manifest.orchestrator_agent} \\
+    --auto-accept --thread-id {lane.bead_id} \\
+    --welcome-subject '[{lane.bead_id}] lane {lane.lane_id} complete' \\
+    --welcome-body '<summary>' --json
 Then release your reservations:
   am file_reservations release {lane.project_key} {lane.agent_name}
 
@@ -342,42 +343,49 @@ place only when another writer must not proceed. Worktree: {worktree}
 
 
 def _register_agent(am: str, project: Path, name: str, task: str) -> None:
+    del task
     _run(
         [
             am,
-            "agents",
-            "register",
+            "agent",
+            "start",
             "--project",
             str(project),
+            "--agent",
+            name,
             "--program",
             "codex-cli",
             "--model",
             MODEL,
-            "--name",
-            name,
-            "--task",
-            task,
+            "--fix",
             "--json",
         ]
     )
 
 
 def _reserve(am: str, lane: Lane) -> None:
-    _run(
+    command = [
+        am,
+        "macros",
+        "file-reservation-cycle",
+        "--project",
+        str(lane.project_key),
+        "--agent",
+        lane.agent_name,
+    ]
+    for path in lane.reserve_paths:
+        command.extend(["--path", path])
+    command.extend(
         [
-            am,
-            "file_reservations",
-            "reserve",
-            str(lane.project_key),
-            lane.agent_name,
-            *lane.reserve_paths,
             "--ttl",
             "14400",
             "--exclusive",
             "--reason",
             lane.bead_id,
+            "--json",
         ]
     )
+    _run(command)
 
 
 def _send_assignment(am: str, manifest: Manifest, lane: Lane) -> None:
@@ -388,21 +396,21 @@ def _send_assignment(am: str, manifest: Manifest, lane: Lane) -> None:
     _run(
         [
             am,
-            "mail",
-            "send",
+            "macros",
+            "contact-handshake",
             "--project",
             str(lane.project_key),
             "--from",
             manifest.orchestrator_agent,
             "--to",
             lane.agent_name,
+            "--auto-accept",
             "--thread-id",
             lane.bead_id,
-            "--subject",
+            "--welcome-subject",
             f"[{lane.bead_id}] Start lane {lane.lane_id}",
-            "--body",
+            "--welcome-body",
             body,
-            "--ack-required",
             "--json",
         ]
     )
