@@ -87,3 +87,32 @@ def test_package_metadata_and_runtime_version_agree() -> None:
     assert metadata["project"]["name"] == "study-agent-harness"
     assert metadata["project"]["version"] == study_agent.__version__
     assert study_agent.__version__
+
+
+def _manifest_with_package_version(package_version: str) -> api.PublicManifest:
+    return api.PublicManifest(
+        facade_version=1,
+        package_version=package_version,
+        python_versions=("3.12", "3.13"),
+        subfacades=EXPECTED_SUBFACADES,
+        exports=("PublicManifest", "public_manifest", *EXPECTED_SUBFACADES),
+        schema_versions={"manifest": 1},
+    )
+
+
+@pytest.mark.parametrize("package_version", ("1.2.3-01", "1.2.3-alpha.01"))
+def test_manifest_constructor_rejects_leading_zero_numeric_prerelease(
+    package_version: str,
+) -> None:
+    with pytest.raises(ValueError, match="package_version"):
+        _manifest_with_package_version(package_version)
+
+
+@pytest.mark.parametrize(
+    "package_version",
+    ("1.2.3-0.alpha+build.007", "1.2.3-rc.1.x86+meta.01"),
+)
+def test_manifest_constructor_accepts_dotted_alphanumeric_prerelease_and_build(
+    package_version: str,
+) -> None:
+    assert _manifest_with_package_version(package_version).package_version == package_version

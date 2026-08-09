@@ -4,10 +4,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parents[2]
-SOURCE_ROOT = PROJECT_ROOT / "src"
 
 
 def test_root_and_facade_import_without_runtime_side_effects() -> None:
@@ -82,10 +78,11 @@ manifest = study_agent.api.public_manifest()
 print(json.dumps({"events": events, "version": version, "fingerprint": manifest.fingerprint}))
 '''
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(SOURCE_ROOT)
+    environment.pop("PYTHONPATH", None)
+    environment["PYTHONNOUSERSITE"] = "1"
     process = subprocess.run(
-        (sys.executable, "-c", script),
-        cwd=PROJECT_ROOT,
+        (sys.executable, "-s", "-c", script),
+        cwd="/tmp",
         env=environment,
         text=True,
         capture_output=True,

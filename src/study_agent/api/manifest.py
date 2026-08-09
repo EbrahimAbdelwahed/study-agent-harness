@@ -11,9 +11,12 @@ from typing import cast as _cast
 
 from study_agent import __version__ as _PACKAGE_VERSION
 
+_SEMVER_PRERELEASE_IDENTIFIER = (
+    r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+)
 _SEMVER = _re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    rf"(?:-({_SEMVER_PRERELEASE_IDENTIFIER}(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 _PYTHON_VERSIONS = ("3.12", "3.13")
