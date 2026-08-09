@@ -1,0 +1,33 @@
+{
+  "run_id": "example-four-hour-wave",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 8,
+  "lanes": [
+    {
+      "enabled": false,
+      "id": "storage-ports",
+      "agent_name": "AmberQuartz",
+      "repo": "/absolute/path/to/canonical/repo-worktree",
+      "project_key": "/absolute/path/to/canonical/repo-worktree",
+      "base_ref": "exact-commit-or-reviewed-branch",
+      "beads_db": "/absolute/path/to/canonical/repo-worktree/.beads/beads.db",
+      "bead_id": "project-pf-04-example",
+      "brief": "docs/worker-briefs/run-id/pf-04.md",
+      "reserve_paths": [
+        "src/package/ports/**",
+        "tests/contract/storage/**"
+      ],
+      "forbidden_paths": [
+        "src/package/domain/**",
+        "pyproject.toml"
+      ],
+      "verification": [
+        "python -m pytest -q tests/contract/storage",
+        "python -m ruff check src/package/ports tests/contract/storage",
+        "git diff --check"
+      ]
+    }
+  ]
+}
