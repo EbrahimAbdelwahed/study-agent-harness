@@ -318,6 +318,8 @@ def decode_source_revision_ingested(payload: JsonObject) -> SourceRevisionIngest
 
 
 def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
+    if str(ref.id) != f"sha256:{ref.checksum_sha256}":
+        raise ValueError(f"{name} id does not match its checksum")
     content = load_blob(ref)
     if not isinstance(content, bytes):
         raise ValueError(f"{name} loader must return bytes")

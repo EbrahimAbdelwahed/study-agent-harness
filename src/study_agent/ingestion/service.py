@@ -102,6 +102,17 @@ class TextIngestionService:
         context: ExecutionContext,
         expected_sequence: int | None = None,
     ) -> TextIngestionResult:
+        _validate_ingestion_request(
+            filename=filename,
+            content=content,
+            source_id=source_id,
+            title=title,
+            trust_level=trust_level,
+            source_role=source_role,
+            context=context,
+            expected_sequence=expected_sequence,
+        )
+        kind, media_type, method = _file_contract(filename)
         self._courses.get(context.course_id)
         stream = _read_domain_events(self._events, context.course_id)
         current_sequence = stream[-1].course_sequence if stream else 0
@@ -117,7 +128,6 @@ class TextIngestionService:
                 IngestionErrorCode.UNSUPPORTED_CONFIGURATION,
                 f"unsupported chunker version: {self._chunking.version}",
             )
-        kind, media_type, method = _file_contract(filename)
         try:
             normalized = normalize_utf8(content)
         except InvalidUtf8Error as error:
@@ -330,6 +340,11 @@ class TextIngestionService:
 
 
 def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
+    if not isinstance(filename, str) or not filename or filename != filename.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "filename must be non-empty text without surrounding whitespace",
+        )
     suffix = PurePath(filename).suffix.lower()
     if suffix == ".txt":
         media_type, method = source_kind_contract(SourceKind.TEXT)
@@ -341,6 +356,63 @@ def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
         IngestionErrorCode.UNSUPPORTED_EXTENSION,
         "only .txt and .md files are supported",
     )
+
+
+def _validate_ingestion_request(
+    *,
+    filename: object,
+    content: object,
+    source_id: object,
+    title: object,
+    trust_level: object,
+    source_role: object,
+    context: object,
+    expected_sequence: object,
+) -> None:
+    """Reject malformed host input before reading or publishing any state."""
+
+    if not isinstance(filename, str) or not filename or filename != filename.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "filename must be non-empty text without surrounding whitespace",
+        )
+    if type(content) is not bytes:
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "content must be bytes",
+        )
+    if not isinstance(source_id, SourceId):
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "source_id must be SourceId",
+        )
+    if not isinstance(title, str) or not title or title != title.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "title must be non-empty text without surrounding whitespace",
+        )
+    if not isinstance(source_role, str) or not source_role or source_role != source_role.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "source_role must be non-empty text without surrounding whitespace",
+        )
+    if type(trust_level) is not int or not 0 <= trust_level <= 100:
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "trust_level must be an integer between 0 and 100",
+        )
+    if not isinstance(context, ExecutionContext):
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "context must be ExecutionContext",
+        )
+    if expected_sequence is not None and (
+        type(expected_sequence) is not int or expected_sequence < 0
+    ):
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "expected_sequence must be a non-negative integer or None",
+        )
 
 
 def _predicted_blob(content: bytes) -> BlobRef:
