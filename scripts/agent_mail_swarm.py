@@ -249,6 +249,34 @@ def _verify_lane_inputs(lane: Lane) -> None:
         raise ManifestError(f"worker brief does not exist: {lane.repo / lane.brief}")
 
 
+def _verify_ready_beads(br: str, lanes: tuple[Lane, ...]) -> None:
+    """Reject lanes whose Beads task is not dependency-ready."""
+
+    ready_by_db: dict[Path, set[str]] = {}
+    for lane in lanes:
+        ready = ready_by_db.get(lane.beads_db)
+        if ready is None:
+            result = _run([br, "--db", str(lane.beads_db), "ready", "--json"])
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise ManifestError(
+                    f"Beads ready output is not JSON for {lane.beads_db}: {error}"
+                ) from error
+            if not isinstance(payload, list):
+                raise ManifestError(f"Beads ready output must be an array: {lane.beads_db}")
+            ready = {
+                item["id"]
+                for item in payload
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
+            ready_by_db[lane.beads_db] = ready
+        if lane.bead_id not in ready:
+            raise ManifestError(
+                f"bead is not dependency-ready in {lane.beads_db}: {lane.bead_id}"
+            )
+
+
 def render_plan(manifest: Manifest) -> str:
     lines = [
         f"run={manifest.run_id} lanes={len(manifest.lanes)} max={manifest.max_workers}",
@@ -380,9 +408,29 @@ def _send_assignment(am: str, manifest: Manifest, lane: Lane) -> None:
     )
 
 
+def _claim_bead(br: str, manifest: Manifest, lane: Lane) -> None:
+    _run(
+        [
+            br,
+            "--db",
+            str(lane.beads_db),
+            "update",
+            lane.bead_id,
+            "--status",
+            "in_progress",
+            "--assignee",
+            lane.agent_name,
+            "--actor",
+            manifest.orchestrator_agent,
+        ]
+    )
+
+
 def dispatch(manifest: Manifest, *, execute: bool) -> int:
     for lane in manifest.lanes:
         _verify_lane_inputs(lane)
+    br = _require_executable("br") if manifest.lanes else "br"
+    _verify_ready_beads(br, manifest.lanes)
     print(render_plan(manifest))
     if not execute:
         print("\nDry run only. Re-run with --execute to create worktrees and launch workers.")
@@ -420,6 +468,7 @@ def dispatch(manifest: Manifest, *, execute: bool) -> int:
         )
         _register_agent(am, lane.project_key, lane.agent_name, f"{lane.bead_id}: {lane.lane_id}")
         _reserve(am, lane)
+        _claim_bead(br, manifest, lane)
         _send_assignment(am, manifest, lane)
 
         log_path = run_state_dir / f"{lane.lane_id}.jsonl"
