@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from study_agent.domain.events import DomainEvent
+from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId, RevisionId, RunId
 from study_agent.domain.source import BlobRef, Citation, ResolvedCitation
 
@@ -38,6 +38,16 @@ class EventStore(Protocol):
     ) -> int: ...
 
     def read(self, course_id: CourseId, after_sequence: int = 0) -> Sequence[DomainEvent]: ...
+
+
+class EnvelopeEventStore(Protocol):
+    """Host storage seam for the canonical versioned event envelope."""
+
+    def append(
+        self, stream_id: str, expected_sequence: int, events: Sequence[EventEnvelope]
+    ) -> int: ...
+
+    def read(self, stream_id: str, after_sequence: int = 0) -> Sequence[EventEnvelope]: ...
 
 
 class RunStore(Protocol):

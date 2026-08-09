@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from study_agent.domain._validation import JsonObject, freeze_object
-from study_agent.domain.events import DomainEvent
+from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
 
 from .registry import EventRegistry
@@ -55,4 +55,14 @@ def replay(
     projection = Projection(course_id)
     for event in events:
         projection = apply_event(projection, event, registry)
+    return projection
+
+
+def replay_envelopes(
+    course_id: CourseId, events: Sequence[EventEnvelope], registry: EventRegistry
+) -> Projection:
+    """Replay canonical envelopes through the same immutable projection path."""
+    projection = Projection(course_id)
+    for event in events:
+        projection = apply_event(projection, event, registry)  # type: ignore[arg-type]
     return projection
