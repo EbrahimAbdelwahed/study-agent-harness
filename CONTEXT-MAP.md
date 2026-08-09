@@ -85,9 +85,11 @@ flowchart LR
 - The local repository does not yet compose a real model → host runner →
   capability gateway path end to end; the current proof uses bounded/reference
   composition.
-- The durable generic job kernel, observability surface, and first-party worker
-  implementations are future work. Existing SQLite adapters and operational
-  stores are not a promise that those workers already exist.
+- The repository already contains retry-stable isolated worker orchestration,
+  flashcard fan-out, and exam-analysis foundations. The gap is the target-grade
+  durable job kernel, observability surface, and job-backed hierarchical
+  flashcard, web-evidence, and sealed-verification compositions; existing
+  SQLite adapters and operational stores do not provide that assembly yet.
 - The browser shell remains an offline/reference surface. Online research stays
   a gap until a quarantined evidence port and admission flow are implemented.
 - Sealed assessment generation, the separate coverage reviewer, and stale-input

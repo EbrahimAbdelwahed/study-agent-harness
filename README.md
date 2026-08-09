@@ -4,7 +4,7 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Status: Alpha](https://img.shields.io/badge/Status-v0.1.0%20alpha-orange.svg)](https://github.com/EbrahimAbdelwahed/study-agent-harness/releases)
+[![Status: Alpha](https://img.shields.io/badge/Status-v0.2.0%20alpha-orange.svg)](https://github.com/EbrahimAbdelwahed/study-agent-harness/releases)
 
 Models are great at *proposing* what to do next. They are terrible custodians of
 learner state, source truth, and long-running execution. Every team building a
@@ -162,7 +162,7 @@ home for approved future work and non-goals.
 
 ## Status and contributing
 
-v0.1.0 is an alpha release; the public API is not yet stable. Release
+v0.2.0 is an alpha release; the public API is not yet stable. Release
 acceptance requires deterministic replay/export checks, the credential-free
 end-to-end CLI fixture, a clean-wheel install and CLI smoke test, and
 independent semantic review. Network smoke tests are strictly opt-in.

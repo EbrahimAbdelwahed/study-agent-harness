@@ -44,14 +44,14 @@ duplicating their registries.
 - **Synthetic Verification** — a novel, sealed assessment generated from an
   approved Exam Profile and Generation Plan. Its questions become visible only
   during an attempt.
-- **Decision Trace** — the canonical minimal record of observable choices,
-  outcomes, validators, and transitions. It is an audit trail, not model
-  chain-of-thought.
+- **Decision Trace (approved target)** — the canonical minimal record of
+  observable choices, outcomes, validators, and transitions. It is an audit
+  trail, not model chain-of-thought.
 - **Operational state** — checkpoints, indexes, job leases, metrics, and
   diagnostic payloads used for recovery or debugging. It is not canonical
   learner truth.
 
-## Invariants
+## Implemented invariants
 
 1. The append-only event stream is canonical; projections, snapshots, and
    indexes are rebuildable and never independent authorities.
@@ -63,18 +63,27 @@ duplicating their registries.
    Retries are bounded and never silently mutate canonical history.
 5. Sources remain immutable and citable. Derived synthesis preserves claim
    lineage and trust and never becomes a primary source.
-6. Human approval is separate from generation. Assessment content is sealed
-   before an attempt, and required coverage gaps block release.
+6. Generated artifacts remain proposals until an explicit authorized decision;
+   generation and validation do not imply acceptance.
 7. The kernel is dependency-light and model-neutral. It has no Pi/runtime
    dependency or vendored agent framework; hosts bring adapters and storage.
-8. The public API is async-first with a sync convenience layer over the same
-   implementation. The reference SQLite adapter is local and single-writer;
-   job execution remains behind ports.
-9. The canonical Decision Trace records the path taken without requesting or
-   storing private chain-of-thought. Full redacted payloads are diagnostic-local
-   only, with 14-day operational retention and no remote telemetry by default.
+8. Provider-neutral service surfaces are asynchronous where execution can
+   suspend. The reference SQLite adapter is local and single-writer; worker
+   execution remains behind ports.
+9. Stored execution proofs describe observable inputs, outputs, validations,
+   and transitions; they do not request or store private chain-of-thought.
 10. A single learner approval boundary is in scope. Cross-user sharing,
     organizations, billing, hosted operations, and product UI are deferred.
+
+## Approved target constraints
+
+- A sync convenience API must wrap the same async implementation; it must not
+  become a second runtime.
+- Synthetic Verification content remains sealed until an attempt, and required
+  coverage gaps block release.
+- A canonical Decision Trace will record the observable path taken. Full
+  redacted payloads remain diagnostic-local operational data, retained for 14
+  days by default, with no default remote telemetry.
 
 ## Source owners
 
