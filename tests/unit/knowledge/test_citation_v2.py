@@ -4,19 +4,19 @@ from hashlib import sha256
 
 import pytest
 
-from study_agent.domain import (
-    Citation as LegacyCitation,
-)
-from study_agent.domain import (
+from study_agent.api.sources import (
     CitationFailure,
     CitationFailureKind,
     DerivedRef,
     FigureCitationV1,
+    TextCitationV2,
+)
+from study_agent.domain import Citation as LegacyCitation
+from study_agent.domain import (
     RetrievableUnit,
     RevisionId,
     SelectionStatus,
     SourceId,
-    TextCitationV2,
     TextSpan,
     UnitKind,
     UnitMeta,
