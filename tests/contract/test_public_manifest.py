@@ -43,7 +43,7 @@ def test_public_manifest_is_frozen_and_canonically_serialized() -> None:
     assert isinstance(manifest.subfacades, tuple)
     assert isinstance(manifest.exports, tuple)
     assert isinstance(manifest.schema_versions, MappingProxyType)
-    assert dict(manifest.schema_versions) == {"manifest": 1}
+    assert dict(manifest.schema_versions) == {"event_envelope": 1, "manifest": 1}
 
     expected_bytes = json.dumps(
         manifest.to_json(),

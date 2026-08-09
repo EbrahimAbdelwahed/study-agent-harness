@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from study_agent.api.events import Actor, EventEnvelope, PrincipalKind
+from study_agent.api.storage import Actor, EventEnvelope, PrincipalKind
 from study_agent.domain.errors import ValidationFailure
 
 

@@ -28,8 +28,8 @@ def test_adjacent_upcast_preserves_identity_and_is_deterministic() -> None:
     upgraded = registry.upcast(event())
     assert upgraded.schema_version == 2
     assert upgraded.payload == {"front": "q", "back": "a"}
-    assert upgraded.event_id == "event-1"
-    assert upgraded.causation_id == "event-0"
+    assert str(upgraded.event_id) == "event-1"
+    assert str(upgraded.causation_id) == "event-0"
     assert upgraded.canonical_bytes() == registry.upcast(event()).canonical_bytes()
 
 

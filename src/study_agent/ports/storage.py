@@ -34,20 +34,15 @@ class SourceContentPort(Protocol):
 
 class EventStore(Protocol):
     def append(
-        self, course_id: CourseId, expected_sequence: int, events: Sequence[DomainEvent]
+        self,
+        course_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[DomainEvent | EventEnvelope],
     ) -> int: ...
 
-    def read(self, course_id: CourseId, after_sequence: int = 0) -> Sequence[DomainEvent]: ...
-
-
-class EnvelopeEventStore(Protocol):
-    """Host storage seam for the canonical versioned event envelope."""
-
-    def append(
-        self, stream_id: str, expected_sequence: int, events: Sequence[EventEnvelope]
-    ) -> int: ...
-
-    def read(self, stream_id: str, after_sequence: int = 0) -> Sequence[EventEnvelope]: ...
+    def read(
+        self, course_id: CourseId, after_sequence: int = 0
+    ) -> Sequence[DomainEvent | EventEnvelope]: ...
 
 
 class RunStore(Protocol):

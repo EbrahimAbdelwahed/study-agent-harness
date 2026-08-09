@@ -23,10 +23,29 @@ BLOCKED_PREFIXES = (
 
 
 def test_every_listed_subfacade_is_importable_without_optional_modules() -> None:
+    expected_exports = {
+        "runtime": {
+            "EventRegistry",
+            "EventSchema",
+            "EventUpcasterRegistry",
+            "KernelModule",
+            "KernelModuleRegistry",
+            "ModuleRegistry",
+            "Registry",
+        },
+        "storage": {
+            "Actor",
+            "EventEnvelope",
+            "EventSequenceConflictError",
+            "EventStore",
+            "PrincipalKind",
+        },
+    }
     for name in api.public_manifest().subfacades:
         module = __import__(f"study_agent.api.{name}", fromlist=["*"])
-        assert module.__all__ == ()
-        assert {item for item in dir(module) if not item.startswith("_")} == set()
+        expected = expected_exports.get(name, set())
+        assert set(module.__all__) == expected
+        assert {item for item in dir(module) if not item.startswith("_")} == expected
 
 
 def test_root_import_stays_clean_when_optional_imports_are_unavailable() -> None:

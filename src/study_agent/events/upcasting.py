@@ -1,4 +1,4 @@
-"""Deterministic, adjacent event schema upcasting."""
+"""Deterministic adjacent event schema upcasting."""
 
 from __future__ import annotations
 
@@ -8,18 +8,13 @@ from typing import Any
 
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
-from study_agent.domain.events import EventEnvelope
+from study_agent.domain.events import DomainEvent, EventEnvelope, validate_event_type
 
 type Upcaster = Callable[[JsonObject], Mapping[str, Any]]
 
 
 class EventUpcasterRegistry:
-    """Explicit registry for pure adjacent schema migrations.
-
-    Registration is intentionally closed before runtime use.  A registry has
-    at most one edge per event type/version and always walks that edge in
-    ascending order, making mixed-version replay deterministic.
-    """
+    """Explicit registry for pure, one-version-at-a-time migrations."""
 
     def __init__(self) -> None:
         self._upcasters: dict[tuple[str, int], tuple[int, Upcaster]] = {}
@@ -46,12 +41,7 @@ class EventUpcasterRegistry:
     ) -> None:
         if self._closed:
             raise ValidationFailure("event upcaster registration is closed")
-        if (
-            not isinstance(event_type, str)
-            or not event_type.strip()
-            or event_type != event_type.strip()
-        ):
-            raise ValidationFailure("event type must be non-empty and trimmed")
+        validate_event_type(event_type)
         if from_schema_version is None:
             from_schema_version = old_schema_version
         elif old_schema_version is not None and old_schema_version != from_schema_version:
@@ -71,6 +61,7 @@ class EventUpcasterRegistry:
     register_upcaster = register
 
     def current_version(self, event_type: str) -> int:
+        validate_event_type(event_type)
         versions = [
             from_version + 1
             for (name, from_version) in self._upcasters
@@ -80,45 +71,58 @@ class EventUpcasterRegistry:
             raise ValidationFailure("unknown event schema")
         return max(versions)
 
-    def upcast(
-        self, envelope: EventEnvelope, target_schema_version: int | None = None
-    ) -> EventEnvelope:
-        if not isinstance(envelope, EventEnvelope):
-            raise ValidationFailure("upcast requires an event envelope")
-        target = (
-            self.current_version(envelope.event_type)
-            if target_schema_version is None
-            else target_schema_version
-        )
-        if type(target) is not int or target < envelope.schema_version:
+    def _payload(
+        self, event_type: str, payload: JsonObject, current: int, target: int
+    ) -> tuple[int, JsonObject]:
+        if type(target) is not int or target < current:
             raise ValidationFailure("target schema version is unsupported")
-        if target == envelope.schema_version:
-            return envelope
-        current = envelope.schema_version
-        payload = envelope.payload
+        migrated = payload
         while current < target:
             try:
-                next_version, upcaster = self._upcasters[(envelope.event_type, current)]
+                next_version, upcaster = self._upcasters[(event_type, current)]
             except KeyError as error:
                 raise ValidationFailure("event schema upcast path is incomplete") from error
             if next_version != current + 1:
                 raise ValidationFailure("event schema upcast path is malformed")
             try:
-                candidate = upcaster(payload)
+                candidate = upcaster(migrated)
                 if not isinstance(candidate, Mapping):
                     raise TypeError("upcaster must return a JSON object")
-                migrated = freeze_object(candidate)
-                # A second invocation against the same frozen input must be
-                # byte-identical; this rejects stateful/non-deterministic edges.
-                repeat = freeze_object(upcaster(payload))
-                if migrated != repeat:
+                first = freeze_object(candidate)
+                # Calling the edge twice over the exact immutable input proves
+                # deterministic behavior and catches stateful migrations.
+                repeat_candidate = upcaster(migrated)
+                if not isinstance(repeat_candidate, Mapping):
+                    raise TypeError("upcaster must return a JSON object")
+                if first != freeze_object(repeat_candidate):
                     raise ValueError("upcaster is not deterministic")
             except ValidationFailure:
                 raise
             except Exception as error:
                 raise ValidationFailure("event upcaster produced an invalid payload") from error
-            payload = migrated
+            migrated = first
             current = next_version
-        return replace(envelope, schema_version=current, payload=payload)
+        return current, migrated
+
+    def upcast(
+        self,
+        event: EventEnvelope | DomainEvent,
+        target_schema_version: int | None = None,
+    ) -> EventEnvelope | DomainEvent:
+        """Upcast an envelope or transitional legacy event without changing identity."""
+
+        if not isinstance(event, (EventEnvelope, DomainEvent)):
+            raise ValidationFailure("upcast requires an event envelope")
+        event_type = event.event_type
+        validate_event_type(event_type)
+        current_version = event.schema_version
+        if target_schema_version is None:
+            target_schema_version = self.current_version(event_type)
+        target, payload = self._payload(
+            event_type, event.payload, current_version, target_schema_version
+        )
+        if isinstance(event, EventEnvelope):
+            return replace(event, schema_version=target, payload=payload)
+        return replace(event, schema_version=target, payload=payload)
 
     migrate = upcast

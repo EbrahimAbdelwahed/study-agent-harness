@@ -25,8 +25,6 @@ class Actor:
     principal_id: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.kind, PrincipalKind):
-            raise ValueError("kind must be a trusted PrincipalKind")
         require_text(self.principal_id, "principal_id")
 
 
@@ -45,11 +43,11 @@ class DomainEvent:
     causation_id: EventId | None = None
 
     def __post_init__(self) -> None:
-        if self.course_sequence < 1:
+        if type(self.course_sequence) is not int or self.course_sequence < 1:
             raise ValueError("course_sequence must be positive")
-        if self.schema_version < 1:
+        if type(self.schema_version) is not int or self.schema_version < 1:
             raise ValueError("schema_version must be positive")
-        require_text(self.event_type, "event_type")
+        validate_event_type(self.event_type)
         require_aware(self.occurred_at, "occurred_at")
         if self.causation_id == self.event_id:
             raise ValueError("an event cannot cause itself")
@@ -57,6 +55,13 @@ class DomainEvent:
 
 
 _NAMESPACED_EVENT_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._:/-][a-z0-9]+)+$")
+
+
+def validate_event_type(value: object) -> str:
+    """Validate and return one canonical namespaced event type."""
+    if not isinstance(value, str) or _NAMESPACED_EVENT_TYPE.fullmatch(value) is None:
+        raise ValidationFailure("event_type must be a lowercase namespaced name")
+    return value
 
 
 def _text_id(value: object, field_name: str) -> str:
@@ -69,6 +74,16 @@ def _text_id(value: object, field_name: str) -> str:
     except ValueError as error:
         raise ValidationFailure(str(error)) from error
     return candidate
+
+
+def _normalize_id(
+    value: object, identifier_type: type[Identifier], field_name: str
+) -> Identifier:
+    candidate = _text_id(value, field_name)
+    try:
+        return identifier_type(candidate)
+    except (TypeError, ValueError) as error:
+        raise ValidationFailure(f"invalid {field_name}") from error
 
 
 def _json_value(value: object) -> object:
@@ -116,28 +131,41 @@ class EventEnvelope:
     correlation_id: CorrelationId | str
     actor: Actor
     payload: JsonObject = field(default_factory=dict)
+    session_id: SessionId | str | None = None
     causation_id: EventId | str | None = None
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.event_type, str)
-            or _NAMESPACED_EVENT_TYPE.fullmatch(self.event_type) is None
-        ):
-            raise ValidationFailure("event_type must be a lowercase namespaced name")
+        validate_event_type(self.event_type)
         if type(self.schema_version) is not int or self.schema_version < 1:
             raise ValidationFailure("schema_version must be positive")
         if type(self.stream_sequence) is not int or self.stream_sequence < 1:
             raise ValidationFailure("stream_sequence must be positive")
-        if not isinstance(self.actor, Actor):
+        if (
+            not isinstance(self.actor, Actor)
+            or not isinstance(self.actor.kind, PrincipalKind)
+            or not isinstance(self.actor.principal_id, str)
+        ):
             raise ValidationFailure("actor must be a trusted Actor")
-        require_aware(self.occurred_at, "occurred_at")
-        _text_id(self.event_id, "event_id")
-        _text_id(self.stream_id, "stream_id")
-        _text_id(self.correlation_id, "correlation_id")
+        if not isinstance(self.occurred_at, datetime):
+            raise ValidationFailure("occurred_at must be a datetime")
+        try:
+            require_aware(self.occurred_at, "occurred_at")
+        except (TypeError, ValueError) as error:
+            raise ValidationFailure(str(error)) from error
+        event_id = _normalize_id(self.event_id, EventId, "event_id")
+        stream_id = _normalize_id(self.stream_id, CourseId, "stream_id")
+        correlation_id = _normalize_id(self.correlation_id, CorrelationId, "correlation_id")
+        session_id = (
+            None
+            if self.session_id is None
+            else _normalize_id(self.session_id, SessionId, "session_id")
+        )
         if self.causation_id is not None:
-            _text_id(self.causation_id, "causation_id")
-            if _text_id(self.causation_id, "causation_id") == _text_id(self.event_id, "event_id"):
+            causation_id = _normalize_id(self.causation_id, EventId, "causation_id")
+            if causation_id == event_id:
                 raise ValidationFailure("an event cannot cause itself")
+        else:
+            causation_id = None
         if not isinstance(self.payload, Mapping):
             raise ValidationFailure("payload must be a JSON object")
         _reject_unsafe_json(self.payload)
@@ -145,6 +173,11 @@ class EventEnvelope:
             frozen_payload = freeze_object(self.payload)
         except (TypeError, ValueError) as error:
             raise ValidationFailure("payload is not valid JSON") from error
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "stream_id", stream_id)
+        object.__setattr__(self, "correlation_id", correlation_id)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "causation_id", causation_id)
         object.__setattr__(self, "payload", frozen_payload)
 
     @property
@@ -158,7 +191,7 @@ class EventEnvelope:
 
     def to_json(self) -> dict[str, object]:
         actor = {"kind": self.actor.kind.value, "principal_id": self.actor.principal_id}
-        return {
+        result = {
             "actor": actor,
             "causation_id": (
                 None
@@ -174,6 +207,9 @@ class EventEnvelope:
             "stream_id": _text_id(self.stream_id, "stream_id"),
             "stream_sequence": self.stream_sequence,
         }
+        if self.session_id is not None:
+            result["session_id"] = _text_id(self.session_id, "session_id")
+        return result
 
     def canonical_bytes(self) -> bytes:
         return json.dumps(
@@ -198,14 +234,20 @@ class EventEnvelope:
             "stream_id",
             "stream_sequence",
         }
-        if set(value) != expected:
+        keys = set(value)
+        if keys not in (expected, expected | {"session_id"}):
             raise ValidationFailure("event envelope fields are not canonical")
         actor_value = value["actor"]
         if not isinstance(actor_value, Mapping) or set(actor_value) != {"kind", "principal_id"}:
             raise ValidationFailure("actor must contain kind and principal_id")
         try:
             actor = Actor(PrincipalKind(actor_value["kind"]), actor_value["principal_id"])
-            occurred_at = datetime.fromisoformat(str(value["occurred_at"]).replace("Z", "+00:00"))
+            occurred_at_value = value["occurred_at"]
+            if not isinstance(occurred_at_value, str):
+                raise ValidationFailure("occurred_at must be an ISO-8601 string")
+            occurred_at = datetime.fromisoformat(
+                occurred_at_value.replace("Z", "+00:00")
+            )
             payload = value["payload"]
             if not isinstance(payload, Mapping):
                 raise ValidationFailure("payload must be a JSON object")
@@ -219,6 +261,7 @@ class EventEnvelope:
                 correlation_id=cast(CorrelationId | str, value["correlation_id"]),
                 actor=actor,
                 payload=cast(JsonObject, payload),
+                session_id=cast(SessionId | str | None, value.get("session_id")),
                 causation_id=cast(EventId | str | None, value["causation_id"]),
             )
         except (TypeError, ValueError, KeyError) as error:

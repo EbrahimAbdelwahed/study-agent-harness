@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote
 
-from study_agent.domain.events import DomainEvent
+from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
 from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.state import (
@@ -23,6 +23,7 @@ from study_agent.state import (
     event_to_bytes,
     replay,
 )
+from study_agent.state.registry import EventInput
 
 
 class SequenceConflictError(EventSequenceConflictError):
@@ -227,12 +228,17 @@ class SQLiteEventStore:
         return Projection(course_id, sequence, state)
 
     def append(
-        self, course_id: CourseId, expected_sequence: int, events: Sequence[DomainEvent]
+        self,
+        course_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[EventInput],
     ) -> int:
-        if expected_sequence < 0:
+        if type(expected_sequence) is not int or expected_sequence < 0:
             raise EventBatchError("expected_sequence cannot be negative")
         event_batch = tuple(events)
         for offset, event in enumerate(event_batch, start=1):
+            if not isinstance(event, (DomainEvent, EventEnvelope)):
+                raise EventBatchError("every item must be a DomainEvent or EventEnvelope")
             if event.course_id != course_id:
                 raise EventBatchError("every event must belong to the appended course")
             expected_event_sequence = expected_sequence + offset
@@ -245,9 +251,36 @@ class SQLiteEventStore:
             current = self._current_sequence(connection, course_id)
             if current != expected_sequence:
                 raise SequenceConflictError(course_id, expected_sequence, current)
-            decoded_payloads = tuple(self._registry.decode(event) for event in event_batch)
+            # Prepare and decode the complete batch before touching any
+            # projection or event row.  Original input bytes are retained for
+            # storage while reducers consume the normalized current schema.
+            prepared_events: list[DomainEvent] = []
+            decoded_payloads: list[object] = []
+            for event in event_batch:
+                prepared = self._registry.prepare(event)
+                decoded_payload = self._registry.decode(prepared)
+                if prepared.course_id != course_id:
+                    raise EventBatchError("every event must belong to the appended course")
+                prepared_events.append(prepared)
+                decoded_payloads.append(decoded_payload)
+
             projection = self._load_projection(connection, course_id, current)
-            for event, decoded_payload in zip(event_batch, decoded_payloads, strict=True):
+            next_projection = projection
+            for prepared, decoded_payload in zip(
+                prepared_events, decoded_payloads, strict=True
+            ):
+                expected = next_projection.sequence + 1
+                if prepared.course_sequence != expected:
+                    raise EventBatchError(
+                        f"expected projection event sequence {expected}, "
+                        f"got {prepared.course_sequence}"
+                    )
+                next_state = self._registry.reduce_decoded(
+                    next_projection.state, prepared, decoded_payload
+                )
+                next_projection = Projection(course_id, prepared.course_sequence, next_state)
+
+            for event in event_batch:
                 connection.execute(
                     """
                     INSERT INTO events (
@@ -263,16 +296,6 @@ class SQLiteEventStore:
                         event_to_bytes(event),
                     ),
                 )
-                expected = projection.sequence + 1
-                if event.course_sequence != expected:
-                    raise EventBatchError(
-                        f"expected projection event sequence {expected}, "
-                        f"got {event.course_sequence}"
-                    )
-                next_state = self._registry.reduce_decoded(
-                    projection.state, event, decoded_payload
-                )
-                projection = Projection(event.course_id, event.course_sequence, next_state)
 
             if event_batch:
                 connection.execute(
@@ -283,12 +306,18 @@ class SQLiteEventStore:
                         course_sequence = excluded.course_sequence,
                         state = excluded.state
                     """,
-                    (str(course_id), projection.sequence, canonical_json_bytes(projection.state)),
+                    (
+                        str(course_id),
+                        next_projection.sequence,
+                        canonical_json_bytes(next_projection.state),
+                    ),
                 )
-            return projection.sequence
+            return next_projection.sequence
 
-    def read(self, course_id: CourseId, after_sequence: int = 0) -> Sequence[DomainEvent]:
-        if after_sequence < 0:
+    def read(
+        self, course_id: CourseId, after_sequence: int = 0
+    ) -> Sequence[EventInput]:
+        if type(after_sequence) is not int or after_sequence < 0:
             raise ValueError("after_sequence cannot be negative")
         with closing(self._connect()) as connection:
             rows = connection.execute(

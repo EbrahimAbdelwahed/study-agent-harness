@@ -19,9 +19,12 @@ from study_agent.domain import (
     DomainEvent,
     EventId,
     PrincipalKind,
+    SessionId,
 )
 from study_agent.domain._validation import JsonObject, JsonValue
-from study_agent.state import EventRegistry, PayloadValidationError
+from study_agent.domain.events import EventEnvelope
+from study_agent.events import EventUpcasterRegistry
+from study_agent.state import EventRegistry, PayloadValidationError, event_to_bytes
 
 
 def make_event(
@@ -170,3 +173,96 @@ def test_failed_rebuild_preserves_previous_projection(tmp_path: Path) -> None:
         store.rebuild_projection(first.course_id)
 
     assert store.projection_bytes(first.course_id) == before
+
+
+def test_prepare_upcasts_envelope_ids_and_preserves_session() -> None:
+    upcasters = EventUpcasterRegistry()
+    upcasters.register("note.recorded", 1, lambda payload: {**payload, "v2": True})
+    registry = EventRegistry(upcasters)
+
+    def decode(payload: JsonObject) -> str:
+        note = payload.get("note")
+        if not isinstance(note, str):
+            raise ValueError("note must be a string")
+        return note
+
+    def reduce(
+        state: JsonObject, _: DomainEvent, note: str
+    ) -> Mapping[str, JsonValue]:
+        return {**state, "note": note}
+
+    registry.register("note.recorded", 1, decode, reduce)
+    registry.register("note.recorded", 2, decode, reduce)
+    envelope = EventEnvelope(
+        event_id="event-envelope",
+        event_type="note.recorded",
+        schema_version=1,
+        stream_id="course-1",
+        stream_sequence=1,
+        occurred_at=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
+        correlation_id="correlation-1",
+        actor=Actor(PrincipalKind.HUMAN, "local-user"),
+        payload={"note": "hello"},
+        session_id="session-1",
+    )
+
+    prepared = registry.prepare(envelope)
+    assert isinstance(prepared, DomainEvent)
+    assert prepared.schema_version == 2
+    assert prepared.event_id == EventId("event-envelope")
+    assert prepared.course_id == CourseId("course-1")
+    assert prepared.session_id == SessionId("session-1")
+    assert prepared.payload["v2"] is True
+
+
+def test_sqlite_mixed_event_inputs_share_one_stream_and_preserve_original_bytes(
+    tmp_path: Path,
+) -> None:
+    upcasters = EventUpcasterRegistry()
+    upcasters.register("note.recorded", 1, lambda payload: {**payload, "v2": True})
+    registry = EventRegistry(upcasters)
+
+    def decode(payload: JsonObject) -> str:
+        note = payload.get("note")
+        if not isinstance(note, str):
+            raise ValueError("note must be a string")
+        return note
+
+    def reduce(
+        state: JsonObject, _: DomainEvent, note: str
+    ) -> Mapping[str, JsonValue]:
+        notes = state.get("notes", ())
+        assert isinstance(notes, tuple)
+        return {"notes": (*notes, note)}
+
+    registry.register("note.recorded", 1, decode, reduce)
+    registry.register("note.recorded", 2, decode, reduce)
+    database = tmp_path / "events.sqlite3"
+    store = SQLiteEventStore(database, registry)
+    legacy = make_event(1)
+    envelope = EventEnvelope(
+        event_id="event-envelope",
+        event_type="note.recorded",
+        schema_version=1,
+        stream_id="course-1",
+        stream_sequence=2,
+        occurred_at=datetime(2026, 7, 10, 12, 32, tzinfo=UTC),
+        correlation_id="correlation-1",
+        actor=Actor(PrincipalKind.HUMAN, "local-user"),
+        payload={"note": "new"},
+    )
+    legacy_bytes = event_to_bytes(legacy)
+    envelope_bytes = event_to_bytes(envelope)
+    store.append(CourseId("course-1"), 0, (legacy, envelope))
+
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT course_id, course_sequence, envelope FROM events ORDER BY course_sequence"
+        ).fetchall()
+    assert [(row[0], row[1]) for row in rows] == [("course-1", 1), ("course-1", 2)]
+    assert bytes(rows[0][2]) == legacy_bytes
+    assert bytes(rows[1][2]) == envelope_bytes
+    assert isinstance(store.read(CourseId("course-1"))[0], DomainEvent)
+    assert isinstance(store.read(CourseId("course-1"))[1], EventEnvelope)
+    before = store.projection_bytes(CourseId("course-1"))
+    assert store.rebuild_projection(CourseId("course-1")) == before

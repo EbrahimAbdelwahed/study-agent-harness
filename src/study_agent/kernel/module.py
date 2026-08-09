@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
+from study_agent.domain.events import validate_event_type
 
 
 def _name(value: object, field_name: str) -> str:
@@ -21,7 +22,10 @@ class EventSchema:
     decoder: Callable[..., object] | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        _name(self.event_type, "event_type")
+        try:
+            validate_event_type(self.event_type)
+        except ValidationFailure as error:
+            raise ValidationFailure(str(error)) from error
         if type(self.schema_version) is not int or self.schema_version < 1:
             raise ValidationFailure("schema version must be positive")
         if self.decoder is not None and not callable(self.decoder):
@@ -90,6 +94,10 @@ class KernelModule:
                     normalized = tuple(sorted(pairs, key=lambda pair: pair[0]))
                     if any(not isinstance(pair, tuple) or len(pair) != 2 for pair in normalized):
                         raise ValueError
+                    normalized = tuple(
+                        (_name(name, "registration name"), value)
+                        for name, value in normalized
+                    )
                 except (TypeError, ValueError, IndexError) as error:
                     raise ValidationFailure(
                         f"{field_name} must contain named registrations"

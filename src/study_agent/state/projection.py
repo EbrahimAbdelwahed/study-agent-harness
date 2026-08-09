@@ -35,9 +35,10 @@ class Projection:
 
 
 def apply_event(
-    projection: Projection, event: DomainEvent, registry: EventRegistry
+    projection: Projection, event: DomainEvent | EventEnvelope, registry: EventRegistry
 ) -> Projection:
     """Return a new projection without mutating the prior projection or event."""
+    event = registry.prepare(event)
     expected = projection.sequence + 1
     if event.course_id != projection.course_id:
         raise ProjectionSequenceError("event course does not match projection course")
@@ -50,19 +51,11 @@ def apply_event(
 
 
 def replay(
-    course_id: CourseId, events: Sequence[DomainEvent], registry: EventRegistry
+    course_id: CourseId,
+    events: Sequence[DomainEvent | EventEnvelope],
+    registry: EventRegistry,
 ) -> Projection:
     projection = Projection(course_id)
     for event in events:
         projection = apply_event(projection, event, registry)
-    return projection
-
-
-def replay_envelopes(
-    course_id: CourseId, events: Sequence[EventEnvelope], registry: EventRegistry
-) -> Projection:
-    """Replay canonical envelopes through the same immutable projection path."""
-    projection = Projection(course_id)
-    for event in events:
-        projection = apply_event(projection, event, registry)  # type: ignore[arg-type]
     return projection

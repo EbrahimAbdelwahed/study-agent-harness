@@ -12,6 +12,8 @@ from .registry import (
 from .serialization import (
     canonical_json_bytes,
     canonical_json_object,
+    envelope_from_bytes,
+    envelope_to_bytes,
     event_from_bytes,
     event_to_bytes,
 )
@@ -28,6 +30,8 @@ __all__ = [
     "apply_event",
     "canonical_json_bytes",
     "canonical_json_object",
+    "envelope_from_bytes",
+    "envelope_to_bytes",
     "event_from_bytes",
     "event_to_bytes",
     "replay",

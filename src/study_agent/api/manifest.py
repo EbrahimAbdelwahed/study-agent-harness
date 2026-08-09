@@ -31,7 +31,7 @@ _SUBFACADES = (
     "recall",
 )
 _EXPORTS = ("PublicManifest", "public_manifest", *_SUBFACADES)
-_SCHEMA_VERSIONS = _MappingProxyType({"manifest": 1})
+_SCHEMA_VERSIONS = _MappingProxyType({"event_envelope": 1, "manifest": 1})
 
 
 def _immutable_text_tuple(value: object, field_name: str) -> tuple[str, ...]:

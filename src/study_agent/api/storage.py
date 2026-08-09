@@ -1,3 +1,12 @@
-"""Typed storage facade target; storage contracts are added by PF-04."""
+"""Curated event and storage-port facade."""
 
-__all__: tuple[str, ...] = ()
+from study_agent.domain.events import Actor, EventEnvelope, PrincipalKind
+from study_agent.ports.storage import EventSequenceConflictError, EventStore
+
+__all__ = (
+    "Actor",
+    "EventEnvelope",
+    "EventSequenceConflictError",
+    "EventStore",
+    "PrincipalKind",
+)
