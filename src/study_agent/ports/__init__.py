@@ -50,6 +50,7 @@ from .model import (
     StructuredOutputConstraint,
     ToolCall,
 )
+from .recall import RecallCommandPort, RecallViewPort
 from .retrieval import (
     EvidenceStatus,
     IndexReceipt,
@@ -74,6 +75,7 @@ from .retrievers import (
     RetrieverSkipReason,
     RetrieverSkipReceipt,
 )
+from .scheduling import SchedulingPolicyPort
 from .session import (
     AnswerNotFoundError,
     AssistantTurnViewPort,
@@ -108,6 +110,7 @@ from .tutor_runner import (
     TutorHostAuthorityPort,
 )
 from .tutor_snapshot import TutorSnapshotPort
+from .workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
 
 __all__ = [
     "MAX_SOURCE_BYTES",
@@ -153,6 +156,8 @@ __all__ = [
     "ModelStreamEvent",
     "ModelStreamEventKind",
     "ModelUsage",
+    "RecallCommandPort",
+    "RecallViewPort",
     "RetrievalEvidence",
     "RetrievalEvidenceSet",
     "RetrievalPort",
@@ -172,6 +177,7 @@ __all__ = [
     "RetrieverSkipReceipt",
     "RetryableTutorDecisionError",
     "RunStore",
+    "SchedulingPolicyPort",
     "ServiceDecisionPolicyPort",
     "SessionNotFoundError",
     "SessionViewPort",
@@ -193,5 +199,7 @@ __all__ = [
     "VerifiedGeneratedBatchPort",
     "VerifiedGradeOwnerStore",
     "VerifiedGradePort",
+    "WorkaroundApprovalAuthority",
+    "WorkaroundExecutor",
     "retrieval_read_set_fingerprint",
 ]

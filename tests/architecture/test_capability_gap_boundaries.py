@@ -48,6 +48,10 @@ def test_gap_plane_is_small_and_separate_from_study_tools() -> None:
         "__init__.py",
         "contracts.py",
         "host_tool.py",
+        "outbox.py",
         "service.py",
+        "source_tracer.py",
         "view.py",
+        "workarounds.py",
+        "workaround_service.py",
     }

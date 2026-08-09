@@ -29,6 +29,8 @@ Source = "https://github.com/EbrahimAbdelwahed/study-agent-harness"
 [project.scripts]
 study-agent = "study_agent.cli.main:main"
 study-agent-demo = "study_agent.demo.anatomy:main"
+study-agent-shell = "study_agent.demo.product_shell:main"
+study-agent-shell-web = "study_agent.demo.browser:main"
 
 [project.optional-dependencies]
 dev = [
@@ -37,13 +39,15 @@ dev = [
   "ruff>=0.11",
 ]
 openai = ["openai>=2.46,<3"]
+recall = ["fsrs==6.3.1"]
+pdf = ["pypdf==6.14.2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 study_agent = ["py.typed"]
-"study_agent.demo" = ["fixtures/*.md"]
+"study_agent.demo" = ["fixtures/*.md", "browser.html"]
 "study_agent.operator_skill" = ["SKILL.md"]
 
 [tool.pytest.ini_options]

@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 
+import study_agent.feedback as feedback
 from study_agent.domain._validation import JsonObject
 from study_agent.feedback import (
     CapabilityGapAggregate,
@@ -68,6 +69,12 @@ def test_closed_contracts_are_canonical_and_domain_separated() -> None:
     assert report == sha256(
         b"study-agent-gap-report-v1\0" + key.value.encode() + b"\0" + SHA_A.encode()
     ).hexdigest()
+
+
+def test_unverifiable_report_envelope_is_not_a_public_codec() -> None:
+    # A verified report needs trusted limitation/contract inputs that are not
+    # present in a portable envelope.  Keep the unsafe decoder out of the API.
+    assert not hasattr(feedback, "CapabilityGapReport")
 
 
 def test_pdf_extract_and_table_preservation_have_distinct_gap_keys() -> None:

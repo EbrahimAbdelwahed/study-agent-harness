@@ -1,6 +1,6 @@
 # Task Bead: TUT-07B authority-safe recall service and due view
 
-Status: Blocked on TUT-07A
+Status: Done — authority-safe service and single-HWM due view verified 2026-07-24
 Priority: P1
 Type: expand
 Depends On: TUT-07A
