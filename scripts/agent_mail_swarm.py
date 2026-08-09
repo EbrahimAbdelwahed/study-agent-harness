@@ -314,7 +314,8 @@ Coordination contract:
 3. Your Agent Mail identity and exclusive reservations are already active.
    Use project {lane.project_key}, agent {lane.agent_name}, and thread
    {lane.bead_id}. Check inbox before editing:
-   am inbox --project {lane.project_key} --agent {lane.agent_name}
+   am agent start --project {lane.project_key} --agent {lane.agent_name} \
+     --program codex-cli --model {MODEL} --json
 4. Beads is status authority. Do not close the bead. Do not merge branches.
 5. Commit only your owned paths to branch {_branch_name(manifest.run_id, lane.lane_id)}.
 
