@@ -17,6 +17,7 @@ from study_agent.domain.errors import (
     ConflictFailure,
     HarnessError,
     InternalFailure,
+    UnauthorizedFailure,
     UnavailableDependencyFailure,
     ValidationFailure,
 )
@@ -293,6 +294,8 @@ class SQLiteEventStore:
         expected_sequence: int,
         events: Sequence[EventInput],
         idempotency_key: IdempotencyKey | str | None = None,
+        *,
+        _legacy: bool = False,
     ) -> int:
         if not isinstance(course_id, CourseId):
             raise EventBatchError("stream_id must be a CourseId")
@@ -304,6 +307,15 @@ class SQLiteEventStore:
                 raise EventBatchError("every item must be a DomainEvent or EventEnvelope")
             if event.course_id != course_id:
                 raise EventBatchError("every event must belong to the appended course")
+        if idempotency_key is None and not _legacy:
+            legacy_batch = tuple(
+                event for event in event_batch if isinstance(event, DomainEvent)
+            )
+            if event_batch and len(legacy_batch) == len(event_batch):
+                return self._append_legacy(course_id, expected_sequence, legacy_batch)
+            raise EventBatchError(
+                "public event append requires a non-empty idempotency key"
+            )
         key_name: str | None = None
         fingerprint: str | None = None
         if idempotency_key is not None:
@@ -418,6 +430,10 @@ class SQLiteEventStore:
                 return result
         except (HarnessError, EventBatchError, PayloadValidationError):
             raise
+        except PermissionError as error:
+            raise UnauthorizedFailure(
+                "read-only event store cannot append canonical events"
+            ) from error
         except sqlite3.IntegrityError as error:
             raise ConflictFailure("canonical event append conflicts with existing state") from error
         except sqlite3.Error as error:
@@ -429,6 +445,19 @@ class SQLiteEventStore:
         # signal; backend-specific sqlite failures were handled above.
         except (TypeError, ValueError):
             raise
+
+    def _append_legacy(
+        self,
+        course_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[DomainEvent],
+    ) -> int:
+        return self.append(
+            course_id,
+            expected_sequence,
+            events,
+            _legacy=True,
+        )
 
     def read(
         self, course_id: CourseId, after_sequence: int = 0

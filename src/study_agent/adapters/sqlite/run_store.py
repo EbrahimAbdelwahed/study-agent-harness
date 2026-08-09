@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from pathlib import Path
-from typing import cast
 
 from study_agent.domain.errors import (
     HarnessError,
@@ -124,7 +123,7 @@ class SQLiteRunStore:
 
     def compare_and_set(
         self, run_id: RunId, expected: bytes, replacement: bytes
-    ) -> bool:
+    ) -> bool | RunStoreConflictFailure:
         _require_bytes(expected, "expected")
         _require_bytes(replacement, "replacement")
         if not isinstance(run_id, RunId):
@@ -141,11 +140,8 @@ class SQLiteRunStore:
                 )
                 if cursor.rowcount == 1:
                     return True
-                return cast(
-                    bool,
-                    RunStoreConflictFailure(
-                        "operational run changed before compare-and-set"
-                    ),
+                return RunStoreConflictFailure(
+                    "operational run changed before compare-and-set"
                 )
         except HarnessError:
             raise

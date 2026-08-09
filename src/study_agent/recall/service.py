@@ -30,6 +30,7 @@ from study_agent.ports.clock import ClockPort
 from study_agent.ports.scheduling import SchedulingPolicyPort
 from study_agent.ports.storage import (
     EventSequenceConflictError,
+    _append_legacy,
     _LegacyEventStore,
     _read_domain_events,
 )
@@ -419,7 +420,7 @@ class RecallService:
         self, course_id: CourseId, expected: int, event: DomainEvent, fingerprint: str
     ) -> None:
         try:
-            self._events.append(course_id, expected, (event,))
+            _append_legacy(self._events, course_id, expected, (event,))
         except EventSequenceConflictError as error:
             existing = self._find_event(course_id, event.event_id)
             if existing is not None:
@@ -441,7 +442,7 @@ class RecallService:
         schedule_fingerprint: str,
     ) -> None:
         try:
-            self._events.append(course_id, expected, events)
+            _append_legacy(self._events, course_id, expected, events)
         except EventSequenceConflictError as error:
             review_existing = self._find_event(course_id, events[0].event_id)
             schedule_existing = self._find_event(course_id, events[1].event_id)

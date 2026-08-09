@@ -54,7 +54,7 @@ class RunNotFoundError(NotFoundFailure, KeyError):
 
 @runtime_checkable
 class BlobStore(Protocol):
-    def put(self, content: bytes) -> BlobRef: ...
+    def put(self, content: bytes, ref: BlobRef | None = None) -> BlobRef: ...
 
     def get(self, ref: BlobRef) -> bytes: ...
 
@@ -77,7 +77,7 @@ class EventStore(Protocol):
         stream_id: CourseId,
         expected_sequence: int,
         events: Sequence[EventEnvelope],
-        idempotency_key: IdempotencyKey | str | None = None,
+        idempotency_key: IdempotencyKey | str,
     ) -> int: ...
 
     def read(
@@ -98,6 +98,35 @@ class _LegacyEventStore(Protocol):
     def read(
         self, course_id: CourseId, after_sequence: int = 0
     ) -> Sequence[_EventRecord]: ...
+
+
+@runtime_checkable
+class _LegacyEventAppender(Protocol):
+    """Private no-key append seam retained for pre-PF04 reducers."""
+
+    def _append_legacy(
+        self,
+        course_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[DomainEvent],
+    ) -> int: ...
+
+
+def _append_legacy(
+    store: _LegacyEventStore,
+    course_id: CourseId,
+    expected_sequence: int,
+    events: Sequence[DomainEvent],
+) -> int:
+    """Write legacy domain records through a private adapter seam.
+
+    Test doubles that predate PF-04 still expose only ``append``; they remain
+    usable while production adapters opt into the explicit private method.
+    """
+
+    if isinstance(store, _LegacyEventAppender):
+        return store._append_legacy(course_id, expected_sequence, events)
+    return store.append(course_id, expected_sequence, events)
 
 
 @runtime_checkable
@@ -153,7 +182,7 @@ class RunStore(Protocol):
 
     def compare_and_set(
         self, run_id: RunId, expected: bytes, replacement: bytes
-    ) -> bool: ...
+    ) -> bool | RunStoreConflictFailure: ...
 
     def load(self, run_id: RunId) -> bytes: ...
 

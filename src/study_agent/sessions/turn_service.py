@@ -36,7 +36,7 @@ from study_agent.ports import (
     EventSequenceConflictError,
     SessionViewPort,
 )
-from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 
 from .events import (
     SESSION_ASSISTANT_TURN_RECORDED,
@@ -96,7 +96,7 @@ class SessionTurnService:
             now,
         )
         try:
-            self._events.append(context.course_id, expected_sequence, (turn_event,))
+            _append_legacy(self._events, context.course_id, expected_sequence, (turn_event,))
         except EventSequenceConflictError as error:
             existing = self._existing_learner(context, interaction_id)
             if existing is not None:
@@ -203,7 +203,7 @@ class SessionTurnService:
             requested.occurred_at,
         )
         try:
-            self._events.append(context.course_id, expected_sequence, (event,))
+            _append_legacy(self._events, context.course_id, expected_sequence, (event,))
         except EventSequenceConflictError as error:
             existing = self._existing_assistant(context, turn_id, output, key)
             if existing is not None:

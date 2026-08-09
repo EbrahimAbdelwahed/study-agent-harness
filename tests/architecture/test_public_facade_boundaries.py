@@ -35,10 +35,18 @@ def test_every_listed_subfacade_is_importable_without_optional_modules() -> None
         },
         "storage": {
             "Actor",
+            "BlobStore",
+            "Clock",
             "EventEnvelope",
             "EventSequenceConflictError",
             "EventStore",
+            "IdFactory",
+            "IdempotencyConflictError",
             "PrincipalKind",
+            "Repository",
+            "RunNotFoundError",
+            "RunStore",
+            "RunStoreConflictFailure",
         },
     }
     for name in api.public_manifest().subfacades:
@@ -93,11 +101,11 @@ print(json.dumps({"loaded": loaded, "fingerprint": manifest.fingerprint}))
     assert result["fingerprint"] == api.public_manifest().fingerprint
 
 
-def test_legacy_event_store_and_domain_upcast_surface_are_not_public() -> None:
+def test_canonical_event_store_and_domain_upcast_surface_are_public() -> None:
     import study_agent.ports as ports
     from study_agent.api.runtime import EventUpcasterRegistry
 
-    assert "EventStore" not in ports.__all__
-    assert not hasattr(ports, "EventStore")
+    assert "EventStore" in ports.__all__
+    assert hasattr(ports, "EventStore")
     annotations = inspect.signature(EventUpcasterRegistry.upcast).parameters["event"].annotation
     assert "DomainEvent" not in str(annotations)

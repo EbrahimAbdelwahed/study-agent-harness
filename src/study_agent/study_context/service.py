@@ -27,7 +27,7 @@ from study_agent.ports import (
     EventSequenceConflictError,
     SessionViewPort,
 )
-from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 from study_agent.ports.study_context import StudyContextViewPort
 
 from .events import (
@@ -233,7 +233,7 @@ class StudyContextService:
         fingerprint: str,
     ) -> StudyContextSnapshot:
         try:
-            self._events.append(context.course_id, expected_sequence, (event,))
+            _append_legacy(self._events, context.course_id, expected_sequence, (event,))
         except EventSequenceConflictError as error:
             existing = self._existing(context, event.event_id, fingerprint)
             if existing is not None:

@@ -6,6 +6,7 @@ import re
 from hashlib import sha256
 
 from study_agent.domain import RunId
+from study_agent.ports.storage import RunStoreConflictFailure
 
 from .run_store import SQLiteRunStore
 
@@ -32,7 +33,7 @@ class NamespacedSQLiteRunStore:
         key: str | RunId,
         expected: bytes,
         replacement: bytes,
-    ) -> bool:
+    ) -> bool | RunStoreConflictFailure:
         return self._store.compare_and_set(self._slot(key), expected, replacement)
 
     def load(self, key: str | RunId) -> bytes:

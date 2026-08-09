@@ -16,6 +16,7 @@ from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, Sour
 from study_agent.ports import BlobStore, ClockPort, CourseViewPort
 from study_agent.ports.storage import (
     EventSequenceConflictError,
+    _append_legacy,
     _LegacyEventStore,
     _read_domain_events,
 )
@@ -233,7 +234,9 @@ class TextIngestionService:
         if current is None or current.source.normalized_blob != normalized_blob:
             _write_expected_blob(self._blobs, normalized.content, normalized_blob)
         try:
-            committed = self._events.append(context.course_id, current_sequence, (event,))
+            committed = _append_legacy(
+                self._events, context.course_id, current_sequence, (event,)
+            )
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(concurrent_stream, source_id)
@@ -294,7 +297,9 @@ class TextIngestionService:
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
         try:
-            committed = self._events.append(context.course_id, current_sequence, (event,))
+            committed = _append_legacy(
+                self._events, context.course_id, current_sequence, (event,)
+            )
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(

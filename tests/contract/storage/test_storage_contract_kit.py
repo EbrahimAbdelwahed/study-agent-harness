@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,12 +23,14 @@ from study_agent.adapters.memory import (
 )
 from study_agent.adapters.sqlite import SQLiteEventStore, SQLiteRunStore
 from study_agent.api import storage
-from study_agent.domain import Actor, BlobId, BlobRef, CorrelationId, CourseId
+from study_agent.domain import Actor, BlobId, BlobRef, CorrelationId, CourseId, DomainEvent
+from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.errors import (
     ConflictFailure,
     InternalFailure,
     NotFoundFailure,
     StaleFailure,
+    UnauthorizedFailure,
     ValidationFailure,
 )
 from study_agent.domain.events import EventEnvelope, PrincipalKind
@@ -42,6 +45,7 @@ from study_agent.ports.storage import (
     RunStore,
     RunStoreConflictFailure,
 )
+from study_agent.state import EventRegistry
 
 
 def _event(stream: CourseId, sequence: int, *, event_id: str | None = None) -> EventEnvelope:
@@ -97,18 +101,74 @@ def test_event_store_idempotency_stale_conflict_and_replay_bytes(
     )
 
 
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+def test_keyed_empty_stream_is_idempotent_and_unkeyed_public_write_is_rejected(
+    kind: str, tmp_path: Path
+) -> None:
+    stream = CourseId("empty-stream")
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    assert store.append(stream, 0, (), idempotency_key="empty-command") == 0
+    assert store.append(stream, 0, (), idempotency_key="empty-command") == 0
+    with pytest.raises(ValidationFailure):
+        store.append(stream, 0, (_event(stream, 1),))
+
+
+def _counter_registry() -> EventRegistry:
+    registry = EventRegistry()
+
+    def decode(payload: JsonObject) -> int:
+        amount = payload.get("amount")
+        if not isinstance(amount, int):
+            raise ValueError("amount must be an integer")
+        return amount
+
+    def reduce_state(
+        state: JsonObject, _event: DomainEvent, amount: int
+    ) -> Mapping[str, JsonValue]:
+        total = state.get("total", 0)
+        if not isinstance(total, int):
+            raise ValueError("total must be an integer")
+        return {"total": total + amount}
+
+    registry.register("counter.incremented", 1, decode, reduce_state)
+    return registry
+
+
+def test_memory_and_sqlite_projection_replay_are_byte_identical(tmp_path: Path) -> None:
+    stream = CourseId("projection-replay")
+    events = (_event(stream, 1), _event(stream, 2, event_id="event-2"))
+    memory = MemoryEventStore(_counter_registry())
+    sqlite = SQLiteEventStore(tmp_path / "events.sqlite3", _counter_registry())
+    assert memory.append(stream, 0, events, idempotency_key="projection-command") == 2
+    assert sqlite.append(stream, 0, events, idempotency_key="projection-command") == 2
+    assert memory.projection_bytes(stream) == sqlite.projection_bytes(stream)
+
+
 def test_sqlite_failed_batch_rolls_back_all_canonical_rows(tmp_path: Path) -> None:
     database = tmp_path / "events.sqlite3"
     store = SQLiteEventStore(database)
     stream = CourseId("rollback")
     first = _event(stream, 1)
     duplicate_id = _event(stream, 2, event_id=str(first.event_id))
-    assert store.append(stream, 0, (first,)) == 1
+    assert store.append(stream, 0, (first,), idempotency_key="rollback-1") == 1
     with pytest.raises(ConflictFailure):
-        store.append(stream, 1, (duplicate_id,))
+        store.append(stream, 1, (duplicate_id,), idempotency_key="rollback-2")
     assert tuple(event.event_id for event in store.read(stream)) == (first.event_id,)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
+
+
+def test_sqlite_read_only_append_maps_to_unauthorized_failure(tmp_path: Path) -> None:
+    database = tmp_path / "events.sqlite3"
+    SQLiteEventStore(database)
+    store = SQLiteEventStore(database, read_only=True)
+    stream = CourseId("read-only")
+    with pytest.raises(UnauthorizedFailure):
+        store.append(stream, 0, (_event(stream, 1),), idempotency_key="read-only-command")
 
 
 @pytest.mark.parametrize("factory", (MemoryBlobStore, FilesystemBlobStore))

@@ -9,6 +9,7 @@ from study_agent.domain.identifiers import CourseId
 from study_agent.ports import ClockPort, CourseNotFoundError, CourseViewPort
 from study_agent.ports.storage import (
     EventSequenceConflictError,
+    _append_legacy,
     _LegacyEventStore,
     _read_domain_events,
 )
@@ -87,7 +88,7 @@ class CourseService:
             course_profile_manifest(profile),
         )
         try:
-            self._events.append(profile.id, sequence, (event,))
+            _append_legacy(self._events, profile.id, sequence, (event,))
         except EventSequenceConflictError as error:
             if expected_sequence is not None:
                 raise RetryableCourseConflictError(

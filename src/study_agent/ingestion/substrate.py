@@ -23,6 +23,7 @@ from study_agent.ingestion.normalization import InvalidUtf8Error, normalize_utf8
 from study_agent.ports import BlobStore, ClockPort
 from study_agent.ports.storage import (
     EventSequenceConflictError,
+    _append_legacy,
     _LegacyEventStore,
     _read_domain_events,
 )
@@ -258,7 +259,9 @@ class SubstrateProductionService:
             session_id=context.session_id,
         )
         try:
-            committed = self._events.append(context.course_id, current_sequence, (event,))
+            committed = _append_legacy(
+                self._events, context.course_id, current_sequence, (event,)
+            )
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = (

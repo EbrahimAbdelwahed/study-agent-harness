@@ -17,7 +17,11 @@ from study_agent.domain import (
 )
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import EventEnvelope
-from study_agent.ports.storage import EventSequenceConflictError, _LegacyEventStore
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    _append_legacy,
+    _LegacyEventStore,
+)
 from study_agent.state import EventRegistry
 
 
@@ -60,7 +64,7 @@ def exercise_event_store_contract(store: _LegacyEventStore) -> None:
     events = (make_event(course_id, 1), make_event(course_id, 2))
 
     assert store.read(course_id) == ()
-    assert store.append(course_id, 0, events) == 2
+    assert _append_legacy(store, course_id, 0, events) == 2
     public_events = store.read(course_id)
     assert all(isinstance(event, EventEnvelope) for event in public_events)
     assert tuple(event.event_id for event in public_events) == tuple(
@@ -69,7 +73,7 @@ def exercise_event_store_contract(store: _LegacyEventStore) -> None:
     assert tuple(event.event_id for event in store.read(course_id, after_sequence=1)) == (
         events[1].event_id,
     )
-    assert store.append(course_id, 2, ()) == 2
+    assert _append_legacy(store, course_id, 2, ()) == 2
 
 
 def test_sqlite_adapter_conforms_to_event_store_port(tmp_path: Path) -> None:
@@ -92,10 +96,10 @@ def test_event_schema_cannot_be_registered_without_a_payload_decoder() -> None:
 def test_sqlite_conflict_implements_portable_sequence_conflict(tmp_path: Path) -> None:
     store = SQLiteEventStore(tmp_path / "events.sqlite3", registry())
     course_id = CourseId("course-conflict")
-    store.append(course_id, 0, (make_event(course_id, 1),))
+    _append_legacy(store, course_id, 0, (make_event(course_id, 1),))
 
     with pytest.raises(EventSequenceConflictError) as caught:
-        store.append(course_id, 0, ())
+        _append_legacy(store, course_id, 0, ())
 
     assert isinstance(caught.value, SequenceConflictError)
     assert (caught.value.expected, caught.value.actual) == (0, 1)

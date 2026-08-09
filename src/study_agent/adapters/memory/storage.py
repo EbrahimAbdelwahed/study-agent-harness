@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from threading import RLock
-from typing import TypeVar, cast
+from typing import TypeVar
 
 from study_agent.adapters.filesystem.blob_store import BlobIntegrityError, BlobNotFoundError
 from study_agent.domain.authority import IdempotencyKey
@@ -93,6 +93,8 @@ class MemoryEventStore:
         expected_sequence: int,
         events: Sequence[_EventInput],
         idempotency_key: IdempotencyKey | str | None = None,
+        *,
+        _legacy: bool = False,
     ) -> int:
         if not isinstance(stream_id, CourseId):
             raise ValidationFailure("stream_id must be CourseId")
@@ -101,6 +103,13 @@ class MemoryEventStore:
         batch = tuple(events)
         if any(not isinstance(event, (DomainEvent, EventEnvelope)) for event in batch):
             raise ValidationFailure("every event must be a trusted event value")
+        if idempotency_key is None and not _legacy:
+            legacy_batch = tuple(event for event in batch if isinstance(event, DomainEvent))
+            if batch and len(legacy_batch) == len(batch):
+                return self._append_legacy(stream_id, expected_sequence, legacy_batch)
+            raise ValidationFailure(
+                "public event append requires a non-empty idempotency key"
+            )
         key_name: str | None = None
         fingerprint: str | None = None
         if idempotency_key is not None:
@@ -157,6 +166,19 @@ class MemoryEventStore:
             if key_name is not None and fingerprint is not None:
                 self._idempotency[key_name] = (fingerprint, result)
             return result
+
+    def _append_legacy(
+        self,
+        course_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[DomainEvent],
+    ) -> int:
+        return self.append(
+            course_id,
+            expected_sequence,
+            events,
+            _legacy=True,
+        )
 
     def read(self, stream_id: CourseId, after_sequence: int = 0) -> tuple[EventEnvelope, ...]:
         if (
@@ -265,7 +287,7 @@ class MemoryRunStore:
 
     def compare_and_set(
         self, run_id: RunId, expected: bytes, replacement: bytes
-    ) -> bool:
+    ) -> bool | RunStoreConflictFailure:
         if (
             not isinstance(run_id, RunId)
             or type(expected) is not bytes
@@ -274,9 +296,8 @@ class MemoryRunStore:
             raise ValidationFailure("run identity and payloads are invalid")
         with self._lock:
             if self._payloads.get(run_id) != expected:
-                return cast(
-                    bool,
-                    RunStoreConflictFailure("operational run changed before compare-and-set"),
+                return RunStoreConflictFailure(
+                    "operational run changed before compare-and-set"
                 )
             self._payloads[run_id] = replacement
             return True

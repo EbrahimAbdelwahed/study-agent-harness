@@ -259,7 +259,12 @@ def test_sqlite_mixed_event_inputs_share_one_stream_and_preserve_original_bytes(
     )
     legacy_bytes = event_to_bytes(legacy)
     envelope_bytes = event_to_bytes(envelope)
-    store.append(CourseId("course-1"), 0, (legacy, envelope))
+    store.append(
+        CourseId("course-1"),
+        0,
+        (legacy, envelope),
+        idempotency_key="mixed-inputs",
+    )
 
     with sqlite3.connect(database) as connection:
         rows = connection.execute(
@@ -317,7 +322,9 @@ def test_legacy_reader_adapts_public_envelope_and_continues_sequence(
         actor=Actor(PrincipalKind.HUMAN, "local-user"),
         payload={"note": "envelope"},
     )
-    store.append(CourseId("course-1"), 0, (envelope,))
+    store.append(
+        CourseId("course-1"), 0, (envelope,), idempotency_key="envelope-first"
+    )
 
     legacy_stream = _read_domain_events(store, CourseId("course-1"))
     assert len(legacy_stream) == 1
@@ -369,7 +376,12 @@ def test_closed_host_module_drives_opaque_append_and_replay(tmp_path: Path) -> N
         payload={"note": "opaque"},
     )
 
-    assert store.append(CourseId("course-1"), 0, (event,)) == 1
+    assert (
+        store.append(
+            CourseId("course-1"), 0, (event,), idempotency_key="opaque-event-command"
+        )
+        == 1
+    )
     assert store.projection(CourseId("course-1")).state == {
         "notes": ("opaque",)
     }

@@ -40,7 +40,7 @@ from study_agent.ports import (
     VerifiedGradePort,
 )
 from study_agent.ports.assessment import DeterministicClosedGradingPolicyPort
-from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 from study_agent.state import canonical_json_bytes
 
 from .contracts import (
@@ -479,7 +479,7 @@ class AssessmentService:
                 "course stream advanced before the assessment command"
             )
         try:
-            self._events.append(context.course_id, expected_sequence, (event,))
+            _append_legacy(self._events, context.course_id, expected_sequence, (event,))
         except EventSequenceConflictError as error:
             if self._exact_retry(event.event_id, context, command_fingerprint):
                 return result()
