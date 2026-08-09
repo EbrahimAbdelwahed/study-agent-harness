@@ -9,7 +9,6 @@ from pathlib import Path
 from study_agent import api
 
 PROJECT_ROOT = Path(__file__).parents[2]
-SOURCE_ROOT = PROJECT_ROOT / "src"
 BLOCKED_PREFIXES = (
     "openai",
     "anthropic",
@@ -58,7 +57,8 @@ loaded = sorted(
 print(json.dumps({"loaded": loaded, "fingerprint": manifest.fingerprint}))
 """.replace("BLOCKED_MODULES", repr(BLOCKED_PREFIXES))
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(SOURCE_ROOT)
+    environment.pop("PYTHONPATH", None)
+    environment["PYTHONNOUSERSITE"] = "1"
     process = subprocess.run(
         (sys.executable, "-c", script),
         cwd=PROJECT_ROOT,
