@@ -17,13 +17,14 @@ from .assessment import (
     VerifiedGradeOwnerStore,
     VerifiedGradePort,
 )
-from .clock import ClockPort
+from .clock import Clock, ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
 from .host_file import (
     HostFileIdentityPort,
     HostFileIngestionPort,
     HostFileSnapshotStore,
 )
+from .id_factory import IdFactory, IdFactoryPort
 from .knowledge import (
     LexicalCandidate,
     LexicalCandidateList,
@@ -92,7 +93,11 @@ from .source_input import (
 from .storage import (
     BlobStore,
     EventSequenceConflictError,
+    IdempotencyConflictError,
+    Repository,
+    RunNotFoundError,
     RunStore,
+    RunStoreConflictFailure,
     SourceContentPort,
 )
 from .study_context import StudyContextViewPort
@@ -143,6 +148,7 @@ __all__ = [
     "AssistantTurnViewPort",
     "BlobStore",
     "CancellationToken",
+    "Clock",
     "ClockPort",
     "CourseCatalogPort",
     "CourseNotFoundError",
@@ -153,6 +159,9 @@ __all__ = [
     "HostFileIdentityPort",
     "HostFileIngestionPort",
     "HostFileSnapshotStore",
+    "IdFactory",
+    "IdFactoryPort",
+    "IdempotencyConflictError",
     "IndexReceipt",
     "LearnerEvidenceViewPort",
     "LexicalCandidate",
@@ -178,6 +187,7 @@ __all__ = [
     "ModelUsage",
     "RecallCommandPort",
     "RecallViewPort",
+    "Repository",
     "RetrievalEvidence",
     "RetrievalEvidenceSet",
     "RetrievalPort",
@@ -196,7 +206,9 @@ __all__ = [
     "RetrieverSkipReason",
     "RetrieverSkipReceipt",
     "RetryableTutorDecisionError",
+    "RunNotFoundError",
     "RunStore",
+    "RunStoreConflictFailure",
     "SchedulingPolicyPort",
     "ServiceDecisionPolicyPort",
     "SessionNotFoundError",

@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
+from study_agent.domain.authority import IdempotencyKey
+from study_agent.domain.errors import ConflictFailure, NotFoundFailure, StaleFailure
 from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId, RevisionId, RunId
 from study_agent.domain.source import BlobRef, Citation, ResolvedCitation
 
 
-class EventSequenceConflictError(RuntimeError):
+class EventSequenceConflictError(StaleFailure):
     """Portable optimistic-concurrency conflict for a course event stream."""
 
     def __init__(self, course_id: CourseId, expected: int, actual: int) -> None:
@@ -16,10 +18,41 @@ class EventSequenceConflictError(RuntimeError):
         self.expected = expected
         self.actual = actual
         super().__init__(
-            f"course {course_id} sequence conflict: expected {expected}, actual {actual}"
+            "the durable stream changed before commit",
+            details={"stream_id": str(course_id), "expected": expected, "actual": actual},
         )
 
 
+class IdempotencyConflictError(ConflictFailure):
+    """A retry key was reused with different canonical command bytes."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+        super().__init__("idempotency key conflicts with a prior command")
+
+
+class RunStoreConflictFailure(ConflictFailure):
+    """An operational compare-and-set lost a race.
+
+    The value is deliberately false-y so the historical boolean run-store
+    consumers continue to branch safely while newer callers can inspect a
+    typed conflict result.
+    """
+
+    def __bool__(self) -> bool:
+        return False
+
+
+class RunNotFoundError(NotFoundFailure, KeyError):
+    """A requested operational record does not exist."""
+
+    def __init__(self, run_id: RunId) -> None:
+        self.run_id = run_id
+        NotFoundFailure.__init__(self, "operational run was not found")
+        KeyError.__init__(self, run_id)
+
+
+@runtime_checkable
 class BlobStore(Protocol):
     def put(self, content: bytes) -> BlobRef: ...
 
@@ -35,6 +68,7 @@ class SourceContentPort(Protocol):
 type _EventRecord = DomainEvent | EventEnvelope
 
 
+@runtime_checkable
 class EventStore(Protocol):
     """Canonical envelope-only event-store contract."""
 
@@ -43,6 +77,7 @@ class EventStore(Protocol):
         stream_id: CourseId,
         expected_sequence: int,
         events: Sequence[EventEnvelope],
+        idempotency_key: IdempotencyKey | str | None = None,
     ) -> int: ...
 
     def read(
@@ -112,6 +147,7 @@ def _envelope_to_legacy(event: EventEnvelope) -> DomainEvent:
     )
 
 
+@runtime_checkable
 class RunStore(Protocol):
     def create(self, run_id: RunId, payload: bytes) -> bool: ...
 
@@ -120,3 +156,20 @@ class RunStore(Protocol):
     ) -> bool: ...
 
     def load(self, run_id: RunId) -> bytes: ...
+
+
+@runtime_checkable
+class Repository(Protocol):
+    """Host-composed storage bundle; it is not a second transaction owner."""
+
+    @property
+    def event_store(self) -> EventStore: ...
+
+    @property
+    def blob_store(self) -> BlobStore: ...
+
+    @property
+    def source_content(self) -> SourceContentPort | None: ...
+
+    @property
+    def run_store(self) -> RunStore: ...
