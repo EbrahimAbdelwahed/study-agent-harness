@@ -3,8 +3,10 @@ from __future__ import annotations
 import inspect
 import sqlite3
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -230,6 +232,36 @@ def test_operational_run_cas_is_typed_and_noncanonical(
     assert store.load(run_id) == b"running"
     with pytest.raises(RunNotFoundError):
         store.load(RunId("missing"))
+
+
+@pytest.mark.parametrize("store_kind", ("memory", "sqlite"))
+def test_concurrent_run_cas_has_one_winner_across_adapters(
+    store_kind: str, tmp_path: Path
+) -> None:
+    store: RunStore
+    if store_kind == "memory":
+        store = MemoryRunStore()
+    else:
+        store = SQLiteRunStore(tmp_path / "races.sqlite3")
+
+    run_id = RunId(f"race-{store_kind}")
+    assert store.create(run_id, b"initial")
+    barrier = Barrier(8)
+
+    def replace(payload: bytes) -> bool | RunStoreConflictFailure:
+        barrier.wait()
+        return store.compare_and_set(run_id, b"initial", payload)
+
+    payloads = tuple(bytes([index]) for index in range(8))
+    with ThreadPoolExecutor(max_workers=len(payloads)) as executor:
+        results = tuple(executor.map(replace, payloads))
+
+    assert results.count(True) == 1
+    losers = tuple(result for result in results if result is not True)
+    assert len(losers) == len(payloads) - 1
+    assert all(isinstance(result, RunStoreConflictFailure) for result in losers)
+    assert all(not result for result in losers)
+    assert store.load(run_id) in payloads
 
 
 def test_clock_ids_and_repository_are_explicitly_composed() -> None:
