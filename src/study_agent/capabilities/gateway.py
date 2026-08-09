@@ -332,7 +332,8 @@ class StudyCapabilityGateway:
     ) -> None:
         expected_run = _run_id(binding, authority, retry)
         if (
-            continuation.run_id != expected_run
+            continuation.capability_id != binding.manifest.id
+            or continuation.run_id != expected_run
             or continuation.capability_version != binding.manifest.version
             or continuation.manifest_fingerprint != binding.manifest_fingerprint
             or continuation.authority_fingerprint != authority
