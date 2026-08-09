@@ -68,7 +68,6 @@ type CapabilityIdentifier = TutorCapabilityId | CapabilityId
 class CapabilityOutcomeStatus(StrEnum):
     COMPLETED = "completed"
     SUSPENDED = "suspended"
-    TERMINATED = "terminated"
     CANCELLED = "cancelled"
     STALE = "stale"
     FAILED = "failed"
@@ -109,7 +108,7 @@ class CapabilityManifest:
     output_schema: JsonObject
     required_authority: tuple[str, ...]
     supports_suspension: bool
-    implementation_version: SemanticVersion | str | None = None
+    implementation_version: SemanticVersion
 
     def __post_init__(self) -> None:
         if isinstance(self.id, str) and not isinstance(
@@ -122,12 +121,8 @@ class CapabilityManifest:
             raise TypeError("capability version must be a SemanticVersion")
         if not isinstance(self.supports_suspension, bool):
             raise TypeError("supports_suspension must be boolean")
-        if self.implementation_version is not None and not isinstance(
-            self.implementation_version, (SemanticVersion, str)
-        ):
-            raise TypeError("implementation_version must be text or SemanticVersion")
-        if isinstance(self.implementation_version, str):
-            require_text(self.implementation_version, "implementation_version")
+        if not isinstance(self.implementation_version, SemanticVersion):
+            raise TypeError("implementation_version must be a SemanticVersion")
 
         input_schema = freeze_object(self.input_schema)
         output_schema = freeze_object(self.output_schema)
@@ -154,14 +149,10 @@ class CapabilityManifest:
 
     @property
     def identity(self) -> str:
-        if isinstance(self.id, TutorCapabilityId):
-            # Preserve the identity used by the existing tutor gateway while
-            # new opaque IDs carry their complete semantic version.
-            return f"{self.id.value}@{self.version.major}"
         return f"{self.id.value}@{self.version}"
 
     @property
-    def implementation_contract_version(self) -> SemanticVersion | str | None:
+    def implementation_contract_version(self) -> SemanticVersion:
         """Alias for the specification's implementation-contract wording."""
 
         return self.implementation_version
@@ -175,9 +166,8 @@ class CapabilityManifest:
             "output_schema": self.output_schema,
             "required_authority": self.required_authority,
             "supports_suspension": self.supports_suspension,
+            "implementation_version": str(self.implementation_version),
         }
-        if self.implementation_version is not None:
-            payload["implementation_version"] = str(self.implementation_version)
         return payload
 
     @property
@@ -205,14 +195,14 @@ class CapabilityManifest:
             "required_authority",
             "supports_suspension",
         }
-        optional = {"implementation_version"}
-        if set(raw) not in (expected, expected | optional):
+        expected.add("implementation_version")
+        if set(raw) != expected:
             raise ValueError("capability manifest has an unexpected shape")
         identifier = _capability_identifier(_string_value(raw.get("id"), "id"))
         version = SemanticVersion.parse(_string_value(raw.get("version"), "version"))
-        implementation = raw.get("implementation_version")
-        if implementation is not None and not isinstance(implementation, str):
-            raise ValueError("implementation_version must be text")
+        implementation = SemanticVersion.parse(
+            _string_value(raw.get("implementation_version"), "implementation_version")
+        )
         grants = raw.get("required_authority")
         if not isinstance(grants, (tuple, list)):
             raise ValueError("required_authority must be an array")
@@ -247,9 +237,7 @@ class CapabilityRequest:
     idempotency_key: str
 
     def __post_init__(self) -> None:
-        require_text(self.manifest_identity, "manifest_identity")
-        if "@" not in self.manifest_identity:
-            raise ValueError("manifest_identity must include a version")
+        _canonical_capability_identity(self.manifest_identity)
         object.__setattr__(self, "inputs", freeze_object(self.inputs))
         if not isinstance(self.authority, AuthorityContext):
             raise TypeError("authority must be an AuthorityContext")
@@ -410,13 +398,15 @@ class CapabilityContinuation:
         if len(set(keys)) != len(keys):
             raise ValueError("continuation dependencies must be unique by kind and id")
         object.__setattr__(self, "read_dependencies", dependencies)
-        input_fingerprint = self.input_fingerprint
-        if input_fingerprint is None:
-            input_fingerprint = _fingerprint(
-                "study-agent-capability-input-v1", {"inputs": self.inputs}
-            )
-        _require_sha256(input_fingerprint, "input_fingerprint")
-        object.__setattr__(self, "input_fingerprint", input_fingerprint)
+        expected_input_fingerprint = _fingerprint(
+            "study-agent-capability-input-v1", {"inputs": self.inputs}
+        )
+        if (
+            self.input_fingerprint is not None
+            and self.input_fingerprint != expected_input_fingerprint
+        ):
+            raise ValueError("continuation input_fingerprint is inconsistent with inputs")
+        object.__setattr__(self, "input_fingerprint", expected_input_fingerprint)
 
     @property
     def fingerprint(self) -> str:
@@ -575,10 +565,10 @@ class SuspendedCapabilityOutcome:
 
 @dataclass(frozen=True, slots=True)
 class TerminatedCapabilityOutcome:
+    """Legacy runtime observation excluded from the public outcome union."""
+
     run: VerifiedRunRecord
-    status: CapabilityOutcomeStatus = field(
-        default=CapabilityOutcomeStatus.TERMINATED, init=False
-    )
+    status: str = field(default="terminated", init=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.run, VerifiedRunRecord):
@@ -587,7 +577,7 @@ class TerminatedCapabilityOutcome:
             raise ValueError("terminated capability outcomes require a terminated verified run")
 
     def to_json(self) -> JsonObject:
-        return {"status": self.status.value, "run": _verified_run_json(self.run)}
+        return {"status": self.status, "run": _verified_run_json(self.run)}
 
     def to_bytes(self) -> bytes:
         return _canonical_bytes(self.to_json())
@@ -656,7 +646,6 @@ class FailedCapabilityOutcome:
 type CapabilityOutcome = (
     CompletedCapabilityOutcome
     | SuspendedCapabilityOutcome
-    | TerminatedCapabilityOutcome
     | CancelledCapabilityOutcome
     | StaleCapabilityOutcome
     | FailedCapabilityOutcome
@@ -668,6 +657,19 @@ def _capability_identifier(value: str) -> CapabilityIdentifier:
         return TutorCapabilityId(value)
     except ValueError:
         return CapabilityId(value)
+
+
+def _canonical_capability_identity(value: str) -> str:
+    require_text(value, "manifest_identity")
+    if value.count("@") != 1:
+        raise ValueError("manifest_identity must contain one capability/version separator")
+    identifier_value, version_value = value.split("@")
+    identifier = _capability_identifier(identifier_value)
+    version = SemanticVersion.parse(version_value)
+    canonical = f"{identifier.value}@{version}"
+    if value != canonical:
+        raise ValueError("manifest_identity must use canonical full semantic version")
+    return canonical
 
 
 def _authority_json(authority: AuthorityContext) -> JsonObject:
@@ -793,7 +795,12 @@ def _decode_object(data: bytes, name: str) -> JsonObject:
         raise ValueError(f"{name} is not valid JSON") from error
     if not isinstance(decoded, dict):
         raise ValueError(f"{name} must encode a JSON object")
-    return _thaw_json(decoded)
+    raw = _thaw_json(decoded)
+    if not isinstance(raw, Mapping):  # pragma: no cover - guarded by decoded's shape
+        raise ValueError(f"{name} must encode a JSON object")
+    if _canonical_bytes(raw) != data:
+        raise ValueError(f"{name} must use canonical JSON encoding")
+    return raw
 
 
 def _thaw_json(value: object) -> JsonValue:
