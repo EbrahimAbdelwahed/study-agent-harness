@@ -18,8 +18,11 @@ cited.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any, cast
 
 from ._validation import JsonObject, require_text
 from .identifiers import RevisionId, SourceId, SubstrateId, UnitId
@@ -53,8 +56,68 @@ class CitationFailure(ValueError):
 
 
 def _digest(value: str, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
     if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
         raise ValueError(f"{field_name} must be a lowercase SHA-256 hex digest")
+    return value
+
+
+def _object(value: object, name: str, fields: frozenset[str]) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or frozenset(value) != fields:
+        raise ValueError(f"{name} fields mismatch")
+    return value
+
+
+def _text(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be text")
+    require_text(value, name)
+    return value
+
+
+def _integer(value: object, name: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _optional_text(value: object, name: str) -> str | None:
+    if value is not None:
+        return _text(value, name)
+    return None
+
+
+def _jsonable(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _jsonable(child) for key, child in value.items()}
+    if isinstance(value, tuple):
+        return [_jsonable(child) for child in value]
+    return value
+
+
+def _canonical_bytes(value: JsonObject) -> bytes:
+    return json.dumps(
+        _jsonable(value),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _decode_bytes(data: bytes, name: str) -> JsonObject:
+    if not isinstance(data, bytes):
+        raise TypeError(f"{name} bytes must be bytes")
+    try:
+        decoded: Any = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"{name} bytes are not valid JSON") from error
+    if not isinstance(decoded, dict):
+        raise ValueError(f"{name} must be a JSON object")
+    value = cast(JsonObject, decoded)
+    if _canonical_bytes(value) != data:
+        raise ValueError(f"{name} bytes are not canonical")
     return value
 
 
@@ -87,6 +150,8 @@ class TextCitationV2:
             raise ValueError("citation span must be a non-empty forward range")
         _digest(self.quoted_sha256, "quoted_sha256")
         if self.locator is not None:
+            if not isinstance(self.locator, str):
+                raise TypeError("locator must be text or None")
             require_text(self.locator, "locator")
             if len(self.locator) > MAX_LOCATOR_LENGTH:
                 raise ValueError(
@@ -114,6 +179,51 @@ class TextCitationV2:
             "unit_id": str(self.unit_id),
             "version": TEXT_CITATION_VERSION,
         }
+
+    @classmethod
+    def from_json(cls, value: JsonObject) -> TextCitationV2:
+        payload = _object(
+            value,
+            "text citation",
+            frozenset(
+                {
+                    "end",
+                    "locator",
+                    "page_hint",
+                    "quoted_sha256",
+                    "revision_id",
+                    "source_id",
+                    "start",
+                    "substrate_id",
+                    "unit_id",
+                    "version",
+                }
+            ),
+        )
+        if _integer(payload.get("version"), "version") != TEXT_CITATION_VERSION:
+            raise ValueError("unsupported text citation version")
+        page_hint = payload.get("page_hint")
+        if page_hint is not None:
+            page_hint = _integer(page_hint, "page_hint")
+        locator = _optional_text(payload.get("locator"), "locator")
+        return cls(
+            SourceId(_text(payload.get("source_id"), "source_id")),
+            RevisionId(_text(payload.get("revision_id"), "revision_id")),
+            UnitId(_text(payload.get("unit_id"), "unit_id")),
+            SubstrateId(_text(payload.get("substrate_id"), "substrate_id")),
+            _integer(payload.get("start"), "start"),
+            _integer(payload.get("end"), "end"),
+            _text(payload.get("quoted_sha256"), "quoted_sha256"),
+            locator,
+            page_hint,
+        )
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> TextCitationV2:
+        return cls.from_json(_decode_bytes(data, "text citation"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +261,35 @@ class FigureCitationV1:
             "version": FIGURE_CITATION_VERSION,
         }
 
+    @classmethod
+    def from_json(cls, value: JsonObject) -> FigureCitationV1:
+        payload = _object(
+            value,
+            "figure citation",
+            frozenset({"anchor_unit_id", "byte_length", "figure_sha256", "page_hint", "version"}),
+        )
+        if _integer(payload.get("version"), "version") != FIGURE_CITATION_VERSION:
+            raise ValueError("unsupported figure citation version")
+        anchor = payload.get("anchor_unit_id")
+        if anchor is not None:
+            anchor = UnitId(_text(anchor, "anchor_unit_id"))
+        page_hint = payload.get("page_hint")
+        if page_hint is not None:
+            page_hint = _integer(page_hint, "page_hint")
+        return cls(
+            _text(payload.get("figure_sha256"), "figure_sha256"),
+            _integer(payload.get("byte_length"), "byte_length"),
+            anchor,
+            page_hint,
+        )
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> FigureCitationV1:
+        return cls.from_json(_decode_bytes(data, "figure citation"))
+
 
 type Citation = TextCitationV2 | FigureCitationV1
 
@@ -169,10 +308,13 @@ class DerivedRef:
     subject: Citation
 
     def __post_init__(self) -> None:
+        if not isinstance(self.producer, str) or not isinstance(self.producer_version, str):
+            raise TypeError("derived producer fields must be text")
         require_text(self.producer, "producer")
         require_text(self.producer_version, "producer_version")
-        if not isinstance(self.text, str) or not self.text:
-            raise ValueError("derived text must be non-empty")
+        if not isinstance(self.text, str):
+            raise TypeError("derived text must be text")
+        require_text(self.text, "derived text")
         if not isinstance(self.subject, (TextCitationV2, FigureCitationV1)):
             raise TypeError("derived text must name a canonical subject citation")
 
@@ -190,6 +332,51 @@ class DerivedRef:
             "text": self.text,
         }
 
+    @classmethod
+    def from_json(cls, value: JsonObject) -> DerivedRef:
+        payload = _object(
+            value,
+            "derived reference",
+            frozenset({"derived", "producer", "producer_version", "subject", "text"}),
+        )
+        if payload.get("derived") is not True:
+            raise ValueError("derived reference marker must be true")
+        subject = payload.get("subject")
+        if not isinstance(subject, Mapping):
+            raise ValueError("derived reference subject must be an object")
+        return cls(
+            _text(payload.get("producer"), "producer"),
+            _text(payload.get("producer_version"), "producer_version"),
+            _text(payload.get("text"), "text"),
+            citation_from_json(cast(JsonObject, subject)),
+        )
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> DerivedRef:
+        return cls.from_json(_decode_bytes(data, "derived reference"))
+
+
+def citation_from_json(value: JsonObject) -> Citation:
+    """Decode one canonical citation without accepting derived text as evidence."""
+    if not isinstance(value, Mapping):
+        raise ValueError("citation must be an object")
+    version = value.get("version")
+    if type(version) is not int:
+        raise ValueError("citation version must be an integer")
+    if version == TEXT_CITATION_VERSION and "unit_id" in value:
+        return TextCitationV2.from_json(value)
+    if version == FIGURE_CITATION_VERSION and "figure_sha256" in value:
+        return FigureCitationV1.from_json(value)
+    raise ValueError("unsupported citation version or shape")
+
+
+def citation_from_bytes(data: bytes) -> Citation:
+    """Decode one canonical citation from its stable UTF-8 JSON bytes."""
+    return citation_from_json(_decode_bytes(data, "citation"))
+
 
 __all__ = [
     "FIGURE_CITATION_VERSION",
@@ -200,4 +387,6 @@ __all__ = [
     "DerivedRef",
     "FigureCitationV1",
     "TextCitationV2",
+    "citation_from_bytes",
+    "citation_from_json",
 ]
