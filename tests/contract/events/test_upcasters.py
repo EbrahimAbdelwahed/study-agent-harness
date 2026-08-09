@@ -1,7 +1,10 @@
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 
+from study_agent.domain._validation import JsonObject
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
 from study_agent.domain.events import Actor, EventEnvelope, PrincipalKind
 from study_agent.events.upcasting import EventUpcasterRegistry
@@ -18,7 +21,7 @@ def event(version: int = 1, payload: dict[str, object] | None = None) -> EventEn
         correlation_id="corr-1",
         causation_id="event-0",
         actor=Actor(PrincipalKind.SERVICE, "host"),
-        payload=payload or {"front": "q"},
+        payload=cast(JsonObject, payload or {"front": "q"}),
     )
 
 
@@ -37,7 +40,10 @@ def test_unknown_or_malformed_upcast_fails_closed() -> None:
     registry = EventUpcasterRegistry()
     with pytest.raises(ValidationFailure):
         registry.upcast(event())
-    registry.register("study.card.created", 1, lambda payload: [payload])  # type: ignore[arg-type]
+    def malformed(payload: JsonObject) -> Mapping[str, Any]:
+        return cast(Mapping[str, Any], [payload])
+
+    registry.register("study.card.created", 1, malformed)
     with pytest.raises(ValidationFailure):
         registry.upcast(event())
 

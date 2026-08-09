@@ -25,7 +25,6 @@ BLOCKED_PREFIXES = (
 def test_every_listed_subfacade_is_importable_without_optional_modules() -> None:
     expected_exports = {
         "runtime": {
-            "EventRegistry",
             "EventSchema",
             "EventUpcasterRegistry",
             "KernelModule",

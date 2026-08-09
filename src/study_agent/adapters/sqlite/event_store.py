@@ -8,11 +8,12 @@ import stat
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import quote
 
 from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
+from study_agent.kernel.module import KernelModuleRegistry, KernelSnapshot
 from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.state import (
     EventRegistry,
@@ -131,7 +132,7 @@ class SQLiteEventStore:
     def __init__(
         self,
         database: str | Path,
-        registry: EventRegistry,
+        registry: EventRegistry | KernelModuleRegistry | KernelSnapshot,
         *,
         read_only: bool = False,
         connection_identity_guard: SQLiteConnectionGuard | None = None,
@@ -145,7 +146,12 @@ class SQLiteEventStore:
             raise TypeError("read_only must be a boolean")
         self._read_only = read_only
         self._connection_identity_guard = connection_identity_guard
-        self._registry = registry
+        if isinstance(registry, KernelModuleRegistry):
+            registry.close()
+            registry = registry.compile()
+        self._registry = (
+            registry.event_registry if isinstance(registry, KernelSnapshot) else registry
+        )
         if not read_only:
             with closing(self._connect()) as connection:
                 connection.executescript(_SCHEMA)
@@ -316,7 +322,7 @@ class SQLiteEventStore:
 
     def read(
         self, course_id: CourseId, after_sequence: int = 0
-    ) -> Sequence[EventInput]:
+    ) -> Sequence[Any]:
         if type(after_sequence) is not int or after_sequence < 0:
             raise ValueError("after_sequence cannot be negative")
         with closing(self._connect()) as connection:

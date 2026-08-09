@@ -75,6 +75,7 @@ class EventRegistry:
             raise ValidationFailure("multiple upcaster registries were supplied")
         self._registrations: dict[tuple[str, int], _Registration] = {}
         self._projection_migrations: list[ProjectionMigrator] = []
+        self._closed = False
         selected = upcasters or upcaster_registry
         if selected is None:
             from study_agent.events.upcasting import EventUpcasterRegistry
@@ -86,8 +87,19 @@ class EventRegistry:
     def upcasters(self) -> EventUpcasterRegistry:
         return self._upcasters
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> EventRegistry:
+        self._upcasters.close()
+        self._closed = True
+        return self
+
     def register_projection_migration(self, migrator: ProjectionMigrator) -> None:
         """Register one deterministic, projection-only state migration."""
+        if self._closed:
+            raise ValidationFailure("event registry is closed")
         if migrator in self._projection_migrations:
             return
         self._projection_migrations.append(migrator)
@@ -98,8 +110,24 @@ class EventRegistry:
             migrated = freeze_object(migrator(migrated))
         return migrated
 
-    def register_upcaster(self, *args: object, **kwargs: object) -> None:
-        self._upcasters.register(*args, **kwargs)  # type: ignore[arg-type]
+    def register_upcaster(
+        self,
+        event_type: str,
+        from_schema_version: int | None = None,
+        upcaster: Callable[[JsonObject], Mapping[str, object]] | None = None,
+        to_schema_version: int | None = None,
+        *,
+        old_schema_version: int | None = None,
+    ) -> None:
+        if self._closed:
+            raise ValidationFailure("event registry is closed")
+        self._upcasters.register(
+            event_type,
+            from_schema_version,
+            upcaster,
+            to_schema_version,
+            old_schema_version=old_schema_version,
+        )
 
     def register[PayloadT](
         self,
@@ -109,6 +137,8 @@ class EventRegistry:
         reducer: TypedEventReducer[PayloadT],
     ) -> None:
         """Register a payload decoder and reducer for one exact schema."""
+        if self._closed:
+            raise ValidationFailure("event registry is closed")
 
         def erased_decoder(payload: JsonObject) -> object:
             return decoder(payload)
@@ -153,6 +183,21 @@ class EventRegistry:
     ) -> None:
         self.register(event_type, schema_version, decoder, reducer)
 
+    def register_erased(
+        self,
+        event_type: str,
+        schema_version: int,
+        decoder: Callable[[JsonObject], object],
+        reducer: _ErasedReducer,
+    ) -> None:
+        """Register a compiled module's already-erased decoder/reducer pair."""
+        self._register(
+            event_type,
+            schema_version,
+            lambda event: decoder(event.payload),
+            reducer,
+        )
+
     def _register(
         self,
         event_type: str,
@@ -160,6 +205,8 @@ class EventRegistry:
         decoder: EventDecoder[object],
         reducer: _ErasedReducer,
     ) -> None:
+        if self._closed:
+            raise ValidationFailure("event registry is closed")
         try:
             validate_event_type(event_type)
         except ValidationFailure as error:
@@ -191,29 +238,31 @@ class EventRegistry:
     @staticmethod
     def _envelope_to_domain(event: EventEnvelope) -> DomainEvent:
         return DomainEvent(
-            event_id=cast(EventId, event.event_id),
-            course_id=cast(CourseId, event.stream_id),
+            event_id=event.event_id,
+            course_id=event.stream_id,
             course_sequence=event.stream_sequence,
             event_type=event.event_type,
             schema_version=event.schema_version,
             actor=Actor(event.actor.kind, event.actor.principal_id),
             occurred_at=event.occurred_at,
-            correlation_id=cast(CorrelationId, event.correlation_id),
+            correlation_id=event.correlation_id,
             payload=event.payload,
-            session_id=cast(SessionId | None, event.session_id),
-            causation_id=cast(EventId | None, event.causation_id),
+            session_id=event.session_id,
+            causation_id=event.causation_id,
         )
 
     @staticmethod
     def _legacy_to_domain(event: DomainEvent) -> DomainEvent:
         """Normalize transitional legacy values before they reach a reducer."""
 
-        def identifier(value: object, identifier_type: type[object], field: str) -> object:
+        def identifier(
+            value: object, identifier_type: type[Identifier], field: str
+        ) -> Identifier:
             raw = value.value if isinstance(value, Identifier) else value
             if not isinstance(raw, str) or not raw.strip() or raw != raw.strip():
                 raise ValidationFailure(f"{field} must be non-empty text")
             try:
-                return identifier_type(raw)  # type: ignore[call-arg]
+                return identifier_type(raw)
             except (TypeError, ValueError) as error:
                 raise ValidationFailure(f"invalid {field}") from error
 

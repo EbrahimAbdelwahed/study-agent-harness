@@ -112,7 +112,7 @@ def _timestamp(value: datetime) -> str:
     return normalized
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class EventEnvelope:
     """Immutable, canonical event boundary shared by hosts and the kernel.
 
@@ -122,17 +122,44 @@ class EventEnvelope:
     boundary.
     """
 
-    event_id: EventId | str
+    event_id: EventId
     event_type: str
     schema_version: int
-    stream_id: CourseId | str
+    stream_id: CourseId
     stream_sequence: int
     occurred_at: datetime
-    correlation_id: CorrelationId | str
+    correlation_id: CorrelationId
     actor: Actor
     payload: JsonObject = field(default_factory=dict)
-    session_id: SessionId | str | None = None
-    causation_id: EventId | str | None = None
+    session_id: SessionId | None = None
+    causation_id: EventId | None = None
+
+    def __init__(
+        self,
+        event_id: EventId | str,
+        event_type: str,
+        schema_version: int,
+        stream_id: CourseId | str,
+        stream_sequence: int,
+        occurred_at: datetime,
+        correlation_id: CorrelationId | str,
+        actor: Actor,
+        payload: JsonObject | None = None,
+        session_id: SessionId | str | None = None,
+        causation_id: EventId | str | None = None,
+    ) -> None:
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "event_type", event_type)
+        object.__setattr__(self, "schema_version", schema_version)
+        object.__setattr__(self, "stream_id", stream_id)
+        object.__setattr__(self, "stream_sequence", stream_sequence)
+        object.__setattr__(self, "occurred_at", occurred_at)
+        object.__setattr__(self, "correlation_id", correlation_id)
+        object.__setattr__(self, "actor", actor)
+        object.__setattr__(self, "payload", {} if payload is None else payload)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "causation_id", causation_id)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         validate_event_type(self.event_type)

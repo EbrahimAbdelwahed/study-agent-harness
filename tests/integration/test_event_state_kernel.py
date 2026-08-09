@@ -22,8 +22,10 @@ from study_agent.domain import (
     SessionId,
 )
 from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.domain.errors import ValidationFailure
 from study_agent.domain.events import EventEnvelope
 from study_agent.events import EventUpcasterRegistry
+from study_agent.kernel import EventSchema, KernelModule, KernelModuleRegistry
 from study_agent.state import EventRegistry, PayloadValidationError, event_to_bytes
 
 
@@ -266,3 +268,56 @@ def test_sqlite_mixed_event_inputs_share_one_stream_and_preserve_original_bytes(
     assert isinstance(store.read(CourseId("course-1"))[1], EventEnvelope)
     before = store.projection_bytes(CourseId("course-1"))
     assert store.rebuild_projection(CourseId("course-1")) == before
+
+
+def test_closed_host_module_drives_opaque_append_and_replay(tmp_path: Path) -> None:
+    def decode(payload: JsonObject) -> str:
+        note = payload.get("note")
+        if not isinstance(note, str):
+            raise ValueError("note must be a string")
+        return note
+
+    def reduce(
+        state: JsonObject, _: object, note: object
+    ) -> Mapping[str, JsonValue]:
+        assert isinstance(note, str)
+        notes = state.get("notes", ())
+        assert isinstance(notes, tuple)
+        return {"notes": (*notes, note)}
+
+    modules = KernelModuleRegistry()
+    modules.register(
+        KernelModule(
+            module_id="opaque-host",
+            version="1",
+            event_schemas=(EventSchema("host.opaque.note", 1, decode),),
+            reducers=(("host.opaque.note@1", reduce),),
+        )
+    )
+    store = SQLiteEventStore(tmp_path / "events.sqlite3", modules)
+    event = EventEnvelope(
+        event_id="opaque-event",
+        event_type="host.opaque.note",
+        schema_version=1,
+        stream_id="course-1",
+        stream_sequence=1,
+        occurred_at=datetime(2026, 7, 10, 12, 40, tzinfo=UTC),
+        correlation_id="opaque-correlation",
+        actor=Actor(PrincipalKind.HUMAN, "local-user"),
+        payload={"note": "opaque"},
+    )
+
+    assert store.append(CourseId("course-1"), 0, (event,)) == 1
+    assert store.projection(CourseId("course-1")).state == {
+        "notes": ("opaque",)
+    }
+    persisted = store.projection_bytes(CourseId("course-1"))
+    assert store.rebuild_projection(CourseId("course-1")) == persisted
+    with pytest.raises(ValidationFailure):
+        modules.register(
+            KernelModule(
+                module_id="late",
+                version="1",
+                event_schemas=(EventSchema("host.opaque.late", 1),),
+            )
+        )

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
-from study_agent.domain.events import DomainEvent, EventEnvelope
+from study_agent.domain.events import EventEnvelope
 from study_agent.domain.identifiers import CourseId, RevisionId, RunId
 from study_agent.domain.source import BlobRef, Citation, ResolvedCitation
 
@@ -33,16 +33,38 @@ class SourceContentPort(Protocol):
 
 
 class EventStore(Protocol):
+    """Private compatibility seam for pre-envelope domain consumers.
+
+    The curated API publishes an envelope-only protocol.  Internal services
+    still accept this deliberately erased adapter while legacy DomainEvent
+    reducers are migrated; no DomainEvent symbol is exported through the API.
+    """
+
     def append(
         self,
         course_id: CourseId,
         expected_sequence: int,
-        events: Sequence[DomainEvent | EventEnvelope],
+        events: Sequence[Any],
     ) -> int: ...
 
     def read(
         self, course_id: CourseId, after_sequence: int = 0
-    ) -> Sequence[DomainEvent | EventEnvelope]: ...
+    ) -> Sequence[Any]: ...
+
+
+class CanonicalEventStore(Protocol):
+    """Envelope-only store contract used by the curated facade."""
+
+    def append(
+        self,
+        stream_id: CourseId,
+        expected_sequence: int,
+        events: Sequence[EventEnvelope],
+    ) -> int: ...
+
+    def read(
+        self, stream_id: CourseId, after_sequence: int = 0
+    ) -> Sequence[EventEnvelope]: ...
 
 
 class RunStore(Protocol):

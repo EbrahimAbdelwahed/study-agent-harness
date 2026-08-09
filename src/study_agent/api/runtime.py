@@ -7,12 +7,10 @@ from study_agent.kernel.module import (
     KernelModuleRegistry,
     ModuleRegistry,
 )
-from study_agent.state.registry import EventRegistry
 
-Registry = EventRegistry
+Registry = KernelModuleRegistry
 
 __all__ = (
-    "EventRegistry",
     "EventSchema",
     "EventUpcasterRegistry",
     "KernelModule",

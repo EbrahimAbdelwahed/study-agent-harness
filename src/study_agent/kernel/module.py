@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
+from study_agent.domain._validation import JsonObject
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
 from study_agent.domain.events import validate_event_type
+
+if TYPE_CHECKING:
+    from study_agent.events.upcasting import EventUpcasterRegistry
+    from study_agent.state.registry import EventRegistry
 
 
 def _name(value: object, field_name: str) -> str:
@@ -19,7 +25,9 @@ def _name(value: object, field_name: str) -> str:
 class EventSchema:
     event_type: str
     schema_version: int
-    decoder: Callable[..., object] | None = field(default=None, compare=False, repr=False)
+    decoder: Callable[[JsonObject], object] | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         try:
@@ -54,6 +62,7 @@ class KernelModule:
     projections: tuple[tuple[str, object], ...] = ()
     services: tuple[tuple[str, object], ...] = ()
     capabilities: tuple[tuple[str, object], ...] = ()
+    upcasters: tuple[tuple[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.module_id, "module_id")
@@ -84,7 +93,13 @@ class KernelModule:
         object.__setattr__(
             self, "event_schemas", tuple(sorted(schemas, key=lambda schema: schema.key))
         )
-        for field_name in ("reducers", "projections", "services", "capabilities"):
+        for field_name in (
+            "reducers",
+            "projections",
+            "services",
+            "capabilities",
+            "upcasters",
+        ):
             raw = getattr(self, field_name)
             if isinstance(raw, Mapping):
                 normalized = _freeze_mapping(raw)
@@ -105,12 +120,22 @@ class KernelModule:
             object.__setattr__(self, field_name, normalized)
 
 
+@dataclass(frozen=True, slots=True)
+class KernelSnapshot:
+    """Closed module metadata compiled into immutable runtime registries."""
+
+    modules: tuple[KernelModule, ...]
+    event_registry: EventRegistry
+    upcasters: EventUpcasterRegistry
+
+
 class KernelModuleRegistry:
     """Host-owned, explicit module registry with a closed runtime snapshot."""
 
     def __init__(self) -> None:
         self._modules: dict[str, KernelModule] = {}
         self._closed = False
+        self._compiled: KernelSnapshot | None = None
 
     @property
     def closed(self) -> bool:
@@ -130,9 +155,17 @@ class KernelModuleRegistry:
         existing_schemas = {
             schema.key for item in self._modules.values() for schema in item.event_schemas
         }
-        collisions = existing_schemas.intersection(schema.key for schema in module.event_schemas)
-        if collisions:
+        if existing_schemas.intersection(schema.key for schema in module.event_schemas):
             raise ConflictFailure("event schema registration collides")
+        existing_event_types = {
+            schema.event_type
+            for item in self._modules.values()
+            for schema in item.event_schemas
+        }
+        if existing_event_types.intersection(
+            schema.event_type for schema in module.event_schemas
+        ):
+            raise ConflictFailure("event type ownership collides")
         self._ensure_unique_names(module, "reducers")
         self._ensure_unique_names(module, "projections")
         self._ensure_unique_names(module, "services")
@@ -143,6 +176,7 @@ class KernelModuleRegistry:
 
     def close(self) -> KernelModuleRegistry:
         self._validate_dependencies()
+        self._compiled = self.compile()
         self._closed = True
         return self
 
@@ -152,6 +186,46 @@ class KernelModuleRegistry:
         if not self._closed:
             raise ValidationFailure("kernel module registry is not closed")
         return self.modules
+
+    def compile(self) -> KernelSnapshot:
+        """Compile registered metadata into closed reducer/upcaster registries."""
+        if self._closed and self._compiled is not None:
+            return self._compiled
+        self._validate_dependencies()
+        from study_agent.events.upcasting import EventUpcasterRegistry
+        from study_agent.state.registry import EventRegistry
+
+        upcasters = EventUpcasterRegistry()
+        for module in self.modules:
+            for name, candidate in module.upcasters:
+                event_type, separator, version = name.rpartition("@")
+                if not separator or not version.isdigit() or not callable(candidate):
+                    raise ValidationFailure("upcaster registration is invalid")
+                upcasters.register(event_type, int(version), candidate)
+
+        event_registry = EventRegistry(upcasters)
+        for module in self.modules:
+            reducers = dict(module.reducers)
+            for schema in module.event_schemas:
+                reducer = reducers.get(f"{schema.event_type}@{schema.schema_version}")
+                if schema.decoder is None and reducer is None:
+                    continue
+                if not callable(schema.decoder) or not callable(reducer):
+                    # A module may publish schema metadata before attaching a
+                    # projection owner.  Only a complete callable pair enters
+                    # the executable EventRegistry.
+                    continue
+                event_registry.register_erased(
+                    schema.event_type,
+                    schema.schema_version,
+                    schema.decoder,
+                    reducer,
+                )
+        upcasters.close()
+        event_registry.close()
+        return KernelSnapshot(self.modules, event_registry, upcasters)
+
+    compiled_snapshot = compile
 
     def _ensure_unique_names(self, module: KernelModule, field_name: str) -> None:
         names = [name for name, _ in getattr(module, field_name)]
@@ -175,6 +249,14 @@ class KernelModuleRegistry:
                         raise ValidationFailure("registration references an unknown event schema")
                 elif not any(schema[0] == name for schema in schema_keys):
                     raise ValidationFailure("registration references an unknown event schema")
+            for name, _ in module.upcasters:
+                event_name, separator, version = name.rpartition("@")
+                if (
+                    not separator
+                    or not version.isdigit()
+                    or (event_name, int(version)) not in schema_keys
+                ):
+                    raise ValidationFailure("upcaster references an unknown event schema")
 
 
 ModuleRegistry = KernelModuleRegistry

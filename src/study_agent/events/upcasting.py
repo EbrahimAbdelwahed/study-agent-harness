@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, overload
 
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
@@ -103,6 +103,16 @@ class EventUpcasterRegistry:
             migrated = first
             current = next_version
         return current, migrated
+
+    @overload
+    def upcast(
+        self, event: EventEnvelope, target_schema_version: int | None = None
+    ) -> EventEnvelope: ...
+
+    @overload
+    def upcast(
+        self, event: DomainEvent, target_schema_version: int | None = None
+    ) -> DomainEvent: ...
 
     def upcast(
         self,
