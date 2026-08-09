@@ -153,21 +153,12 @@ architecture approval or canonical learner state. The demo UI in the
 submission video is a demonstrative visualization; the behavior and trace it
 shows are the real offline harness.
 
-## Roadmap
+## Context and roadmap
 
-1. **Harden the core** — stable contributor contracts for hosts, skills,
-   playbooks, persistence, and replay.
-2. **Self-improvement proposal loop** — when an agent hits a capability
-   boundary (e.g., an unsupported material type), it records a structured
-   proposal instead of silently inventing behavior. Proposals pass through
-   explicit human review, validation, scoped implementation, tests, and
-   replay checks before entering the harness.
-3. **Vertical products on the same core** — biomedical, medical, legal, and
-   other learning domains own their UI and subject skills while reusing the
-   same durable execution and trust boundary.
-
-The goal: a free, community-maintained core that students, teachers, and
-builders **embed** instead of each rebuilding their own tutor runtime.
+The canonical glossary and invariants live in [`CONTEXT.md`](CONTEXT.md); the
+ownership map and Current/Approved Target/Gap status live in
+[`CONTEXT-MAP.md`](CONTEXT-MAP.md). [`ROADMAP.md`](ROADMAP.md) is the single
+home for approved future work and non-goals.
 
 ## Status and contributing
 
