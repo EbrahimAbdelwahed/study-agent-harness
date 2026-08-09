@@ -15,8 +15,26 @@ from study_agent.domain.errors import (
     UnauthorizedFailure,
     UnavailableDependencyFailure,
     ValidationFailure,
-    map_internal_failure,
 )
+
+_ERROR_CODE_TO_FAILURE: dict[ErrorCode, type[HarnessError]] = {
+    ErrorCode.INVALID_INPUT: ValidationFailure,
+    ErrorCode.VALIDATION_ERROR: ValidationFailure,
+    ErrorCode.INSUFFICIENT_EVIDENCE: ValidationFailure,
+    ErrorCode.CANCELLED: ValidationFailure,
+    ErrorCode.BUDGET_EXCEEDED: ValidationFailure,
+    ErrorCode.NOT_FOUND: NotFoundFailure,
+    ErrorCode.UNSUPPORTED_CAPABILITY: NotFoundFailure,
+    ErrorCode.CONFLICT: ConflictFailure,
+    ErrorCode.SOURCE_INTEGRITY_ERROR: ConflictFailure,
+    ErrorCode.RETRIEVAL_ERROR: UnavailableDependencyFailure,
+    ErrorCode.MODEL_UNAVAILABLE: UnavailableDependencyFailure,
+    ErrorCode.MODEL_PROTOCOL_ERROR: UnavailableDependencyFailure,
+    ErrorCode.PERSISTENCE_ERROR: UnavailableDependencyFailure,
+}
+
+if set(_ERROR_CODE_TO_FAILURE) != set(ErrorCode):  # pragma: no cover - import guard
+    raise RuntimeError("every ErrorCode must have an explicit public failure mapping")
 
 
 def translate_exception(
@@ -24,48 +42,44 @@ def translate_exception(
 ) -> HarnessError:
     """Map known dependency families to safe public failures.
 
-    The original exception is retained only as ``__cause__`` for local
-    diagnostics.  Its message, class, traceback, and backend details never
-    enter the serialized failure document.
+    The original exception is retained only as a local ``__cause__``. It is
+    never included in the public failure document.
     """
 
     if isinstance(error, HarnessError):
         return error
 
     error_name = type(error).__name__
-    failure: HarnessError
     if error_name in {"SequenceConflictError", "EventSequenceConflictError"}:
-        failure = StaleFailure(
+        failure: HarnessError = StaleFailure(
             "the durable stream changed before commit", correlation_id=correlation_id
         )
     elif error_name in {"IdempotencyConflictError", "ConflictError"}:
         failure = ConflictFailure("idempotency input conflicts", correlation_id=correlation_id)
-    elif isinstance(error, sqlite3.Error):
-        failure = UnavailableDependencyFailure(
-            "storage dependency is unavailable",
-            retryable=True,
-            correlation_id=correlation_id,
-        )
+    elif error_name in {"AuthenticationError", "UnauthorizedError"} or isinstance(
+        error, PermissionError
+    ):
+        failure = UnauthorizedFailure("operation is not authorized", correlation_id=correlation_id)
     elif isinstance(error, FileNotFoundError):
         failure = NotFoundFailure("requested resource was not found", correlation_id=correlation_id)
-    elif isinstance(error, PermissionError):
-        failure = UnauthorizedFailure("operation is not authorized", correlation_id=correlation_id)
+    elif isinstance(error, sqlite3.Error):
+        failure = UnavailableDependencyFailure(
+            "storage dependency is unavailable", retryable=True, correlation_id=correlation_id
+        )
+    elif _is_model_error(error):
+        failure = _translate_model_error(error, correlation_id=correlation_id)
     elif type(error).__module__.startswith("study_agent.adapters") or isinstance(
         error, (TimeoutError, ConnectionError, OSError)
     ):
         failure = UnavailableDependencyFailure(
-            "external dependency is unavailable",
-            retryable=True,
-            correlation_id=correlation_id,
+            "external dependency is unavailable", retryable=True, correlation_id=correlation_id
         )
-    elif _is_model_error(error):
-        failure = _translate_model_error(error, correlation_id=correlation_id)
     elif isinstance(error, LookupError):
         failure = NotFoundFailure("requested resource was not found", correlation_id=correlation_id)
     elif isinstance(error, (TypeError, ValueError, KeyError)):
         failure = ValidationFailure("request failed validation", correlation_id=correlation_id)
     else:
-        failure = map_internal_failure(error, correlation_id=correlation_id)
+        failure = InternalFailure("operation failed safely", correlation_id=correlation_id)
 
     failure.__cause__ = error
     return failure
@@ -85,14 +99,10 @@ def _translate_model_error(
         )
     if code in {"unavailable", "rate_limited", "timeout"}:
         return UnavailableDependencyFailure(
-            "model dependency is unavailable",
-            retryable=True,
-            correlation_id=correlation_id,
+            "model dependency is unavailable", retryable=True, correlation_id=correlation_id
         )
     if code == "cancelled":
-        return ValidationFailure(
-            "model operation was cancelled", correlation_id=correlation_id
-        )
+        return ValidationFailure("model operation was cancelled", correlation_id=correlation_id)
     if code in {"protocol_error", "unsupported_operation"}:
         return ValidationFailure(
             "model dependency returned an invalid response", correlation_id=correlation_id
@@ -111,37 +121,15 @@ def failure_from_exception(
 def translate_study_error(
     error: StudyError, *, correlation_id: object | None = None
 ) -> HarnessError:
-    """Translate the legacy private ``StudyError`` code vocabulary explicitly."""
+    """Translate every legacy ``StudyError`` code through one exhaustive table."""
 
     if not isinstance(error, StudyError):
         raise TypeError("error must be StudyError")
-    if error.code in {ErrorCode.INVALID_INPUT, ErrorCode.VALIDATION_ERROR}:
-        failure: HarnessError = ValidationFailure(error.message, correlation_id=correlation_id)
-    elif error.code is ErrorCode.NOT_FOUND:
-        failure = NotFoundFailure("requested resource was not found", correlation_id=correlation_id)
-    elif error.code is ErrorCode.CONFLICT:
-        failure = ConflictFailure(
-            "request conflicts with canonical state", correlation_id=correlation_id
-        )
-    elif error.code in {
-        ErrorCode.MODEL_UNAVAILABLE,
-        ErrorCode.RETRIEVAL_ERROR,
-        ErrorCode.PERSISTENCE_ERROR,
-    }:
-        failure = UnavailableDependencyFailure(
-            "a required dependency is unavailable",
-            retryable=error.retryable,
-            correlation_id=correlation_id,
-        )
-    elif error.code is ErrorCode.CANCELLED:
-        failure = ValidationFailure("operation was cancelled", correlation_id=correlation_id)
-    elif error.code is ErrorCode.UNSUPPORTED_CAPABILITY:
-        failure = NotFoundFailure(
-            "requested capability is unavailable", correlation_id=correlation_id
-        )
-    else:
-        failure = InternalFailure("operation failed safely", correlation_id=correlation_id)
-    return failure
+    failure_type = _ERROR_CODE_TO_FAILURE[error.code]
+    retryable = error.retryable if failure_type is UnavailableDependencyFailure else None
+    return failure_type(
+        "operation failed safely", retryable=retryable, correlation_id=correlation_id
+    )
 
 
 __all__ = [

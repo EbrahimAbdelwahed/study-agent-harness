@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -38,54 +39,134 @@ class StudyError:
         object.__setattr__(self, "details", freeze_object(self.details))
 
 
-# PF-02's facade error values intentionally live beside the legacy internal
-# ``StudyError`` value.  Existing application services still consume the latter;
-# new facade ports consume only this closed taxonomy.
+MAX_ERROR_DEPTH = 8
+MAX_ERROR_NODES = 256
+MAX_ERROR_ITEMS = 64
+MAX_ERROR_STRING_BYTES = 1024
+MAX_ERROR_DETAILS_BYTES = 16 * 1024
+MAX_ERROR_BYTES = 20 * 1024
+
+_REDACTED = "[REDACTED]"
+_UNSUPPORTED = "[UNSUPPORTED]"
+_CYCLE = "[CYCLE]"
+_DEPTH_LIMIT = "[DEPTH_LIMIT]"
+_NODE_LIMIT = "[NODE_LIMIT]"
+_ITEM_LIMIT = "[ITEM_LIMIT]"
+_STRING_LIMIT = "[STRING_LIMIT]"
+_NON_FINITE = "[NON_FINITE]"
+_NON_STRING_KEY = "[NON_STRING_KEY]"
+_DETAILS_LIMIT = "[DETAILS_LIMIT]"
+
 _SECRET_FIELD = re.compile(
     r"(?:api[_-]?key|authorization|cookie|credential|password|secret|token|prompt|"
     r"chain[-_ ]of[-_ ]thought|traceback|stack[_ -]?trace|exception|provider)",
     re.IGNORECASE,
 )
-_SECRET_ASSIGNMENT = re.compile(
-    r"(?i)(api[_-]?key|authorization|cookie|credential|password|secret|token)\s*[:=]\s*[^\s,;]+"
-)
-_BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
-_SECRET_VALUE = re.compile(r"(?i)\bsk-[A-Za-z0-9_-]+\b|-----BEGIN [^-]+-----")
+
+
+def _has_sensitive_marker(value: str) -> bool:
+    return _SECRET_FIELD.search(value) is not None
+
+
+def _bounded_text(value: str) -> str:
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return _UNSUPPORTED
+    if len(encoded) > MAX_ERROR_STRING_BYTES:
+        return _STRING_LIMIT
+    if _has_sensitive_marker(value):
+        return _REDACTED
+    return value
 
 
 def _safe_message(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         return "operation failed safely"
-    message = value.strip()
-    has_secret_field = _SECRET_FIELD.search(message) and not _SECRET_ASSIGNMENT.search(message)
-    if has_secret_field or _SECRET_VALUE.search(message):
+    bounded = _bounded_text(value.strip())
+    if bounded in {_REDACTED, _STRING_LIMIT, _UNSUPPORTED}:
         return "operation failed safely"
-    message = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}=[REDACTED]", message)
-    message = _BEARER.sub("Bearer [REDACTED]", message)
-    return message
+    return bounded
+
+
+class _SanitizeState:
+    __slots__ = ("active", "nodes")
+
+    def __init__(self) -> None:
+        self.nodes = 0
+        self.active: set[int] = set()
 
 
 def _safe_value(value: object, *, key: str | None = None) -> object:
-    if key is not None and _SECRET_FIELD.search(key):
-        return "[REDACTED]"
-    if isinstance(value, Mapping):
-        return {
-            str(item_key): _safe_value(item_value, key=str(item_key))
-            for item_key, item_value in value.items()
-        }
-    if isinstance(value, (tuple, list)):
-        return tuple(_safe_value(item) for item in value)
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return _safe_message(value) if isinstance(value, str) else value
-    return "[REDACTED]"
+    """Return bounded JSON-compatible data without invoking arbitrary repr/str."""
+
+    state = _SanitizeState()
+
+    def visit(item: object, depth: int, item_key: str | None = None) -> object:
+        if item_key is not None and _has_sensitive_marker(item_key):
+            return _REDACTED
+        if depth > MAX_ERROR_DEPTH:
+            return _DEPTH_LIMIT
+        state.nodes += 1
+        if state.nodes > MAX_ERROR_NODES:
+            return _NODE_LIMIT
+        if isinstance(item, str):
+            return _bounded_text(item)
+        if item is None or isinstance(item, (bool, int)):
+            return item
+        if isinstance(item, float):
+            return item if math.isfinite(item) else _NON_FINITE
+        if not isinstance(item, (Mapping, list, tuple)):
+            return _UNSUPPORTED
+
+        identity = id(item)
+        if identity in state.active:
+            return _CYCLE
+        state.active.add(identity)
+        try:
+            if isinstance(item, Mapping):
+                result: dict[str, object] = {}
+                count = 0
+                try:
+                    for raw_key, raw_value in item.items():
+                        if count >= MAX_ERROR_ITEMS:
+                            return {"_": _ITEM_LIMIT}
+                        count += 1
+                        if not isinstance(raw_key, str):
+                            result[_NON_STRING_KEY] = _NON_STRING_KEY
+                            continue
+                        result[raw_key] = visit(raw_value, depth + 1, raw_key)
+                except Exception:
+                    return _UNSUPPORTED
+                return result
+            if len(item) > MAX_ERROR_ITEMS:
+                return [_ITEM_LIMIT]
+            return [visit(child, depth + 1) for child in item]
+        finally:
+            state.active.remove(identity)
+
+    return visit(value, 0, key)
 
 
 def _freeze_safe(value: object) -> object:
     if isinstance(value, Mapping):
-        return MappingProxyType({str(key): _freeze_safe(item) for key, item in value.items()})
-    if isinstance(value, (tuple, list)):
+        return MappingProxyType({key: _freeze_safe(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_safe(item) for item in value)
+    if isinstance(value, tuple):
         return tuple(_freeze_safe(item) for item in value)
     return value
+
+
+def _bounded_details(value: object) -> object:
+    safe = _safe_value(value)
+    try:
+        encoded = json.dumps(
+            safe, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return {"_": _UNSUPPORTED}
+    return safe if len(encoded) <= MAX_ERROR_DETAILS_BYTES else {"_": _DETAILS_LIMIT}
 
 
 class HarnessError(RuntimeError):
@@ -106,27 +187,47 @@ class HarnessError(RuntimeError):
             raise TypeError("retryable must be a boolean")
         self.message = _safe_message(message)
         self.retryable = self.default_retryable if retryable is None else retryable
-        self.correlation_id = None if correlation_id is None else str(correlation_id)
-        if self.correlation_id == "":
-            raise ValueError("correlation_id must be non-empty when supplied")
-        safe_details = _safe_value(details or {})
-        if not isinstance(safe_details, Mapping):  # pragma: no cover - narrowed by input
-            raise TypeError("details must be a mapping")
-        frozen_details = _freeze_safe(safe_details)
-        if not isinstance(frozen_details, Mapping):  # pragma: no cover - narrowed above
-            raise TypeError("details must be a mapping")
-        self.details = frozen_details
+        if correlation_id is None:
+            self.correlation_id = None
+        elif isinstance(correlation_id, str) and correlation_id.strip():
+            candidate = _bounded_text(correlation_id.strip())
+            self.correlation_id = candidate if candidate not in {_REDACTED, _STRING_LIMIT} else None
+        else:
+            self.correlation_id = None
+        safe_details = _bounded_details({} if details is None else details)
+        self.details = _freeze_safe(safe_details)
         super().__init__(self.message)
 
     def to_json(self) -> dict[str, object]:
-        """Return a stable JSON-safe public failure document."""
+        """Return a stable, bounded, strict-JSON-safe failure document."""
 
-        return {
+        payload: dict[str, object] = {
             "code": self.code,
             "message": self.message,
             "retryable": self.retryable,
             "correlation_id": self.correlation_id,
             "details": _safe_value(self.details),
+        }
+        try:
+            encoded = json.dumps(
+                payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError):
+            return {
+                "code": self.code,
+                "message": "operation failed safely",
+                "retryable": bool(self.retryable),
+                "correlation_id": None,
+                "details": {"_": _UNSUPPORTED},
+            }
+        if len(encoded) <= MAX_ERROR_BYTES:
+            return payload
+        return {
+            "code": self.code,
+            "message": "operation failed safely",
+            "retryable": bool(self.retryable),
+            "correlation_id": None,
+            "details": {"_": _DETAILS_LIMIT},
         }
 
     def as_dict(self) -> dict[str, object]:
@@ -134,7 +235,11 @@ class HarnessError(RuntimeError):
 
     def serialize(self) -> bytes:
         return json.dumps(
-            self.to_json(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            self.to_json(),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode("utf-8")
 
     def __str__(self) -> str:
@@ -171,48 +276,6 @@ class InternalFailure(HarnessError):
     code = "internal"
 
 
-def map_internal_failure(
-    error: BaseException, *, correlation_id: object | None = None
-) -> HarnessError:
-    """Map an implementation exception without importing adapter packages.
-
-    The application translation layer supplies richer provider/SQLite mappings;
-    this dependency-free fallback keeps domain code safe if an unknown adapter
-    crosses the boundary.
-    """
-
-    if isinstance(error, HarnessError):
-        return error
-    module = type(error).__module__
-    name = type(error).__name__
-    failure: HarnessError
-    if name in {"SequenceConflictError", "EventSequenceConflictError"}:
-        failure = StaleFailure(correlation_id=correlation_id)
-    elif name in {"IdempotencyConflictError", "ConflictError"}:
-        failure = ConflictFailure(correlation_id=correlation_id)
-    elif name in {"ValidationError", "EventBatchError"} or isinstance(
-        error, (TypeError, ValueError)
-    ):
-        failure = ValidationFailure(correlation_id=correlation_id)
-    elif name in {
-        "NotFoundError",
-        "CourseNotFoundError",
-        "SessionNotFoundError",
-        "BlobNotFoundError",
-    } or isinstance(error, LookupError):
-        failure = NotFoundFailure(correlation_id=correlation_id)
-    elif name in {"PermissionError", "AuthenticationError"}:
-        failure = UnauthorizedFailure(correlation_id=correlation_id)
-    elif module.startswith("sqlite3") or module.startswith("study_agent.adapters") or isinstance(
-        error, (OSError, TimeoutError, ConnectionError)
-    ):
-        failure = UnavailableDependencyFailure(correlation_id=correlation_id)
-    else:
-        failure = InternalFailure(correlation_id=correlation_id)
-    failure.__cause__ = error
-    return failure
-
-
 __all__ = [
     "ConflictFailure",
     "ErrorCode",
@@ -224,5 +287,4 @@ __all__ = [
     "UnauthorizedFailure",
     "UnavailableDependencyFailure",
     "ValidationFailure",
-    "map_internal_failure",
 ]

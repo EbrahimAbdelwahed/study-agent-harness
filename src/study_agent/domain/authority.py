@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,160 +23,187 @@ def _text(value: object, name: str) -> str:
     return value
 
 
-@dataclass(frozen=True, slots=True)
-class Principal:
-    """Opaque host-created identity for one caller."""
+class _OpaqueAuthorityValue:
+    """Read-only, host-issued value with no transport or copy pathway."""
 
-    kind: PrincipalKind
-    principal_id: str
+    __slots__ = ("_issuer",)
+    _issuer: object
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.kind, PrincipalKind):
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("authority values are immutable")
+
+    def __reduce__(self) -> str | tuple[Any, ...]:
+        raise TypeError("authority values are not serializable")
+
+    def __copy__(self) -> object:
+        raise TypeError("authority values are not copyable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> object:
+        raise TypeError("authority values are not copyable")
+
+    def __getstate__(self) -> object:
+        raise TypeError("authority values are not serializable")
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__.lower()} opaque>"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+class Principal(_OpaqueAuthorityValue):
+    __slots__ = ("_kind", "_principal_id")
+    _kind: PrincipalKind
+    _principal_id: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("Principal values are issued by HostAuthority")
+
+    @classmethod
+    def _mint(cls, issuer: object, kind: PrincipalKind, principal_id: str) -> Principal:
+        if not isinstance(kind, PrincipalKind):
             raise TypeError("kind must be PrincipalKind")
-        _text(self.principal_id, "principal_id")
-
-
-@dataclass(frozen=True, slots=True)
-class Grant:
-    """One host-issued capability grant."""
-
-    name: str
-
-    def __post_init__(self) -> None:
-        _text(self.name, "grant")
+        principal = object.__new__(cls)
+        object.__setattr__(principal, "_issuer", issuer)
+        object.__setattr__(principal, "_kind", kind)
+        object.__setattr__(principal, "_principal_id", _text(principal_id, "principal_id"))
+        return principal
 
     @property
-    def value(self) -> str:
-        return self.name
-
-    def __str__(self) -> str:
-        return self.name
-
-
-@dataclass(frozen=True, slots=True)
-class Scope:
-    """One host-issued resource scope, represented opaquely."""
-
-    name: str
-
-    def __post_init__(self) -> None:
-        _text(self.name, "scope")
-
-    @property
-    def value(self) -> str:
-        return self.name
-
-    def __str__(self) -> str:
-        return self.name
-
-
-def _names(values: Iterable[str | Grant | Scope], name: str) -> frozenset[str]:
-    if isinstance(values, (str, bytes, bytearray)):
-        raise TypeError(f"{name} must be a collection of values")
-    normalized: set[str] = set()
-    for value in values:
-        candidate = value.name if isinstance(value, (Grant, Scope)) else _text(value, name)
-        normalized.add(candidate)
-    return frozenset(normalized)
-
-
-@dataclass(frozen=True, slots=True)
-class AuthorityContext:
-    """Immutable host authority supplied to every facade operation."""
-
-    principal: Principal
-    grants: Iterable[str | Grant] = ()
-    scopes: Iterable[str | Scope] = ()
-    correlation_id: str = ""
-    session_id: str | None = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.principal, Principal):
-            raise TypeError("principal must be Principal")
-        object.__setattr__(self, "grants", _names(self.grants, "grant"))
-        object.__setattr__(self, "scopes", _names(self.scopes, "scope"))
-        object.__setattr__(self, "correlation_id", _text(self.correlation_id, "correlation_id"))
-        if self.session_id is not None:
-            object.__setattr__(self, "session_id", _text(self.session_id, "session_id"))
-
-    @property
-    def principal_kind(self) -> PrincipalKind:
-        return self.principal.kind
+    def kind(self) -> PrincipalKind:
+        return self._kind
 
     @property
     def principal_id(self) -> str:
-        return self.principal.principal_id
+        return self._principal_id
+
+
+class Grant(_OpaqueAuthorityValue):
+    __slots__ = ("_name",)
+    _name: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("Grant values are issued by HostAuthority")
+
+    @classmethod
+    def _mint(cls, issuer: object, name: str) -> Grant:
+        grant = object.__new__(cls)
+        object.__setattr__(grant, "_issuer", issuer)
+        object.__setattr__(grant, "_name", _text(name, "grant"))
+        return grant
 
     @property
-    def is_trusted(self) -> bool:
-        return self.principal.kind in (PrincipalKind.HUMAN, PrincipalKind.SERVICE)
+    def name(self) -> str:
+        return self._name
 
-    def can(self, grant: str | Grant, *, scope: str | Scope | None = None) -> bool:
-        grant_name = grant.name if isinstance(grant, Grant) else _text(grant, "grant")
-        if grant_name not in self.grants:
-            return False
-        if scope is None:
-            return True
-        scope_name = scope.name if isinstance(scope, Scope) else _text(scope, "scope")
-        return scope_name in self.scopes
+    @property
+    def value(self) -> str:
+        return self._name
 
-    def require(
-        self,
-        required_grants: Iterable[str | Grant] = (),
-        required_scopes: Iterable[str | Scope] = (),
-        *,
-        durable: bool = False,
-    ) -> None:
-        """Fail closed for untrusted or insufficient authority."""
 
-        if type(durable) is not bool:
-            raise TypeError("durable must be a boolean")
-        if durable and self.principal.kind is PrincipalKind.MODEL:
+class Scope(_OpaqueAuthorityValue):
+    __slots__ = ("_name",)
+    _name: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("Scope values are issued by HostAuthority")
+
+    @classmethod
+    def _mint(cls, issuer: object, name: str) -> Scope:
+        scope = object.__new__(cls)
+        object.__setattr__(scope, "_issuer", issuer)
+        object.__setattr__(scope, "_name", _text(name, "scope"))
+        return scope
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def value(self) -> str:
+        return self._name
+
+
+class AuthorityContext(_OpaqueAuthorityValue):
+    """Opaque immutable context issued by one host composition root."""
+
+    __slots__ = (
+        "_correlation_id",
+        "_grants",
+        "_principal",
+        "_scopes",
+        "_session_id",
+    )
+    _principal: Principal
+    _grants: tuple[Grant, ...]
+    _scopes: tuple[Scope, ...]
+    _correlation_id: str
+    _session_id: str | None
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("AuthorityContext values are issued by HostAuthority")
+
+    @classmethod
+    def _mint(
+        cls,
+        issuer: object,
+        principal: Principal,
+        grants: tuple[Grant, ...],
+        scopes: tuple[Scope, ...],
+        correlation_id: str,
+        session_id: str | None,
+    ) -> AuthorityContext:
+        context = object.__new__(cls)
+        object.__setattr__(context, "_issuer", issuer)
+        object.__setattr__(context, "_principal", principal)
+        object.__setattr__(context, "_grants", grants)
+        object.__setattr__(context, "_scopes", scopes)
+        object.__setattr__(context, "_correlation_id", _text(correlation_id, "correlation_id"))
+        object.__setattr__(
+            context, "_session_id", None if session_id is None else _text(session_id, "session_id")
+        )
+        return context
+
+    @property
+    def principal(self) -> Principal:
+        return self._principal
+
+    @property
+    def grants(self) -> tuple[Grant, ...]:
+        return self._grants
+
+    @property
+    def scopes(self) -> tuple[Scope, ...]:
+        return self._scopes
+
+    @property
+    def correlation_id(self) -> str:
+        return self._correlation_id
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def principal_kind(self) -> PrincipalKind:
+        return self._principal.kind
+
+    @property
+    def principal_id(self) -> str:
+        return self._principal.principal_id
+
+    def _assert_issuer(self, issuer: object) -> None:
+        if self._issuer is not issuer:
             raise UnauthorizedFailure(
-                "model authority cannot commit durable effects",
-                correlation_id=self.correlation_id,
-                details={"principal_kind": self.principal.kind.value},
-            )
-        grants = _names(required_grants, "required grant")
-        scopes = _names(required_scopes, "required scope")
-        owned_grants = frozenset(self.grants)
-        owned_scopes = frozenset(self.scopes)
-        missing_grants = sorted(grants - owned_grants)
-        missing_scopes = sorted(scopes - owned_scopes)
-        if missing_grants or missing_scopes:
-            raise UnauthorizedFailure(
-                "caller lacks the required authority",
-                correlation_id=self.correlation_id,
-                details={
-                    "missing_grants": tuple(missing_grants),
-                    "missing_scopes": tuple(missing_scopes),
-                },
+                "authority context was issued by a different host",
+                correlation_id=self._correlation_id,
             )
 
-    def require_durable(
-        self,
-        required_grants: Iterable[str | Grant] = (),
-        required_scopes: Iterable[str | Scope] = (),
-        *,
-        schema_validator: Callable[[], Any] | None = None,
-        adapter: Callable[[], Any] | None = None,
-    ) -> None:
-        """Authorize before invoking schema or adapter callbacks.
+    def _grant_names(self) -> frozenset[str]:
+        return frozenset(grant.name for grant in self._grants)
 
-        The optional callbacks are a small testable seam used by application
-        ports.  They are intentionally invoked only after the host authority
-        gate passes; callers may perform their own schema and adapter work after
-        this method returns.
-        """
-
-        self.require(required_grants, required_scopes, durable=True)
-        if schema_validator is not None:
-            schema_validator()
-        if adapter is not None:
-            adapter()
-
-    def require_approval(self, *required_grants: str | Grant) -> None:
-        self.require(required_grants, durable=True)
+    def _scope_names(self) -> frozenset[str]:
+        return frozenset(scope.name for scope in self._scopes)
 
     @staticmethod
     def check_expected_sequence(
