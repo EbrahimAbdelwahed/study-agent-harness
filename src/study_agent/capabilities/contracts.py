@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -15,10 +16,12 @@ from study_agent.domain._validation import (
     freeze_object,
     require_text,
 )
-from study_agent.domain.identifiers import RunId
+from study_agent.domain.authority import AuthorityContext
+from study_agent.domain.identifiers import CorrelationId, RunId
 from study_agent.playbooks import (
     PlaybookRunStatus,
     ReadDependency,
+    ToolBehaviorPin,
     VerifiedRunRecord,
     VersionPins,
 )
@@ -26,7 +29,7 @@ from study_agent.portability import (
     reject_provider_selector_name,
     reject_provider_selectors,
 )
-from study_agent.skills import SemanticVersion
+from study_agent.skills import ArtifactReference, SemanticVersion
 from study_agent.tools.schema import validate_schema_definition
 
 
@@ -36,6 +39,30 @@ class TutorCapabilityId(StrEnum):
     PROPOSE_FLASHCARDS = "propose_flashcards"
     ANALYZE_EXAM_SAMPLE = "analyze_exam_sample"
     GRADE_RESPONSE = "grade_response"
+
+
+_NAMESPACED_CAPABILITY_ID = re.compile(
+    r"^[a-z][a-z0-9]*(?:[._:/-][a-z0-9]+)+$"
+)
+
+
+class CapabilityId(str):
+    """A lowercase, namespaced capability identity supplied by a host."""
+
+    def __new__(cls, value: str) -> CapabilityId:
+        require_text(value, "capability id")
+        if _NAMESPACED_CAPABILITY_ID.fullmatch(value) is None:
+            raise ValueError("capability id must be a lowercase namespaced name")
+        return str.__new__(cls, value)
+
+    @property
+    def value(self) -> str:
+        """Match the value protocol used by legacy capability identifiers."""
+
+        return str(self)
+
+
+type CapabilityIdentifier = TutorCapabilityId | CapabilityId
 
 
 class CapabilityOutcomeStatus(StrEnum):
@@ -76,20 +103,31 @@ class CapabilityGatewayError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class CapabilityManifest:
-    id: TutorCapabilityId
+    id: CapabilityIdentifier
     version: SemanticVersion
     input_schema: JsonObject
     output_schema: JsonObject
     required_authority: tuple[str, ...]
     supports_suspension: bool
+    implementation_version: SemanticVersion | str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, TutorCapabilityId):
-            raise TypeError("capability id must use the closed TutorCapabilityId vocabulary")
+        if isinstance(self.id, str) and not isinstance(
+            self.id, (TutorCapabilityId, CapabilityId)
+        ):
+            object.__setattr__(self, "id", CapabilityId(self.id))
+        if not isinstance(self.id, (TutorCapabilityId, CapabilityId)):
+            raise TypeError("capability id must use CapabilityId")
         if not isinstance(self.version, SemanticVersion):
             raise TypeError("capability version must be a SemanticVersion")
         if not isinstance(self.supports_suspension, bool):
             raise TypeError("supports_suspension must be boolean")
+        if self.implementation_version is not None and not isinstance(
+            self.implementation_version, (SemanticVersion, str)
+        ):
+            raise TypeError("implementation_version must be text or SemanticVersion")
+        if isinstance(self.implementation_version, str):
+            require_text(self.implementation_version, "implementation_version")
 
         input_schema = freeze_object(self.input_schema)
         output_schema = freeze_object(self.output_schema)
@@ -108,16 +146,28 @@ class CapabilityManifest:
                 raise TypeError("required authority entries must be strings")
             require_text(grant, "required authority")
             reject_provider_selector_name(grant, "required authority")
+            if _NAMESPACED_CAPABILITY_ID.fullmatch(grant) is None:
+                raise ValueError("required authority entries must be lowercase namespaced names")
         if len(set(authority)) != len(authority):
             raise ValueError("required authority entries must be unique")
         object.__setattr__(self, "required_authority", tuple(sorted(authority)))
 
     @property
     def identity(self) -> str:
-        return f"{self.id.value}@{self.version.major}"
+        if isinstance(self.id, TutorCapabilityId):
+            # Preserve the identity used by the existing tutor gateway while
+            # new opaque IDs carry their complete semantic version.
+            return f"{self.id.value}@{self.version.major}"
+        return f"{self.id.value}@{self.version}"
+
+    @property
+    def implementation_contract_version(self) -> SemanticVersion | str | None:
+        """Alias for the specification's implementation-contract wording."""
+
+        return self.implementation_version
 
     def to_json(self) -> JsonObject:
-        return {
+        payload: JsonObject = {
             "id": self.id.value,
             "version": str(self.version),
             "identity": self.identity,
@@ -126,22 +176,195 @@ class CapabilityManifest:
             "required_authority": self.required_authority,
             "supports_suspension": self.supports_suspension,
         }
+        if self.implementation_version is not None:
+            payload["implementation_version"] = str(self.implementation_version)
+        return payload
 
     @property
     def fingerprint(self) -> str:
-        payload = json.dumps(
-            _plain(self.to_json()),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-        return sha256(b"study-agent-capability-manifest-v1\0" + payload).hexdigest()
+        return _fingerprint("study-agent-capability-manifest-v1", self.to_json())
+
+    def to_bytes(self) -> bytes:
+        """Return the canonical wire representation of this manifest."""
+
+        return _canonical_bytes(self.to_json())
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> CapabilityManifest:
+        raw = _decode_object(data, "capability manifest")
+        return cls.from_json(raw)
+
+    @classmethod
+    def from_json(cls, raw: JsonObject) -> CapabilityManifest:
+        expected = {
+            "id",
+            "version",
+            "identity",
+            "input_schema",
+            "output_schema",
+            "required_authority",
+            "supports_suspension",
+        }
+        optional = {"implementation_version"}
+        if set(raw) not in (expected, expected | optional):
+            raise ValueError("capability manifest has an unexpected shape")
+        identifier = _capability_identifier(_string_value(raw.get("id"), "id"))
+        version = SemanticVersion.parse(_string_value(raw.get("version"), "version"))
+        implementation = raw.get("implementation_version")
+        if implementation is not None and not isinstance(implementation, str):
+            raise ValueError("implementation_version must be text")
+        grants = raw.get("required_authority")
+        if not isinstance(grants, (tuple, list)):
+            raise ValueError("required_authority must be an array")
+        schema_input = _object_value(raw.get("input_schema"), "input_schema")
+        schema_output = _object_value(raw.get("output_schema"), "output_schema")
+        suspension = raw.get("supports_suspension")
+        if not isinstance(suspension, bool):
+            raise ValueError("supports_suspension must be boolean")
+        manifest = cls(
+            identifier,
+            version,
+            schema_input,
+            schema_output,
+            tuple(_string_value(item, "required authority") for item in grants),
+            suspension,
+            implementation,
+        )
+        if _string_value(raw.get("identity"), "identity") != manifest.identity:
+            raise ValueError("capability manifest identity is inconsistent")
+        return manifest
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityRequest:
+    """A host-issued, provider-neutral request for one manifested capability."""
+
+    manifest_identity: str
+    inputs: JsonObject
+    authority: AuthorityContext
+    correlation_id: CorrelationId | str
+    expected_stream_high_water: int
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        require_text(self.manifest_identity, "manifest_identity")
+        if "@" not in self.manifest_identity:
+            raise ValueError("manifest_identity must include a version")
+        object.__setattr__(self, "inputs", freeze_object(self.inputs))
+        if not isinstance(self.authority, AuthorityContext):
+            raise TypeError("authority must be an AuthorityContext")
+        correlation = self.correlation_id
+        if isinstance(correlation, str):
+            correlation = CorrelationId(correlation)
+        if not isinstance(correlation, CorrelationId):
+            raise TypeError("correlation_id must be a CorrelationId")
+        object.__setattr__(self, "correlation_id", correlation)
+        if type(self.expected_stream_high_water) is not int or self.expected_stream_high_water < 0:
+            raise ValueError("expected_stream_high_water must be a non-negative integer")
+        require_text(self.idempotency_key, "idempotency_key")
+
+    @property
+    def capability_identity(self) -> str:
+        """Compatibility alias for consumers that call the field capability identity."""
+
+        return self.manifest_identity
+
+    @property
+    def input(self) -> JsonObject:
+        """Singular alias retained for hosts using the request vocabulary."""
+
+        return self.inputs
+
+    @property
+    def expected_stream_sequence(self) -> int:
+        return self.expected_stream_high_water
+
+    @property
+    def input_fingerprint(self) -> str:
+        return _fingerprint(
+            "study-agent-capability-request-input-v1",
+            {"manifest_identity": self.manifest_identity, "inputs": self.inputs},
+        )
+
+    @property
+    def authority_fingerprint(self) -> str:
+        return _fingerprint(
+            "study-agent-capability-request-authority-v1", _authority_json(self.authority)
+        )
+
+    @property
+    def retry_identity_fingerprint(self) -> str:
+        return _fingerprint(
+            "study-agent-capability-request-retry-v1",
+            {
+                "idempotency_key": self.idempotency_key,
+                "input_fingerprint": self.input_fingerprint,
+            },
+        )
+
+    def to_json(self) -> JsonObject:
+        return {
+            "manifest_identity": self.manifest_identity,
+            "inputs": self.inputs,
+            "authority": _authority_json(self.authority),
+            "correlation_id": str(self.correlation_id),
+            "expected_stream_high_water": self.expected_stream_high_water,
+            "idempotency_key": self.idempotency_key,
+            "input_fingerprint": self.input_fingerprint,
+            "authority_fingerprint": self.authority_fingerprint,
+            "retry_identity_fingerprint": self.retry_identity_fingerprint,
+        }
+
+    def to_bytes(self) -> bytes:
+        """Return deterministic request bytes without serializing opaque authority."""
+
+        return _canonical_bytes(self.to_json())
+
+    @classmethod
+    def from_bytes(
+        cls, data: bytes, *, authority: AuthorityContext
+    ) -> CapabilityRequest:
+        raw = _decode_object(data, "capability request")
+        expected = {
+            "manifest_identity",
+            "inputs",
+            "authority",
+            "correlation_id",
+            "expected_stream_high_water",
+            "idempotency_key",
+            "input_fingerprint",
+            "authority_fingerprint",
+            "retry_identity_fingerprint",
+        }
+        if set(raw) != expected:
+            raise ValueError("capability request has an unexpected shape")
+        if raw.get("authority") != _authority_json(authority):
+            raise ValueError("capability request authority does not match the host context")
+        high_water = raw.get("expected_stream_high_water")
+        if type(high_water) is not int:
+            raise ValueError("expected_stream_high_water must be an integer")
+        request = cls(
+            _string_value(raw.get("manifest_identity"), "manifest_identity"),
+            _object_value(raw.get("inputs"), "inputs"),
+            authority,
+            _string_value(raw.get("correlation_id"), "correlation_id"),
+            high_water,
+            _string_value(raw.get("idempotency_key"), "idempotency_key"),
+        )
+        for name, actual in (
+            ("input_fingerprint", request.input_fingerprint),
+            ("authority_fingerprint", request.authority_fingerprint),
+            ("retry_identity_fingerprint", request.retry_identity_fingerprint),
+        ):
+            if _string_value(raw.get(name), name) != actual:
+                raise ValueError(f"capability request {name} is inconsistent")
+        return request
 
 
 @dataclass(frozen=True, slots=True)
 class CapabilityContinuation:
     run_id: RunId
-    capability_id: TutorCapabilityId
+    capability_id: CapabilityIdentifier
     capability_version: SemanticVersion
     manifest_fingerprint: str
     authority_fingerprint: str
@@ -153,12 +376,17 @@ class CapabilityContinuation:
     inputs: JsonObject
     pins: VersionPins
     read_dependencies: tuple[ReadDependency, ...]
+    input_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, RunId):
             raise TypeError("continuation run_id must be a RunId")
-        if not isinstance(self.capability_id, TutorCapabilityId):
-            raise TypeError("continuation capability_id must use TutorCapabilityId")
+        if isinstance(self.capability_id, str) and not isinstance(
+            self.capability_id, (TutorCapabilityId, CapabilityId)
+        ):
+            object.__setattr__(self, "capability_id", CapabilityId(self.capability_id))
+        if not isinstance(self.capability_id, (TutorCapabilityId, CapabilityId)):
+            raise TypeError("continuation capability_id must use CapabilityId")
         if not isinstance(self.capability_version, SemanticVersion):
             raise TypeError("continuation capability_version must be SemanticVersion")
         for value, name in (
@@ -182,6 +410,13 @@ class CapabilityContinuation:
         if len(set(keys)) != len(keys):
             raise ValueError("continuation dependencies must be unique by kind and id")
         object.__setattr__(self, "read_dependencies", dependencies)
+        input_fingerprint = self.input_fingerprint
+        if input_fingerprint is None:
+            input_fingerprint = _fingerprint(
+                "study-agent-capability-input-v1", {"inputs": self.inputs}
+            )
+        _require_sha256(input_fingerprint, "input_fingerprint")
+        object.__setattr__(self, "input_fingerprint", input_fingerprint)
 
     @property
     def fingerprint(self) -> str:
@@ -197,6 +432,7 @@ class CapabilityContinuation:
             "retry_identity_fingerprint": self.retry_identity_fingerprint,
             "definition_fingerprint": self.definition_fingerprint,
             "checkpoint_fingerprint": self.checkpoint_fingerprint,
+            "input_fingerprint": self.input_fingerprint,
             "dialogue_step_id": self.dialogue_step_id,
             "next_step_index": self.next_step_index,
             "inputs": self.inputs,
@@ -206,6 +442,73 @@ class CapabilityContinuation:
                 for item in self.read_dependencies
             ),
         }
+
+    def to_bytes(self) -> bytes:
+        """Return the canonical wire representation of this continuation."""
+
+        return _canonical_bytes(self.to_json())
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> CapabilityContinuation:
+        return cls.from_json(_decode_object(data, "capability continuation"))
+
+    @classmethod
+    def from_json(cls, raw: JsonObject) -> CapabilityContinuation:
+        expected = {
+            "run_id",
+            "capability_id",
+            "capability_version",
+            "manifest_fingerprint",
+            "authority_fingerprint",
+            "retry_identity_fingerprint",
+            "definition_fingerprint",
+            "checkpoint_fingerprint",
+            "input_fingerprint",
+            "dialogue_step_id",
+            "next_step_index",
+            "inputs",
+            "pins",
+            "read_dependencies",
+        }
+        if set(raw) != expected:
+            raise ValueError("capability continuation has an unexpected shape")
+        dependencies = raw.get("read_dependencies")
+        if not isinstance(dependencies, (tuple, list)):
+            raise ValueError("read_dependencies must be an array")
+        decoded_dependencies = tuple(
+            ReadDependency(
+                _string_value(_object_value(item, "read dependency").get("kind"), "kind"),
+                _string_value(_object_value(item, "read dependency").get("id"), "id"),
+                _string_value(
+                    _object_value(item, "read dependency").get("version"), "version"
+                ),
+            )
+            for item in dependencies
+        )
+        next_step_index = raw.get("next_step_index")
+        if type(next_step_index) is not int:
+            raise ValueError("next_step_index must be an integer")
+        inputs = _object_value(raw.get("inputs"), "inputs")
+        return cls(
+            RunId(_string_value(raw.get("run_id"), "run_id")),
+            _capability_identifier(_string_value(raw.get("capability_id"), "capability_id")),
+            SemanticVersion.parse(
+                _string_value(raw.get("capability_version"), "capability_version")
+            ),
+            _string_value(raw.get("manifest_fingerprint"), "manifest_fingerprint"),
+            _string_value(raw.get("authority_fingerprint"), "authority_fingerprint"),
+            _string_value(
+                raw.get("retry_identity_fingerprint"), "retry_identity_fingerprint"
+            ),
+            _string_value(raw.get("definition_fingerprint"), "definition_fingerprint"),
+            _string_value(raw.get("checkpoint_fingerprint"), "checkpoint_fingerprint"),
+            _string_value(raw.get("dialogue_step_id"), "dialogue_step_id"),
+            next_step_index,
+            inputs,
+            _pins_from_json(_object_value(raw.get("pins"), "pins")),
+            decoded_dependencies,
+            _string_value(raw.get("input_fingerprint"), "input_fingerprint"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +525,16 @@ class CompletedCapabilityOutcome:
         if self.run.status is not PlaybookRunStatus.COMPLETED:
             raise ValueError("completed capability outcomes require a completed verified run")
         object.__setattr__(self, "output", freeze_json(self.output))
+
+    def to_json(self) -> JsonObject:
+        return {
+            "status": self.status.value,
+            "run": _verified_run_json(self.run),
+            "output": self.output,
+        }
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +560,18 @@ class SuspendedCapabilityOutcome:
         reject_provider_selectors(schema, "response_schema")
         object.__setattr__(self, "response_schema", schema)
 
+    def to_json(self) -> JsonObject:
+        return {
+            "status": self.status.value,
+            "run_id": str(self.run_id),
+            "dialogue_request": self.dialogue_request,
+            "continuation": self.continuation.to_json(),
+            "response_schema": self.response_schema,
+        }
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
+
 
 @dataclass(frozen=True, slots=True)
 class TerminatedCapabilityOutcome:
@@ -260,6 +585,12 @@ class TerminatedCapabilityOutcome:
             raise TypeError("terminated capability run must be VerifiedRunRecord")
         if self.run.status is not PlaybookRunStatus.TERMINATED:
             raise ValueError("terminated capability outcomes require a terminated verified run")
+
+    def to_json(self) -> JsonObject:
+        return {"status": self.status.value, "run": _verified_run_json(self.run)}
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +606,12 @@ class CancelledCapabilityOutcome:
             raise TypeError("cancelled outcome run_id must be RunId")
         require_text(self.message, "cancelled outcome message")
 
+    def to_json(self) -> JsonObject:
+        return {"status": self.status.value, "run_id": str(self.run_id), "message": self.message}
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
+
 
 @dataclass(frozen=True, slots=True)
 class StaleCapabilityOutcome:
@@ -288,6 +625,12 @@ class StaleCapabilityOutcome:
         if not isinstance(self.run_id, RunId):
             raise TypeError("stale outcome run_id must be RunId")
         require_text(self.message, "stale outcome message")
+
+    def to_json(self) -> JsonObject:
+        return {"status": self.status.value, "run_id": str(self.run_id), "message": self.message}
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +646,12 @@ class FailedCapabilityOutcome:
             raise TypeError("failed outcome run_id must be RunId")
         require_text(self.message, "failed outcome message")
 
+    def to_json(self) -> JsonObject:
+        return {"status": self.status.value, "run_id": str(self.run_id), "message": self.message}
+
+    def to_bytes(self) -> bytes:
+        return _canonical_bytes(self.to_json())
+
 
 type CapabilityOutcome = (
     CompletedCapabilityOutcome
@@ -312,6 +661,161 @@ type CapabilityOutcome = (
     | StaleCapabilityOutcome
     | FailedCapabilityOutcome
 )
+
+
+def _capability_identifier(value: str) -> CapabilityIdentifier:
+    try:
+        return TutorCapabilityId(value)
+    except ValueError:
+        return CapabilityId(value)
+
+
+def _authority_json(authority: AuthorityContext) -> JsonObject:
+    return {
+        "principal_kind": authority.principal_kind.value,
+        "principal_id": authority.principal_id,
+        "grants": tuple(sorted(grant.name for grant in authority.grants)),
+        "scopes": tuple(sorted(scope.name for scope in authority.scopes)),
+        "correlation_id": authority.correlation_id,
+        "session_id": authority.session_id,
+    }
+
+
+def _verified_run_json(run: VerifiedRunRecord) -> JsonObject:
+    termination = run.termination
+    return {
+        "run_id": str(run.run_id),
+        "definition_fingerprint": run.definition_fingerprint,
+        "inputs": run.inputs,
+        "pins": _pins_json(run.pins),
+        "read_dependencies": tuple(
+            {"kind": item.kind, "id": item.id, "version": item.version}
+            for item in run.read_dependencies
+        ),
+        "outputs": run.outputs,
+        "traces": tuple(
+            {
+                "step_id": item.step_id,
+                "step_kind": item.step_kind,
+                "status": item.status.value,
+                "occurred_at": item.occurred_at.isoformat(),
+                "details": item.details,
+            }
+            for item in run.traces
+        ),
+        "status": run.status.value,
+        "termination": (
+            None
+            if termination is None
+            else {
+                "passed": termination.passed,
+                "disposition": termination.disposition.value,
+                "result": termination.result,
+                "reason": termination.reason,
+            }
+        ),
+    }
+
+
+def _pins_from_json(raw: JsonObject) -> VersionPins:
+    expected = {"skill", "playbook", "prompt", "tool_behaviors", "model_adapter", "state_contract"}
+    if set(raw) != expected:
+        raise ValueError("capability pins have an unexpected shape")
+
+    def reference(value: object, name: str) -> ArtifactReference:
+        item = _object_value(value, name)
+        return ArtifactReference(
+            _string_value(item.get("id"), f"{name}.id"),
+            SemanticVersion.parse(_string_value(item.get("version"), f"{name}.version")),
+        )
+
+    raw_tools = raw.get("tool_behaviors")
+    if not isinstance(raw_tools, (tuple, list)):
+        raise ValueError("tool_behaviors must be an array")
+    tools = tuple(
+        ToolBehaviorPin(
+            _string_value(_object_value(item, "tool behavior").get("name"), "tool name"),
+            SemanticVersion.parse(
+                _string_value(
+                    _object_value(item, "tool behavior").get("version"), "tool version"
+                )
+            ),
+        )
+        for item in raw_tools
+    )
+    return VersionPins(
+        reference(raw.get("skill"), "skill"),
+        reference(raw.get("playbook"), "playbook"),
+        reference(raw.get("prompt"), "prompt"),
+        tools,
+        reference(raw.get("model_adapter"), "model_adapter"),
+        reference(raw.get("state_contract"), "state_contract"),
+    )
+
+
+def encode_capability_outcome(outcome: CapabilityOutcome) -> bytes:
+    """Encode any closed capability outcome with canonical JSON ordering."""
+
+    if not isinstance(
+        outcome,
+        (
+            CompletedCapabilityOutcome,
+            SuspendedCapabilityOutcome,
+            TerminatedCapabilityOutcome,
+            CancelledCapabilityOutcome,
+            StaleCapabilityOutcome,
+            FailedCapabilityOutcome,
+        ),
+    ):
+        raise TypeError("outcome must be a CapabilityOutcome")
+    return outcome.to_bytes()
+
+
+def _canonical_bytes(value: JsonValue) -> bytes:
+    try:
+        return json.dumps(
+            _plain(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("capability contract is not canonical JSON") from error
+
+
+def _decode_object(data: bytes, name: str) -> JsonObject:
+    if not isinstance(data, bytes):
+        raise TypeError(f"{name} bytes must be bytes")
+    try:
+        decoded = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"{name} is not valid JSON") from error
+    if not isinstance(decoded, dict):
+        raise ValueError(f"{name} must encode a JSON object")
+    return _thaw_json(decoded)
+
+
+def _thaw_json(value: object) -> JsonValue:
+    if isinstance(value, dict):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return tuple(_thaw_json(item) for item in value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise ValueError("contract JSON contains an unsupported value")
+
+
+def _string_value(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be text")
+    return value
+
+
+def _object_value(value: object, name: str) -> JsonObject:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    return value
 
 
 def _plain(value: JsonValue) -> object:
@@ -329,9 +833,7 @@ def _require_sha256(value: str, name: str) -> None:
 
 
 def _fingerprint(domain: str, value: JsonObject) -> str:
-    payload = json.dumps(
-        _plain(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    payload = _canonical_bytes(value)
     return sha256(domain.encode("utf-8") + b"\0" + payload).hexdigest()
 
 
