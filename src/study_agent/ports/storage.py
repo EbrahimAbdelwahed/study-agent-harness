@@ -87,12 +87,28 @@ def _read_legacy(
 def _read_domain_events(
     store: _LegacyEventStore, course_id: CourseId, after_sequence: int = 0
 ) -> tuple[DomainEvent, ...]:
-    """Read only legacy records for consumers that require session metadata."""
+    """Read transitional records for legacy consumers without losing envelopes."""
 
     return tuple(
-        event
+        event if isinstance(event, DomainEvent) else _envelope_to_legacy(event)
         for event in _read_legacy(store, course_id, after_sequence)
-        if isinstance(event, DomainEvent)
+    )
+
+
+def _envelope_to_legacy(event: EventEnvelope) -> DomainEvent:
+    """Adapt a public envelope for a private legacy reducer seam."""
+
+    return DomainEvent(
+        event_id=event.event_id,
+        course_id=event.stream_id,
+        course_sequence=event.stream_sequence,
+        event_type=event.event_type,
+        schema_version=event.schema_version,
+        actor=event.actor,
+        occurred_at=event.occurred_at,
+        correlation_id=event.correlation_id,
+        payload=event.payload,
+        causation_id=event.causation_id,
     )
 
 

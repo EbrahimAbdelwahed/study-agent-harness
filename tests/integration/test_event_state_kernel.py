@@ -26,6 +26,7 @@ from study_agent.domain.errors import ValidationFailure
 from study_agent.domain.events import EventEnvelope
 from study_agent.events import EventUpcasterRegistry
 from study_agent.kernel import EventSchema, KernelModule, KernelModuleRegistry
+from study_agent.ports.storage import _read_domain_events
 from study_agent.state import EventRegistry, PayloadValidationError, event_to_bytes
 
 
@@ -299,6 +300,36 @@ def test_public_read_converts_legacy_row_while_private_replay_keeps_session(
     assert private_event.session_id == SessionId("session-1")
     persisted = store.projection_bytes(legacy.course_id)
     assert store.rebuild_projection(legacy.course_id) == persisted
+
+
+def test_legacy_reader_adapts_public_envelope_and_continues_sequence(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite3", note_registry())
+    envelope = EventEnvelope(
+        event_id="envelope-first",
+        event_type="note.recorded",
+        schema_version=1,
+        stream_id="course-1",
+        stream_sequence=1,
+        occurred_at=datetime(2026, 7, 10, 12, 36, tzinfo=UTC),
+        correlation_id="correlation-1",
+        actor=Actor(PrincipalKind.HUMAN, "local-user"),
+        payload={"note": "envelope"},
+    )
+    store.append(CourseId("course-1"), 0, (envelope,))
+
+    legacy_stream = _read_domain_events(store, CourseId("course-1"))
+    assert len(legacy_stream) == 1
+    assert legacy_stream[0].event_id == EventId("envelope-first")
+    assert legacy_stream[0].session_id is None
+
+    second = make_event(2)
+    assert store.append(CourseId("course-1"), 1, (second,)) == 2
+    assert tuple(event.event_id for event in store.read(CourseId("course-1"))) == (
+        EventId("envelope-first"),
+        second.event_id,
+    )
 
 
 def test_closed_host_module_drives_opaque_append_and_replay(tmp_path: Path) -> None:
