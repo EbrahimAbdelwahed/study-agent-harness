@@ -15,7 +15,7 @@ Require an installed `study-agent-harness` distribution and verify that `study-a
 
 ## Discover before acting
 
-Run `study-agent --json describe`. Require `agent-operations@1`, inspect each command's effects, repository and network requirements, and verify the operator-skill fingerprint. Use only advertised commands. Keep the public StudyTool set exactly `citation.resolve`, `course.get`, `grounding.ask`, `session.get_context`, `session.record_note`, `source.list`, and `source.search`.
+Run `study-agent --json describe`. Require `agent-operations@2`, inspect each command's effects, repository and network requirements, and verify the operator-skill fingerprint. Use only advertised commands and runnable study tools. Treat `unavailable_operations` as the boundary of this public agent-operation inventory; recall remains an optional host-owned composition and is not directly callable through this inventory.
 
 ## Build an offline repository
 

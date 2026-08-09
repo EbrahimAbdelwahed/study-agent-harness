@@ -1,0 +1,38 @@
+{
+  "run_id": "20260711-oss-harness-v01-batch3",
+  "feature": {
+    "title": "OSS Harness v0.1 Immutable Text Ingestion"
+  },
+  "worker": {
+    "id": "source-revision-state",
+    "scope": "source contracts · ingestion events · replay projection",
+    "invariant": "No provider, retrieval, model, or direct projection-write behavior.",
+    "verification": ".venv/bin/python -m pytest tests/unit/ingestion tests/integration/test_source_projection_replay.py"
+  },
+  "runtime": {
+    "command": "study-agent-demo \"I have ten minutes. Help me understand heart valves.\"",
+    "fixture": "heart-valves.md",
+    "snapshot": "sha256:fdfa93…a802b7",
+    "replay": "completed → suspended → completed",
+    "proof": "Offline proof complete: no network, credentials, model SDK, or provider call."
+  },
+  "gates": {
+    "tests": {
+      "status": "passed",
+      "artifact": "docs/flywheel-runs/20260711-oss-harness-v01-batch3/validation.md"
+    },
+    "semantic_review": {
+      "status": "approved",
+      "artifact": "docs/reviews/20260711-oss-harness-v01-batch3.md"
+    },
+    "architecture_review": {
+      "status": "approved",
+      "artifact": "docs/reviews/20260714-agent-managed-lifecycle-slices08-09.md"
+    }
+  },
+  "handoff": {
+    "manifest": "docs/flywheel-runs/20260711-oss-harness-v01-batch3/manifest.json",
+    "validation": "docs/flywheel-runs/20260711-oss-harness-v01-batch3/validation.md",
+    "durable_memory": "docs/worker-reports/20260711-oss-harness-v01-batch3/source-revision-state.md"
+  }
+}

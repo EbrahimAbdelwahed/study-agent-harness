@@ -2,6 +2,8 @@
 
 # Public re-exports intentionally define the small package-level API.
 
+from typing import TYPE_CHECKING, Any
+
 from .artifact import (
     ArtifactViewPort,
     ServiceDecisionPolicyPort,
@@ -50,7 +52,6 @@ from .model import (
     StructuredOutputConstraint,
     ToolCall,
 )
-from .recall import RecallCommandPort, RecallViewPort
 from .retrieval import (
     EvidenceStatus,
     IndexReceipt,
@@ -75,7 +76,6 @@ from .retrievers import (
     RetrieverSkipReason,
     RetrieverSkipReceipt,
 )
-from .scheduling import SchedulingPolicyPort
 from .session import (
     AnswerNotFoundError,
     AssistantTurnViewPort,
@@ -110,7 +110,29 @@ from .tutor_runner import (
     TutorHostAuthorityPort,
 )
 from .tutor_snapshot import TutorSnapshotPort
-from .workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
+
+if TYPE_CHECKING:
+    from .recall import RecallCommandPort, RecallViewPort
+    from .scheduling import SchedulingPolicyPort
+    from .workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
+
+
+def __getattr__(name: str) -> Any:
+    """Load optional public protocols without activating their feature packages."""
+
+    if name in {"RecallCommandPort", "RecallViewPort"}:
+        from . import recall
+
+        return getattr(recall, name)
+    if name == "SchedulingPolicyPort":
+        from .scheduling import SchedulingPolicyPort
+
+        return SchedulingPolicyPort
+    if name in {"WorkaroundApprovalAuthority", "WorkaroundExecutor"}:
+        from . import workaround
+
+        return getattr(workaround, name)
+    raise AttributeError(name)
 
 __all__ = [
     "MAX_SOURCE_BYTES",

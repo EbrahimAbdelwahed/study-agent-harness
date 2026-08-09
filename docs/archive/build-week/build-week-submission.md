@@ -17,29 +17,61 @@ The durable, source-grounded execution layer for AI tutors students can trust.
 ### Long description
 
 Medical school did not give me one study workflow. It gave me many disconnected
-ones: source-file management, deterministic chunking, study-material and
-question generation, past-exam simulation, source fact-checking, and correction.
-Study Agent Harness turns the reliability lessons from that lived workflow into
-an open-source core for durable AI tutors.
+ones: source files, study-material generation, exam questions, fact-checking,
+and correction. The missing layer was not another chatbot. It was a durable,
+inspectable execution layer that could let a tutor meet a student where they
+are without forgetting what happened before.
 
-The project is not another chat application. A model may propose what to do, but
-it does not own the learner state, course authority, source truth, or execution.
-The harness keeps canonical state in an append-only event stream, snapshots
-trusted sources, projects inspectable learner evidence, runs versioned skills
-through playbooks, and can replay the same state deterministically. Provider
-adapters remain technical boundaries, so the tutor core is model neutral.
+Study Agent Harness is an open-source, provider-neutral core for that layer. A
+model may propose what to do, but it does not own learner state, course
+authority, source truth, or execution. The harness keeps canonical state in an
+append-only event stream, snapshots trusted sources, projects inspectable
+evidence, runs versioned skills through playbooks, and replays the same state
+deterministically. Provider adapters remain technical boundaries, so the core
+can work with different models and hosts.
 
 The Build Week demo starts where a student is: “I have ten minutes. Help me
-understand heart valves.” It uses a sanitized anatomy fixture and the real
-bounded host runner to complete a grounded action, suspend for clarification,
-refresh evidence, and resume. The visible trace is
-`completed → suspended → completed`; the same trace is replayed through scripted
-and recorded-provider decision adapters without making a network request.
+understand heart valves.” The real offline trace captures a sanitized source
+snapshot, completes a grounded action, suspends to ask which valve deserves
+focus, refreshes evidence after the learner chooses the aortic valve, and
+resumes the exact continuation. The visible trace is
+`completed → suspended → completed`; scripted and recorded-provider decision
+adapters reproduce it without a network request.
 
-This foundation can let future tutor products adapt conversationally without
-turning the conversation into the source of truth. The immediate impact is
-trust: a learner or developer can inspect which source snapshot, evidence
-sequence, capability, and transition produced an outcome.
+The interface shown in the video is a demonstrative visualization created for
+the submission, not the shipped product UI. The displayed behavior and trace
+are grounded in the real offline harness; the product layer is intentionally
+left open for future verticals.
+
+### Build Week decisions
+
+We deliberately focused this build on the reusable core instead of building a
+single rigid study application. The important boundaries are state outside the
+model, skills and playbooks as the portable behavior layer, technical-only
+provider adapters, and deterministic offline verification. Codex and GPT-5.6
+were used through an adapted Agent Flywheel: approved specs were decomposed into
+dependency-aware beads, implemented in bounded slices, and closed with focused
+tests, architecture/semantic review, and durable handoffs. This made the
+workflow itself inspectable without claiming that Codex owns architecture
+approval or canonical learner state.
+
+### Roadmap
+
+The first priority after Build Week is to harden the core and publish stable
+contributor contracts for hosts, skills, playbooks, persistence, and replay.
+The next architectural slice is a self-improvement proposal loop: when an
+agent encounters a capability boundary—such as an unsupported material type—
+it can record a structured proposal rather than silently inventing behavior.
+Proposals will pass through explicit human review, validation, scoped
+implementation, tests, and replay checks before becoming part of the harness.
+This is a direction for the next milestone, not a shipped v0.2 capability.
+
+Once the core is robust, the same OSS foundation can support vertical products
+for biomedical, medical, legal, or other learning domains. Those products can
+own their own UI and subject-specific skills while reusing the same durable
+execution and trust boundary. The goal is a free, community-maintained core
+that students, teachers, and builders can embed rather than each rebuilding
+their own tutor runtime.
 
 ### Built with
 
@@ -50,17 +82,6 @@ sequence, capability, and transition produced an outcome.
 - Optional OpenAI Responses adapter (`openai` extra); not required by the demo
 - Pytest, Ruff, mypy, and GitHub Actions
 - GPT-5.6 through Codex as the primary Build Week implementation environment
-
-### How Codex and GPT-5.6 were used
-
-GPT-5.6 through Codex was the primary implementation environment during Build
-Week. Codex supported a spec-driven workflow: specification, clarification,
-beads, bounded implementation, offline tests, and review. An adapted agent
-flywheel maintained small tasks, explicit success/stop criteria, and durable
-technical memory.
-
-This describes the Build Week workflow and does not claim that every historical
-line of the project was generated during Build Week.
 
 ### Challenges
 
@@ -82,12 +103,6 @@ resumption explicit, and tests failure paths offline.
 Agentic tutoring benefits from a flexible conversation, but reliability comes
 from moving authority and truth outside the model. Small executable specs,
 deterministic fixtures, and explicit stop criteria made that boundary testable.
-
-### What's next
-
-After Build Week, the next work is to let third-party tutor products embed the
-harness, validate the public contracts with more hosts, and improve contributor
-ergonomics without weakening replay or provider neutrality.
 
 ### Repository and supported platform
 
@@ -128,13 +143,43 @@ For the complete quality gate:
 - Category: Education
 - Public repository: https://github.com/EbrahimAbdelwahed/study-agent-harness
 - Demo video: pending public YouTube URL
-- Codex Session ID (`/feedback`): pending; paste the session ID before submission
-- Submission status: prepared locally; no Devpost fields have been submitted
+- Codex Session ID (`/feedback`): `019f6015-44e7-7b01-973f-b3a75df6577e`
+- Submitter type: Individual
+- Country of residence: Italy
+- Judge/test instructions: clone the public repository, install with Python 3.12 or 3.13, and run the one-command offline anatomy demo from the instructions above; no credentials or network access are required.
+- Developer-tool instructions: Python 3.12/3.13; Ubuntu CI and verified macOS arm64 build. Install from the repository with `python3.12 -m pip install .`, then run `study-agent-demo`. The bundled sanitized fixture makes the trace independently reproducible.
+- Submission status: Devpost project copy, technologies, repository link, thumbnail, disclaimer, Build Week decisions, and roadmap saved as project version 4; category-specific answers prepared but not submitted. Public YouTube URL remains pending.
 
-## Final voiceover and burned-in caption transcript
+## Current video narrative
 
-This timed master is both the final English voiceover script and the caption
-transcript. Target duration: 2:45 at a calm 130 words per minute.
+The approved film uses the same narrative as the project page: a student request,
+source grounding, one adaptive clarification, an explain/test/remember loop, and
+the replay proof underneath. The UI in the film is explicitly a demonstrative
+visualization, not the shipped product UI. The current 80-second human voice-over
+script and captions are maintained separately in
+`docs/archive/build-week/build-week-narration-final.txt` and `docs/archive/build-week/build-week-captions-final.srt`.
+
+## Architecture and Flywheel companion
+
+The optional 39-second companion uses the same visual language as the main film
+to show the verified implementation workflow:
+
+1. An approved immutable-ingestion spec becomes dependency-aware beads; the
+   ready bead advances while dependent work stays visibly gated.
+2. A bounded worker receives exact scope, invariants, and verification before
+   implementation flows through offline tests, semantic review, architecture
+   review where risk demands it, and durable workflow evidence.
+
+The companion keeps human approval as the final authority and is explicitly
+labeled as a demonstrative interface. Its narration and captions are in
+`docs/archive/build-week/build-week-flywheel-narration.txt` and
+`docs/archive/build-week/build-week-flywheel-captions.srt`. The silent master is
+`/private/tmp/study-agent-build-week/final/study-agent-build-week-flywheel-companion-silent.mp4`.
+
+## Legacy voiceover and shot list
+
+The material below is retained as an archival long-form editorial source. It is
+not the current submission audio or timing contract.
 
 ### 0:00–0:18
 

@@ -1,0 +1,28 @@
+{
+  "learner_entry": "I have ten minutes. Help me understand heart valves.",
+  "discovered_capabilities": ["explain_concept"],
+  "scripted_statuses": ["completed", "suspended", "completed"],
+  "recorded_statuses": ["completed", "suspended", "completed"],
+  "parity": true,
+  "gateway_trace": ["start:completed", "start:suspended", "resume:completed"],
+  "timeline": [
+    {"step": 1, "status": "completed", "detail": "Initial grounded explanation"},
+    {"step": 2, "status": "suspended", "detail": "Which valve should we focus on?"},
+    {"step": 3, "status": "completed", "detail": "Resumed with refreshed evidence"}
+  ],
+  "context_state": {
+    "initial_sequence": 1,
+    "refreshed_sequence": 2,
+    "selected_focus": "aortic valve"
+  },
+  "source_state": {
+    "fixture": "heart-valves.md",
+    "title": "Heart valves — sanitized public demo fixture",
+    "checksum_sha256": "fdfa93abaee988eddaec4a6727f15476041bc3a14f3f7ea473aa8b6a24a802b7",
+    "byte_size": 537,
+    "evidence": [
+      "The aortic valve sits between the left ventricle and the aorta.",
+      "The pulmonary valve sits between the right ventricle and the pulmonary trunk."
+    ]
+  }
+}

@@ -1,0 +1,94 @@
+STUDY AGENT HARNESS — VOICE-OVER, ELEVENLABS BREAK-TAGGED
+
+Source text: author's revised script (verbatim, typo-corrected).
+Syntax: <break time="Xs" /> — supported on Multilingual v2, Turbo v2.5, Flash v2.5.
+        NOT on Eleven v3 (v3 uses [pause] audio tags instead — see notes).
+
+GENERATE EACH BLOCK SEPARATELY. Do not paste the whole file as one request:
+break-tag density above ~15 per generation is where instability starts.
+
+Pause scale used:
+  1.0s  = paragraph / scene cut   (your "/")
+  0.6-0.8s = strong internal beat
+  0.4-0.5s = sentence to new idea
+  0.2-0.3s = list item, deliberate comma
+  bare comma = left to the model's native prosody
+
+
+=============================================================
+BLOCK 1 — Opening
+=============================================================
+In high-stakes courses like medicine and engineering, study agents keep failing. <break time="0.4s" /> They lose context, <break time="0.2s" /> hallucinate details, <break time="0.2s" /> and have terrible memory. <break time="1.0s" />
+
+
+=============================================================
+BLOCK 2 — Title
+=============================================================
+Study Agent Harness is the missing layer: <break time="0.4s" /> an open-source execution core that keeps an AI tutor persistent, <break time="0.2s" /> source-grounded, <break time="0.2s" /> and replayable. <break time="1.0s" />
+
+
+=============================================================
+BLOCK 3 — Architecture
+=============================================================
+It is just one rule: <break time="0.4s" /> the model proposes, <break time="0.3s" /> the harness executes. <break time="0.5s" /> Hosts embed it, <break time="0.2s" /> skills and playbooks carry the behavior, <break time="0.2s" /> and a provider-neutral event stream keeps state outside the model. <break time="1.0s" />
+
+
+=============================================================
+BLOCK 4 — Offline demo
+=============================================================
+Here is the real offline demo. <break time="0.4s" /> A student starts wherever they are — <break time="0.3s" /> "I have ten minutes. Help me understand heart valves." <break time="0.5s" /> The harness snapshots a trusted source, <break time="0.2s" /> checksums it, <break time="0.2s" /> and pulls only the evidence that this trace needs. <break time="0.4s" /> The tutor completes one grounded step, <break time="0.3s" /> then suspends to ask the single question that matters: <break time="0.4s" /> which valve should we focus on? <break time="1.0s" />
+
+
+=============================================================
+BLOCK 5 — Refresh / resume / replay   (longest — generate alone)
+=============================================================
+The student answers <break time="0.5s" /> the aortic valve. <break time="0.4s" /> The harness refreshes evidence from one state to the next and resumes the exact continuation even after breaks; <break time="0.3s" /> it does not invent a new conversation. <break time="0.8s" /> It also provides the benefits of having a fresh context window at each conversation, <break time="0.2s" /> while state persists outside the model's ability to retrieve from context or memory systems. <break time="0.8s" /> The visible trace is completed, <break time="0.3s" /> then suspended for the agent to ask a clarifying question about the scope, <break time="0.3s" /> and then completed as the student answers. <break time="0.8s" /> Scripted and recorded adapters replay it identically. <break time="0.4s" /> The traces are deterministic in this sense — <break time="0.3s" /> even with no network, <break time="0.2s" /> no credentials, <break time="0.2s" /> no SDK, <break time="0.2s" /> and no provider call. <break time="1.0s" />
+
+
+=============================================================
+BLOCK 6 — State outside the model
+=============================================================
+That reliability comes from one decision: <break time="0.4s" /> state lives outside the model. <break time="0.6s" /> The architecture technically forces it: <break time="0.4s" /> append-only events, <break time="0.2s" /> trusted source snapshots, <break time="0.2s" /> replayable state — <break time="0.3s" /> everything the tutor knew can be reconstructed and proven. <break time="0.5s" /> This provides a robust environment for studying, <break time="0.3s" /> where factuality and observability are needed the most. <break time="1.0s" />
+
+
+=============================================================
+BLOCK 7 — Codex flywheel   (longest — generate alone)
+=============================================================
+Talking about the workflow that drove the development. <break time="0.5s" /> The harness itself was built this way. <break time="0.4s" /> I used GPT-5.6, through Codex, where I ran an agent flywheel: <break time="0.4s" /> after planning, each approved spec becomes dependency-aware beads. <break time="0.4s" /> Those beads get an adversarial architectural review, <break time="0.3s" /> and after the green light of the reviewer, <break time="0.3s" /> each is implemented in a bounded slice, <break time="0.3s" /> then closed with tests, <break time="0.2s" /> review of the implementation, <break time="0.2s" /> and a durable handoff. <break time="0.6s" /> Everything was orchestrated using a GPT-5.6-Sol instance at mid reasoning effort. <break time="0.4s" /> Code implementation, review, tests and research were made using Luna, Terra and Sol, <break time="0.3s" /> tuned in the reasoning effort to accomplish the tasks efficiently. <break time="0.6s" /> Codex proposes the work — <break time="0.3s" /> a human still approves it. <break time="1.0s" />
+
+
+=============================================================
+BLOCK 8 — Outro
+=============================================================
+We are now at version 0.2.0: <break time="0.4s" /> this is the birth of an open-source core — <break time="0.3s" /> not another study chatbot, <break time="0.3s" /> but a durable execution layer students can trust. <break time="0.6s" /> Clone it, <break time="0.2s" /> and run the whole trace with one command. <break time="0.7s" /> Let's build a future of AI accelerated learning.
+
+
+=============================================================
+NOTES
+=============================================================
+
+TYPOS FIXED vs your draft (all of these would have hurt the read):
+  loose -> lose
+  retrive -> retrieve
+  "The architecture technically force it" -> forces
+  "the model ability" -> the model's ability
+  "each implemented in a bounded slice" -> each is implemented
+  "replay it identically, the traces are..." -> split into two sentences
+      (a comma splice makes the model rush straight through the beat)
+
+IF A SPOT STILL RUNS FLAT
+  Do NOT add more break tags first — that is what destabilises the voice.
+  Try in this order:
+   1. swap the comma for an em dash (—) or ellipsis (…): free micro-pause
+   2. split the sentence in two
+   3. only then add a tag
+
+IF YOU ARE ON ELEVEN V3
+  Break tags are not supported. Replace every <break time="Xs" /> with [pause],
+  which is not duration-controlled — so in that case prefer splitting the
+  sentences and rely on generation-level assembly for exact timing.
+
+VOICE SETTINGS
+  Stability around 45-55: lower reacts more to the punctuation and the dashes,
+  higher flattens the beats you just wrote in.
+  Keep Speed at 1.0 — speed changes rescale the break tags too.

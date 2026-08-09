@@ -12,6 +12,7 @@ import pytest
 from study_agent.application.grounding_ask import GroundingAskService
 from study_agent.cli.config import EMPTY_CONFIG
 from study_agent.cli.repository import LocalRepository, initialize_local_repository
+from study_agent.courses import course_profile_manifest
 from study_agent.domain import (
     CorrelationId,
     CourseId,
@@ -92,14 +93,39 @@ def _run(
         monkeypatch.setattr(repository, "rebuild_retrieval", unexpected_rebuild)
         registry = repository.study_tools(course_id)
         assert tuple(item.name for item in registry.manifests) == (
+            "artifact.proposal_list",
+            "assessment.get",
             "citation.resolve",
+            "course.create",
             "course.get",
             "grounding.ask",
+            "session.end",
             "session.get_context",
+            "session.record_learner_turn",
             "session.record_note",
+            "session.resume",
+            "session.start",
+            "session.suspend",
+            "source.ingest_text",
             "source.list",
             "source.search",
         )
+
+        created_course_id = CourseId("course-created-through-tool")
+        create_registry = repository.study_tools(created_course_id)
+        create_arguments: JsonObject = {
+            "profile": course_profile_manifest(canonical_profile(created_course_id))
+        }
+        create_context = _context(created_course_id, "study:course_write")
+        created = asyncio.run(
+            create_registry.invoke("course.create", create_arguments, create_context)
+        )
+        create_retry = asyncio.run(
+            create_registry.invoke("course.create", create_arguments, create_context)
+        )
+        assert created.error is None
+        assert create_retry == created
+        assert repository.courses.get(created_course_id) == canonical_profile(created_course_id)
 
         read = _context(course_id, "study:read", session_id=session_id)
         course_result = asyncio.run(registry.invoke("course.get", {}, read))
@@ -114,6 +140,8 @@ def _run(
         assert source_list.error is None
         assert source_search.error is None
         assert session_context.error is None
+        assert asyncio.run(registry.invoke("artifact.proposal_list", {}, read)).error is None
+        assert asyncio.run(registry.invoke("assessment.get", {}, read)).error is None
 
         assert source_search.value is not None
         evidence = cast(tuple[JsonObject, ...], source_search.value["evidence"])
@@ -135,6 +163,28 @@ def _run(
         assert resolved.value is not None
         assert resolved.value["text"] == "The aortic valve has three cusps."
 
+        # Exercise the learner-turn owner while the session summary is fresh;
+        # subsequent note/lifecycle operations are covered independently.
+        current_sequence = tuple(repository.events.read(course_id))[-1].course_sequence
+        turn_context = _context(
+            course_id,
+            "study:session_write",
+            session_id=session_id,
+            key="offline-learner-turn-1",
+        )
+        turn_arguments: JsonObject = {
+            "content": "I remember the valve anatomy.",
+            "expected_sequence": current_sequence,
+        }
+        first_turn = asyncio.run(
+            registry.invoke("session.record_learner_turn", turn_arguments, turn_context)
+        )
+        retry_turn = asyncio.run(
+            registry.invoke("session.record_learner_turn", turn_arguments, turn_context)
+        )
+        assert first_turn.error is None
+        assert retry_turn == first_turn
+
         write = _context(
             course_id,
             "study:write",
@@ -145,6 +195,36 @@ def _run(
             registry.invoke("session.record_note", {"content": "Review valves"}, write)
         )
         assert note.error is None
+
+        source_arguments: JsonObject = {
+            "filename": "valves.md",
+            "content": "The pulmonary valve also has three cusps.",
+            "source_id": "source-valves",
+            "title": "Valves",
+            "trust_level": 90,
+            "source_role": "reference",
+        }
+        ingest = _context(course_id, "study:source_write", session_id=session_id)
+        first_ingest = asyncio.run(
+            registry.invoke("source.ingest_text", source_arguments, ingest)
+        )
+        second_ingest = asyncio.run(
+            registry.invoke("source.ingest_text", source_arguments, ingest)
+        )
+        assert first_ingest.error is None
+        assert second_ingest.error is None
+        assert second_ingest.value is not None
+        assert second_ingest.value["status"] == "idempotent"
+
+        lifecycle = _context(
+            course_id,
+            "study:session_write",
+            session_id=session_id,
+        )
+        suspended = asyncio.run(registry.invoke("session.suspend", {}, lifecycle))
+        resumed = asyncio.run(registry.invoke("session.resume", {}, lifecycle))
+        assert suspended.error is None
+        assert resumed.error is None
 
         events_before_ask = tuple(repository.events.read(course_id))
         with sqlite3.connect(repository.paths.runs) as connection:

@@ -1,0 +1,23 @@
+1
+00:00:00,000 --> 00:00:05,200
+We used Codex inside a process deliberately designed to keep judgment human.
+
+2
+00:00:06,000 --> 00:00:13,300
+The Flywheel routes an approved spec through dependency-aware beads, bounded execution, evidence, and durable handoffs.
+
+3
+00:00:14,000 --> 00:00:22,300
+Only the next ready bead moves. Its worker gets file scope, invariants, and verification before it edits anything.
+
+4
+00:00:23,000 --> 00:00:31,200
+Then we run the real CLI underneath the demo. The trace stays readable: source snapshot, replay, and offline proof.
+
+5
+00:00:32,000 --> 00:00:35,200
+Tests and review scale with the risk. No gate is only decorative.
+
+6
+00:00:36,000 --> 00:00:38,300
+The evidence persists. Humans decide when the work is done.

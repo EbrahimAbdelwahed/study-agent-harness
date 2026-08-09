@@ -18,6 +18,7 @@ _ROOT_KEYS = {
     "offline_default",
     "commands",
     "study_tools",
+    "unavailable_operations",
     "operator_skill",
 }
 _COMMAND_KEYS = {
@@ -67,11 +68,22 @@ _NETWORK_REQUIREMENTS = {"never", "model_only"}
 _ARGUMENT_KINDS = {"positional", "option"}
 _ARGUMENT_VALUE_TYPES = {"string", "path", "integer", "number", "boolean", "json"}
 _TOOL_FINGERPRINTS = {
+    "artifact.proposal_list": "31f483dc938649ecc6a7f5124533545e3f4b4e8ca8296e0a721b42b3cc46504f",
+    "assessment.get": "127bae885c54046bec1135cca373d301cf8a669403a4c41533ff25fe54a6d4b1",
     "citation.resolve": "1b7f74005dfaee7879322edd8f60ca7892e9e20d024b1807aafac0af5ecfcb71",
+    "course.create": "27bcd30f06fa8ff27ea734319200c4b642d8a267afa671a441d1c6865d2ea169",
     "course.get": "ccfeca393bc56a3de08abc0d91ef68a9104255a43f0d428312c46d841008934b",
     "grounding.ask": "7452676719dfcfa31f4824f45ed1d1a417dcbbb7522494522955f762850eec0e",
     "session.get_context": "ea60a58728e9d9d96c11fa3cc69bc85e73e7fcbbb7fab9ce2b7821229734d3ba",
+    "session.end": "b6a1d96f9f465869a44a107f22367a19e38f7e5e3e43e4256f25c7d9a674ddc2",
+    "session.record_learner_turn": (
+        "b222b94665954deb4c6a927f53a77f7abdf0810ac4d48ac52a4279e75f4dcaa8"
+    ),
     "session.record_note": "e4d3e7446a82e4570c67abb9da9ddab70c60e14350e412c18065bf33c1b04986",
+    "session.resume": "a38d63946dfb277d2a876fe6eb3a1c151959c05e15efffcec98cab02769129ae",
+    "session.start": "30d4b15d100e7a246930ebb3ca3a3468ca120bf90ecab4211b64f69f289f3e08",
+    "session.suspend": "72bdbcf84d6c0d582daca704a915996e88699c1330b324eb0b0eaefb771682fe",
+    "source.ingest_text": "1e118a962a0f401578e79264b4d432953c75491fac94ce9a889c57b4b403f626",
     "source.list": "387d629a6bd69ffad34dae41a5fe1c88f2619bda4637fcfeb3be96ac21cef24b",
     "source.search": "f66b9bf4a901367ab9867efeab53bd749218e8d01f1639282300abb55b2f5c97",
 }
@@ -145,7 +157,7 @@ def _success_document(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
 def _assert_closed_manifest(manifest: Mapping[str, Any]) -> None:
     """Assert the public discovery schema, including every closed object shape."""
     assert set(manifest) == _ROOT_KEYS
-    assert manifest["contract_version"] == "agent-operations@1"
+    assert manifest["contract_version"] == "agent-operations@2"
     assert manifest["offline_default"] is True
     operator_skill = manifest["operator_skill"]
     assert set(operator_skill) == _OPERATOR_SKILL_KEYS
@@ -156,6 +168,9 @@ def _assert_closed_manifest(manifest: Mapping[str, Any]) -> None:
     )
     assert len(operator_skill["fingerprint"]) == 64
     assert manifest["repository_schema_versions"] == [1]
+    assert manifest["unavailable_operations"] == [
+        {"name": "recall", "available": False, "code": "owner_unavailable"}
+    ]
 
     commands = manifest["commands"]
     command_names = [item["name"] for item in commands]

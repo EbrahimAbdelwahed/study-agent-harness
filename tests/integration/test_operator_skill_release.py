@@ -109,7 +109,26 @@ def test_blank_project_offline_operator_journey(
     assert _run(
         capsys, *base, "session", "get", "course-anatomy", "session-agent-1"
     )["data"] == started["data"]
-    assert len(_run(capsys, "tool", "list")["data"]["tools"]) == 7
+    tools = _run(capsys, "tool", "list")["data"]["tools"]
+    assert len(tools) == 16
+    assert [item["manifest"]["name"] for item in tools] == [
+        "artifact.proposal_list",
+        "assessment.get",
+        "citation.resolve",
+        "course.create",
+        "course.get",
+        "grounding.ask",
+        "session.end",
+        "session.get_context",
+        "session.record_learner_turn",
+        "session.record_note",
+        "session.resume",
+        "session.start",
+        "session.suspend",
+        "source.ingest_text",
+        "source.list",
+        "source.search",
+    ]
 
     exported = _run(
         capsys,

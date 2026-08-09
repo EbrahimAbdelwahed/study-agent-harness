@@ -16,6 +16,14 @@ adds the canonical context map and public roadmap, and fixes an export v3 replay
 gap found during independent review. Both source heads are ancestors of the
 integration branch. The original dirty checkout was not modified.
 
+Before publication, GitHub `main` had advanced to `6f51c58`. That lineage was
+merged as a third parent source: its public agent-operation surface, release
+metadata, FTS portability fix, OSS policies, and Build Week archive were kept.
+Its release-only removal of recall, FSRS, export v3, capability-gap outbox,
+PDF workarounds, and browser shell was intentionally not accepted because the
+integration objective requires preserving those verified features. Optional
+ports now load lazily so the expanded core remains dependency-light.
+
 ## Files Changed
 
 - `AGENTS.md`: requires dedicated `codex/*` worktrees, verification, push, and
@@ -53,12 +61,24 @@ integration branch. The original dirty checkout was not modified.
   documentation corrections received a second review with no remaining
   actionable findings.
 - `git diff --check`: passed.
+- After merging GitHub `main`, focused public-operation/recall/export/feedback
+  verification passed with `124 passed`, followed by `38 passed` for optional
+  port lazy-loading and boundary coverage.
+- Final `uv run --python 3.13 --extra dev ruff check src tests`: passed.
+- Final `uv run --python 3.13 --extra dev mypy`: passed with `530 source files`.
+- Final `uv run --python 3.13 --extra dev pytest -q`: `2307 passed, 5 skipped`;
+  three skips are optional platform/network smoke tests and two are distribution
+  tests that require fresh artifacts.
+- `uv build --out-dir dist --no-create-gitignore --no-build-logs` followed by
+  `STUDY_AGENT_REQUIRE_DIST=1 ... pytest -q
+  tests/quality/test_distribution_contents.py`: `4 passed`.
+- Fresh-wheel `study-agent --version`, `study-agent --json describe`,
+  `study-agent-shell --help`, and `docs/examples/external_agent.py`: passed.
 
 ## Notes
 
 - The core remains dependency-light. FSRS, PDF, provider, and development
   dependencies remain optional extras; no Pi/runtime dependency was added.
-- GitHub publication is externally blocked in this environment: the configured
-  `origin` is a local filesystem mirror and `gh auth status` reports an invalid
-  token for `EbrahimAbdelwahed`. The verified local branch is ready to push and
-  open as a pull request after `gh auth login -h github.com`.
+- The configured `origin` remains a local filesystem mirror. A separate
+  `github` remote targets `EbrahimAbdelwahed/study-agent-harness` so publication
+  does not rewrite or disturb the local mirror.

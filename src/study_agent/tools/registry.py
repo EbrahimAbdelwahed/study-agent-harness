@@ -25,6 +25,7 @@ from study_agent.ports import (
     StudyTool,
 )
 from study_agent.ports.retrieval import RetrievalCatalogPort
+from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.retrieval import SourceContentError
 from study_agent.sessions import (
     IdempotencyConflictError,
@@ -35,6 +36,7 @@ from study_agent.sessions import (
 
 from .builtin import GroundingAskServiceProvider, builtin_tools
 from .contracts import IdempotencyMode, ToolError, ToolErrorCode, ToolManifest, ToolResult
+from .operations import AgentOperationOwners
 from .schema import SchemaValidationError, validate_json, validate_schema_definition
 
 
@@ -50,6 +52,7 @@ class StudyToolRegistry:
         content: SourceContentPort,
         sessions: SessionService,
         grounding: GroundingAskService | GroundingAskServiceProvider,
+        owners: AgentOperationOwners | None = None,
     ) -> None:
         tools = cast(
             tuple[StudyTool, ...],
@@ -60,11 +63,18 @@ class StudyToolRegistry:
                 content=content,
                 sessions=sessions,
                 grounding=grounding,
+                owners=owners,
             ),
         )
         self._tools = {tool.manifest.name: tool for tool in tools}
-        if len(tools) != 7 or len(self._tools) != 7:
-            raise RuntimeError("the public v0.1 registry must contain exactly seven unique tools")
+        expected = 7 if owners is None else 16
+        if len(tools) != expected or len(self._tools) != expected:
+            if owners is None:
+                raise RuntimeError(
+                    "the public v0.1 registry must contain exactly seven unique tools"
+                )
+            raise RuntimeError("the public registry must contain the complete closed inventory")
+        self._course_id = None if owners is None else owners.course_id
         for tool in tools:
             validate_schema_definition(tool.manifest.input_schema)
             validate_schema_definition(tool.manifest.output_schema)
@@ -76,6 +86,8 @@ class StudyToolRegistry:
     async def invoke(
         self, name: str, arguments: JsonObject, context: ExecutionContext
     ) -> ToolResult:
+        if self._course_id is not None and context.course_id != self._course_id:
+            return _failure(ToolErrorCode.UNAUTHORIZED, "tool context course is not authorized")
         tool = self._tools.get(name)
         if tool is None:
             return _failure(ToolErrorCode.INVALID_ARGUMENTS, "unknown study tool")
@@ -88,6 +100,11 @@ class StudyToolRegistry:
             return _failure(ToolErrorCode.UNAUTHORIZED, "required capability was not granted")
         if not isinstance(context.principal_kind, PrincipalKind):
             return _failure(ToolErrorCode.UNAUTHORIZED, "tool context principal is not trusted")
+        if (
+            name in {"course.create", "session.record_learner_turn"}
+            and context.principal_kind is PrincipalKind.MODEL
+        ):
+            return _failure(ToolErrorCode.UNAUTHORIZED, "tool principal is not authorized")
         if manifest.idempotency is IdempotencyMode.REQUIRED and context.idempotency_key is None:
             return _failure(ToolErrorCode.INVALID_ARGUMENTS, "tool invocation requires idempotency")
         try:
@@ -128,7 +145,24 @@ class StudyToolRegistry:
                 "canonical state advanced; retry safely",
                 retryable=True,
             )
-        except (SessionCommandError, CourseCommandError, TextIngestionError, ValueError, TypeError):
+        except TextIngestionError as error:
+            return _ingestion_error(error)
+        except EventSequenceConflictError:
+            return _failure(
+                ToolErrorCode.RETRYABLE_CONFLICT,
+                "canonical state advanced; retry safely",
+                retryable=True,
+            )
+        except SessionCommandError:
+            return _failure(ToolErrorCode.INVALID_ARGUMENTS, "request violates the study contract")
+        except CourseCommandError:
+            return _failure(ToolErrorCode.INVALID_ARGUMENTS, "request violates the study contract")
+        except (ValueError, TypeError):
+            if name in {"artifact.proposal_list", "assessment.get"}:
+                return _failure(
+                    ToolErrorCode.INCOMPATIBLE_RUNTIME,
+                    "canonical projection runtime is incompatible",
+                )
             return _failure(ToolErrorCode.INVALID_ARGUMENTS, "request violates the study contract")
         except Exception:
             return _failure(ToolErrorCode.EXECUTION_FAILED, "study tool execution failed safely")
@@ -156,3 +190,24 @@ def _grounding_error(error: GroundingAskError) -> ToolResult:
         "grounded question could not be completed",
         retryable=code is ToolErrorCode.RETRYABLE_CONFLICT,
     )
+
+
+def _ingestion_error(error: TextIngestionError) -> ToolResult:
+    if error.retryable or error.code.value == "sequence_conflict":
+        return _failure(
+            ToolErrorCode.RETRYABLE_CONFLICT,
+            "canonical state advanced; retry safely",
+            retryable=True,
+        )
+    if error.code.value in {
+        "unsupported_extension",
+        "invalid_utf8",
+        "invalid_content",
+    }:
+        return _failure(ToolErrorCode.INVALID_ARGUMENTS, "request violates the study contract")
+    if error.code.value in {"blob_mismatch", "unsupported_configuration"}:
+        return _failure(
+            ToolErrorCode.INCOMPATIBLE_RUNTIME,
+            "canonical ingestion runtime is incompatible",
+        )
+    return _failure(ToolErrorCode.EXECUTION_FAILED, "study tool execution failed safely")

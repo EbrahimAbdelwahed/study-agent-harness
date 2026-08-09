@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050607" />
+    <title>Codex workbench — Flywheel companion</title>
+    <link rel="stylesheet" href="flywheel-styles.css" />
+  </head>
+  <body data-scene="1">
+    <main class="stage" aria-live="polite">
+      <div class="atmosphere" aria-hidden="true"></div>
+      <header class="masthead">
+        <p class="wordmark">Codex workbench</p>
+        <p class="build">Build Week · implementation companion</p>
+      </header>
+      <p class="demo-disclaimer">Demonstrative process interface · checked-in evidence.</p>
+
+      <section class="opening" aria-labelledby="opening-title">
+        <p class="eyebrow">How we used Codex</p>
+        <h1 id="opening-title">Build the harness<br />with a <em>Flywheel.</em></h1>
+        <p class="opening-line">Human-approved specs. Bounded agent work. Durable evidence.</p>
+      </section>
+
+      <section class="film" aria-label="Codex and adapted Flywheel implementation companion">
+        <div class="film-glow" aria-hidden="true"></div>
+        <div class="process-frame">
+          <header class="workspace-header">
+            <div><span class="status-dot"></span><p>Codex + adapted Flywheel</p></div>
+            <p class="runtime-label">explicit scope · offline evidence · human approval</p>
+          </header>
+
+          <div class="workspace-state state-architecture">
+            <div class="chapter-label"><span>01</span> The control plane</div>
+            <div class="architecture-copy">
+              <p class="speaker">The workflow we used during Build Week</p>
+              <h2>Codex accelerates the work.<br /><em>It does not own the decisions.</em></h2>
+            </div>
+            <div class="architecture-map" aria-label="Flywheel architecture">
+              <svg class="architecture-arrows" viewBox="0 0 1200 440" preserveAspectRatio="none" aria-hidden="true">
+                <defs><marker id="architecture-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M 0 0 L 12 6 L 0 12 z" /></marker></defs>
+                <path d="M 194 280 L 243 280" marker-end="url(#architecture-arrow)" />
+                <path d="M 438 280 L 487 280" marker-end="url(#architecture-arrow)" />
+                <path d="M 682 280 L 732 280" marker-end="url(#architecture-arrow)" />
+                <path d="M 926 280 L 1005 280" marker-end="url(#architecture-arrow)" />
+                <path class="human-arrow" d="M 606 112 L 606 188" marker-end="url(#architecture-arrow)" />
+              </svg>
+              <article class="architecture-node spec-node"><span>input</span><strong>approved<br />spec</strong><small>acceptance criteria</small></article>
+              <article class="architecture-node beads-node"><span>plan</span><strong>bead<br />DAG</strong><small>dependency-ready work</small></article>
+              <article class="architecture-node codex-node"><span>execution</span><strong>Codex +<br />worker</strong><small>bounded file scope</small></article>
+              <article class="architecture-node proof-node"><span>evidence</span><strong>tests +<br />review</strong><small>risk-proportionate gates</small></article>
+              <article class="architecture-node handoff-node"><span>memory</span><strong>durable<br />handoff</strong><small>next ready action</small></article>
+              <article class="approval-node"><span>human authority</span><strong>approve scope<br />and close work</strong></article>
+            </div>
+          </div>
+
+          <div class="workspace-state state-beads">
+            <div class="chapter-label"><span>02</span> From approved spec to ready bead</div>
+            <div class="spec-lock">
+              <span>Evidence-bound feature</span>
+              <strong data-bind="feature_title">OSS Harness v0.1 Immutable Text Ingestion</strong>
+              <small data-bind="run_id">20260711-oss-harness-v01-batch3</small>
+            </div>
+            <div class="bead-dag" aria-label="Dependency-aware bead path">
+              <svg class="dag-arrows" viewBox="0 0 1120 300" preserveAspectRatio="none" aria-hidden="true">
+                <defs><marker id="dag-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M 0 0 L 12 6 L 0 12 z" /></marker></defs>
+                <path d="M 303 171 C 430 171 520 80 661 80" marker-end="url(#dag-arrow)" />
+                <path d="M 303 171 C 430 171 520 226 661 226" marker-end="url(#dag-arrow)" />
+              </svg>
+              <article class="bead-node bead-ready"><span>dependency-ready</span><strong>source-revision-state</strong><small>typed source events</small></article>
+              <article class="bead-node bead-gated"><span>gated</span><strong>text-markdown-ingestion</strong><small>requires source revision state</small></article>
+              <article class="bead-node bead-secondary"><span>gated</span><strong>reference-cli-commands</strong><small>waits for composition + export</small></article>
+            </div>
+            <p class="dag-note"><i></i> The worker advances only the next dependency-ready bead.</p>
+          </div>
+
+          <div class="workspace-state state-runtime">
+            <div class="chapter-label"><span>03</span> The runtime beneath the demo</div>
+            <div class="runtime-copy">
+              <p class="speaker">Actual installed CLI · simplified only for legibility</p>
+              <h2>Show the proof.<br /><em>Keep the terminal readable.</em></h2>
+            </div>
+            <section class="terminal-proof" aria-label="Offline CLI proof">
+              <header><span></span><span></span><span></span><p>study-agent-demo · local runtime</p></header>
+              <div class="terminal-body">
+                <p class="terminal-command"><i>$</i> <code data-bind="runtime_command">study-agent-demo "I have ten minutes. Help me understand heart valves."</code></p>
+                <div class="terminal-result">
+                  <p class="terminal-title">STUDY AGENT HARNESS — OFFLINE ANATOMY DEMO</p>
+                  <p><span>Fixture</span><code data-bind="runtime_fixture">heart-valves.md</code></p>
+                  <p><span>Snapshot</span><code data-bind="runtime_snapshot">sha256:fdfa93…a802b7</code></p>
+                  <p><span>Replay</span><code data-bind="runtime_replay">completed → suspended → completed</code></p>
+                  <p class="terminal-success" data-bind="runtime_proof">Offline proof complete: no network, credentials, model SDK, or provider call.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="workspace-state state-gates">
+            <div class="chapter-label"><span>04</span> Scope, verification, review</div>
+            <div class="gate-heading">
+              <p class="speaker">Risk determines the amount of process</p>
+              <h2>A worker gets the exact<br /><em>scope before it writes code.</em></h2>
+            </div>
+            <div class="worker-context">
+              <div class="worker-row"><span>scope</span><strong data-bind="worker_scope">source contracts · ingestion events · replay projection</strong></div>
+              <div class="worker-row"><span>invariant</span><strong data-bind="worker_invariant">No provider, retrieval, model, or direct projection-write behavior.</strong></div>
+              <div class="worker-row"><span>verify</span><code data-bind="worker_verify">.venv/bin/python -m pytest tests/unit/ingestion tests/integration/test_source_projection_replay.py</code></div>
+            </div>
+            <div class="gate-path" aria-label="Test and review gates">
+              <article class="gate active-gate"><i></i><span>implementation</span><small>bounded</small></article>
+              <i class="gate-link" aria-hidden="true"></i>
+              <article class="gate"><i></i><span>offline tests</span><small data-bind="test_status">passed</small></article>
+              <i class="gate-link" aria-hidden="true"></i>
+              <article class="gate"><i></i><span>semantic review</span><small data-bind="semantic_status">approved</small></article>
+              <i class="gate-link" aria-hidden="true"></i>
+              <article class="gate"><i></i><span>architecture review</span><small>when risk demands it</small></article>
+            </div>
+          </div>
+
+          <div class="workspace-state state-handoff">
+            <div class="chapter-label"><span>05</span> Evidence survives the session</div>
+            <div class="handoff-copy">
+              <p class="speaker">Not a chat transcript</p>
+              <h2>Specs, traces, reviews,<br /><em>and the next ready action.</em></h2>
+              <p class="authority-note"><i></i> Human approval remains the final authority.</p>
+            </div>
+            <aside class="handoff-stack" aria-label="Durable Flywheel artifacts">
+              <div class="artifact-card"><span>manifest</span><strong data-bind="manifest_artifact">docs/flywheel-runs/20260711-oss-harness-v01-batch3/manifest.json</strong><small>inspectable run state</small></div>
+              <div class="artifact-card"><span>validation</span><strong data-bind="validation_artifact">docs/flywheel-runs/20260711-oss-harness-v01-batch3/validation.md</strong><small>errors 0 · warnings 0</small></div>
+              <div class="artifact-card"><span>worker report</span><strong data-bind="handoff_artifact">docs/worker-reports/20260711-oss-harness-v01-batch3/source-revision-state.md</strong><small>durable technical memory</small></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="closing" aria-labelledby="closing-title">
+        <p class="eyebrow">Codex + adapted Flywheel</p>
+        <h2 id="closing-title">Use Codex to move faster.<br /><em>Use evidence to know when to stop.</em></h2>
+        <div class="closing-meta"><span>Human-approved</span><span>Dependency-aware</span><span>Offline-verifiable</span></div>
+      </section>
+
+      <footer class="timeline">
+        <div class="timeline-track"><i></i></div>
+        <p><span data-scene-count>01</span> / 06</p>
+        <button type="button" data-replay>Replay</button>
+      </footer>
+    </main>
+    <script src="flywheel-app.js"></script>
+  </body>
+</html>

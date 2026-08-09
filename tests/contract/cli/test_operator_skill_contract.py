@@ -92,10 +92,28 @@ def test_operator_skill_command_is_repository_and_network_free() -> None:
 
 def test_package_resource_path_is_the_only_skill_copy() -> None:
     project = Path(__file__).parents[3]
+    # A checkout may retain worktrees and ordinary local build/cache output.  Those
+    # directories are not source copies and must not make this source-identity
+    # contract flaky.  A second copy anywhere else in the main checkout remains a
+    # real violation and is intentionally not ignored.
+    ignored_directories = {
+        ".cache",
+        ".mypy_cache",
+        ".nox",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        ".worktrees",
+        "__pycache__",
+        "build",
+        "dist",
+        "venv",
+    }
     copies = tuple(
         path.relative_to(project).as_posix()
         for path in project.rglob("SKILL.md")
-        if ".venv" not in path.parts and "build" not in path.parts
+        if not any(part in ignored_directories for part in path.relative_to(project).parts)
     )
     assert copies == ("src/study_agent/operator_skill/SKILL.md",)
 

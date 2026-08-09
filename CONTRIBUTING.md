@@ -39,3 +39,8 @@ Add behaviour-focused tests for contract changes. Document durable architectural
 decisions under `docs/decisions/` and update affected specs. Never commit local
 study repositories, source material, exports, credentials, raw provider
 payloads, or raw Flywheel execution artifacts.
+
+For release-facing changes, follow the
+[`source release candidate checklist`](docs/maintainer/release-checklist.md) and
+record exact verification rather than claiming publication or support that has
+not been approved.

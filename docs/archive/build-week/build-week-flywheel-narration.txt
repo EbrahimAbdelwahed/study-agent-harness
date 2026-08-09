@@ -1,0 +1,28 @@
+# Build Week Codex + Flywheel companion narration
+# Duration: 00:39.000
+# Delivery: one calm human voice, close and deliberate. Leave 0.7–1.0 seconds
+# of air at the end of every cue. No synthetic voice is included in the visualizer.
+
+[00:00.000–00:05.200] 01 · How we used Codex
+Delivery: low and direct; pause after “Codex”.
+We used Codex inside a process deliberately designed to keep judgment human.
+
+[00:06.000–00:13.300] 02 · Flywheel architecture
+Delivery: measured; let the sequence follow the visible arrows.
+The Flywheel routes an approved spec through dependency-aware beads, bounded execution, evidence, and durable handoffs.
+
+[00:14.000–00:22.300] 03 · Ready bead
+Delivery: crisp and concrete; emphasize “before it edits anything”.
+Only the next ready bead moves. Its worker gets file scope, invariants, and verification before it edits anything.
+
+[00:23.000–00:31.200] 04 · Runtime proof
+Delivery: steady; pause briefly before “source snapshot”.
+Then we run the real CLI underneath the demo. The trace stays readable: source snapshot, replay, and offline proof.
+
+[00:32.000–00:35.200] 05 · Risk-proportionate gates
+Delivery: documentary and restrained.
+Tests and review scale with the risk. No gate is only decorative.
+
+[00:36.000–00:38.300] 06 · Durable handoff
+Delivery: soften and slow at the close.
+The evidence persists. Humans decide when the work is done.
