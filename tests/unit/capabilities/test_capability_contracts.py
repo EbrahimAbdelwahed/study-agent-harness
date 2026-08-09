@@ -11,9 +11,11 @@ from study_agent.capabilities import (
     TutorCapabilityId,
 )
 from study_agent.domain._validation import JsonObject
+from study_agent.ports import ModelCapabilities
 from study_agent.skills import SemanticVersion
 
 V1 = SemanticVersion.parse("1.0.0")
+IMPLEMENTATION_V1 = SemanticVersion.parse("1.2.3")
 
 
 def _schema(*, selector: tuple[str, object] | None = None) -> JsonObject:
@@ -46,6 +48,7 @@ def _manifest(
         output_schema or _schema(),
         authority,
         suspension,
+        IMPLEMENTATION_V1,
     )
 
 
@@ -67,7 +70,6 @@ def test_public_ids_and_outcome_statuses_are_exact_closed_values() -> None:
     assert tuple(item.value for item in CapabilityOutcomeStatus) == (
         "completed",
         "suspended",
-        "terminated",
         "cancelled",
         "stale",
         "failed",
@@ -77,7 +79,7 @@ def test_public_ids_and_outcome_statuses_are_exact_closed_values() -> None:
 def test_manifest_identity_json_fingerprint_and_immutability_are_stable() -> None:
     first = _manifest()
     second = _manifest()
-    assert first.identity == "explain_concept@1"
+    assert first.identity == "explain_concept@1.0.0"
     assert first.to_json() == second.to_json()
     assert first.fingerprint == second.fingerprint
     assert len(first.fingerprint) == 64
@@ -89,6 +91,7 @@ def test_manifest_identity_json_fingerprint_and_immutability_are_stable() -> Non
         "output_schema",
         "required_authority",
         "supports_suspension",
+        "implementation_version",
     }
     assert not {
         "next_action",
@@ -198,3 +201,14 @@ def test_authority_order_is_canonical_for_json_and_fingerprint() -> None:
     assert first.required_authority == ("course:read", "study:write")
     assert first.to_json() == second.to_json()
     assert first.fingerprint == second.fingerprint
+
+
+def test_model_capabilities_reject_non_boolean_and_non_integer_values() -> None:
+    with pytest.raises(TypeError, match="streaming"):
+        ModelCapabilities(streaming=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="context_window_tokens"):
+        ModelCapabilities(context_window_tokens=True)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="context_window_tokens"):
+        ModelCapabilities(context_window_tokens=1.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="positive"):
+        ModelCapabilities(context_window_tokens=0)

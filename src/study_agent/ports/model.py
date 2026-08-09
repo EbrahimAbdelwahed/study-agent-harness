@@ -63,8 +63,11 @@ class ModelCapabilities:
         object.__setattr__(self, "extensions", frozenset(self.extensions))
         if not all(isinstance(item, str) and item for item in self.extensions):
             raise TypeError("extensions must contain non-empty strings")
-        if self.context_window_tokens is not None and self.context_window_tokens < 1:
-            raise ValueError("context_window_tokens must be positive")
+        if self.context_window_tokens is not None:
+            if type(self.context_window_tokens) is not int:
+                raise TypeError("context_window_tokens must be an integer")
+            if self.context_window_tokens < 1:
+                raise ValueError("context_window_tokens must be positive")
 
 
 @dataclass(frozen=True, slots=True)
