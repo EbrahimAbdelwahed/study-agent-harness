@@ -10,6 +10,17 @@ from study_agent.tools import StudyToolRegistry
 ROOT = Path(__file__).parents[2] / "src" / "study_agent"
 
 
+def _imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    result: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            result.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            result.add(node.module)
+    return result
+
+
 def test_public_and_internal_registries_are_distinct_contracts() -> None:
     assert StudyToolRegistry.__module__ == "study_agent.tools.registry"
     assert RuntimeRegistries.__module__ == "study_agent.playbooks.runtime"
@@ -51,3 +62,41 @@ def test_core_tool_boundaries_do_not_import_provider_or_transport_frameworks() -
             for imported in imports
             for item in forbidden
         ), path
+
+
+def test_tool_registry_does_not_reintroduce_import_time_plugin_discovery() -> None:
+    forbidden = (
+        "importlib.metadata",
+        "pkg_resources",
+        "pkgutil",
+        "entry_points(",
+        "iter_entry_points(",
+        "iter_modules(",
+        "walk_packages(",
+    )
+    checked = (
+        ROOT / "tools" / "registry.py",
+        ROOT / "tools" / "builtin.py",
+    )
+    violations = []
+    for path in checked:
+        source = path.read_text(encoding="utf-8")
+        violations.extend(
+            f"{path}: {token}" for token in forbidden if token in source
+        )
+    assert violations == []
+
+
+def test_capability_and_tool_registry_boundaries_do_not_depend_on_each_other() -> None:
+    capability = ROOT / "capabilities"
+    tool = ROOT / "tools"
+    capability_imports = {
+        imported for path in capability.rglob("*.py") for imported in _imports(path)
+    }
+    tool_imports = {imported for path in tool.rglob("*.py") for imported in _imports(path)}
+    assert "study_agent.tools.registry" not in capability_imports
+    assert not any(
+        imported == "study_agent.capabilities"
+        or imported.startswith("study_agent.capabilities.")
+        for imported in tool_imports
+    )
