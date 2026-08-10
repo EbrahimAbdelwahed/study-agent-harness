@@ -87,6 +87,26 @@ class VerificationKind(StrEnum):
 class GapDisposition(StrEnum):
     RECORDED = "recorded"
     DEDUPLICATED = "deduplicated"
+    RATE_LIMITED = "rate_limited"
+
+
+class GapResolutionKind(StrEnum):
+    """Trusted maintainer lifecycle state for an operational observation."""
+
+    UNRESOLVED = "unresolved"
+    DUPLICATE = "duplicate"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+    ACCEPTED = "accepted"
+
+
+class GapExportState(StrEnum):
+    """Local export lifecycle; export never implies delivery or acceptance."""
+
+    LOCAL = "local"
+    PENDING = "pending"
+    EXPORTED = "exported"
+    FAILED = "failed"
 
 
 class CapabilityGapValidationError(ValueError):
@@ -103,6 +123,50 @@ class CapabilityGapCorruptionError(RuntimeError):
 
 class CapabilityGapUnavailableError(RuntimeError):
     """The requested operational record does not exist or is unavailable."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityGapResolution:
+    """A maintainer-authored resolution, kept separate from learner evidence."""
+
+    kind: GapResolutionKind
+    authority_fingerprint: str
+    resolved_at: datetime
+
+    def __post_init__(self) -> None:
+        _enum(self.kind, GapResolutionKind, field="resolution")
+        _digest(self.authority_fingerprint, field="authority_fingerprint")
+        _utc(self.resolved_at, field="resolved_at")
+        if self.kind is GapResolutionKind.UNRESOLVED:
+            raise CapabilityGapValidationError("invalid_resolution")
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "authority_fingerprint": self.authority_fingerprint,
+            "kind": self.kind.value,
+            "resolved_at": _timestamp(self.resolved_at),
+            "schema_version": 1,
+        }
+
+    def to_bytes(self) -> bytes:
+        return canonical_json_bytes(cast(Any, self.to_json()))
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> CapabilityGapResolution:
+        value = _exact_object(
+            data, ("schema_version", "kind", "authority_fingerprint", "resolved_at")
+        )
+        try:
+            result = cls(
+                GapResolutionKind(value["kind"]),
+                value["authority_fingerprint"],
+                _parse_timestamp(value["resolved_at"], field="resolved_at"),
+            )
+        except (KeyError, TypeError, ValueError, CapabilityGapValidationError):
+            raise CapabilityGapCorruptionError("gap_payload_invalid") from None
+        if result.to_bytes() != data:
+            raise CapabilityGapCorruptionError("gap_payload_noncanonical")
+        return result
 
 
 def _error(error_type: type[Exception], code: str) -> Exception:
@@ -225,6 +289,12 @@ class TrustedLimitationReceipt:
         if receipt.to_bytes() != data:
             raise CapabilityGapCorruptionError("gap_payload_noncanonical")
         return receipt
+
+
+# The public name used by the feedback specification.  Keep the historical
+# ``TrustedLimitationReceipt`` spelling as a compatibility alias: both names
+# describe host-trusted typed failure evidence and neither accepts model text.
+CapabilityGapFailureEvidence = TrustedLimitationReceipt
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +470,10 @@ class CapabilityGapAggregate:
     first_seen: datetime
     last_seen: datetime
     occurrence_count: int
+    resolution: GapResolutionKind = GapResolutionKind.UNRESOLVED
+    export_state: GapExportState = GapExportState.LOCAL
+    resolution_authority_fingerprint: str | None = None
+    resolved_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.gap_key, GapKeyV1):
@@ -414,6 +488,23 @@ class CapabilityGapAggregate:
         if last < first:
             raise CapabilityGapValidationError("invalid_seen_range")
         _positive_int(self.occurrence_count, field="occurrence_count")
+        _enum(self.resolution, GapResolutionKind, field="resolution")
+        _enum(self.export_state, GapExportState, field="export_state")
+        if self.resolution is GapResolutionKind.UNRESOLVED:
+            if self.resolution_authority_fingerprint is not None or self.resolved_at is not None:
+                raise CapabilityGapValidationError("invalid_resolution")
+        else:
+            _digest(
+                self.resolution_authority_fingerprint,
+                field="resolution_authority_fingerprint",
+            )
+            if self.resolved_at is None:
+                raise CapabilityGapValidationError("invalid_resolution")
+            resolved = _utc(self.resolved_at, field="resolved_at")
+            if resolved != self.resolved_at:
+                object.__setattr__(self, "resolved_at", resolved)
+        if self.resolved_at is not None and self.resolved_at < first:
+            raise CapabilityGapValidationError("invalid_resolution")
         if first != self.first_seen or last != self.last_seen:
             object.__setattr__(self, "first_seen", first)
             object.__setattr__(self, "last_seen", last)
@@ -426,6 +517,10 @@ class CapabilityGapAggregate:
             "impact_kind": self.impact_kind.value,
             "last_seen": _timestamp(self.last_seen),
             "occurrence_count": self.occurrence_count,
+            "export_state": self.export_state.value,
+            "resolution": self.resolution.value,
+            "resolution_authority_fingerprint": self.resolution_authority_fingerprint,
+            "resolved_at": None if self.resolved_at is None else _timestamp(self.resolved_at),
             "schema_version": 1,
             "verification_kind": self.verification_kind.value,
         }
@@ -446,6 +541,10 @@ class CapabilityGapAggregate:
                 "first_seen",
                 "last_seen",
                 "occurrence_count",
+                "resolution",
+                "export_state",
+                "resolution_authority_fingerprint",
+                "resolved_at",
             ),
         )
         dimensions_value = value.get("dimensions")
@@ -463,6 +562,14 @@ class CapabilityGapAggregate:
                 first_seen=_parse_timestamp(value["first_seen"], field="first_seen"),
                 last_seen=_parse_timestamp(value["last_seen"], field="last_seen"),
                 occurrence_count=value["occurrence_count"],
+                resolution=GapResolutionKind(value["resolution"]),
+                export_state=GapExportState(value["export_state"]),
+                resolution_authority_fingerprint=value["resolution_authority_fingerprint"],
+                resolved_at=(
+                    None
+                    if value["resolved_at"] is None
+                    else _parse_timestamp(value["resolved_at"], field="resolved_at")
+                ),
             )
         except CapabilityGapCollisionError:
             raise
@@ -533,13 +640,17 @@ __all__ = [
     "CapabilityGapCollisionError",
     "CapabilityGapCorruptionError",
     "CapabilityGapDimensions",
+    "CapabilityGapFailureEvidence",
     "CapabilityGapObservation",
+    "CapabilityGapResolution",
     "CapabilityGapUnavailableError",
     "CapabilityGapValidationError",
     "CapabilityGapWriteContext",
     "GapCategory",
     "GapDisposition",
+    "GapExportState",
     "GapKeyV1",
+    "GapResolutionKind",
     "ImpactKind",
     "RequestedOperationKind",
     "SafeTargetKind",

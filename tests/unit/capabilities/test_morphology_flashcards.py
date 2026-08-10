@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from study_agent.capabilities import PROFILE_SELECTION_RECEIPT_INPUT
+from study_agent.capabilities import PROFILE_SELECTION_RECEIPT_INPUT, TutorCapabilityId
 from study_agent.capabilities.bindings import ProfiledCapabilityBinding
 from study_agent.capabilities.morphology_flashcards import (
     MorphologyFlashcardTaskBinding,
@@ -54,9 +54,11 @@ def _receipt() -> ProfileSelectionReceipt:
 
 def _expectation() -> ProfileTaskExpectation:
     binding = _binding()
+    capability_id = binding.manifest.id
+    assert capability_id is TutorCapabilityId.PROPOSE_FLASHCARDS
     return ProfileTaskExpectation(
         _receipt(),
-        binding.manifest.id,
+        capability_id,
         binding.manifest.version,
         binding.manifest_fingerprint,
         binding.manifest.required_authority,

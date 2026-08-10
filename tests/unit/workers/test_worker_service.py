@@ -400,6 +400,27 @@ def test_two_suspend_resume_cycles_reuse_one_child_run_and_bound_responses() -> 
     assert runs.starts[0][1] == runs.resumes[0][3] == runs.resumes[1][3]
 
 
+def test_resume_upgrades_legacy_nested_continuation_bytes() -> None:
+    task = _task()
+    continuation = _continuation(task, checkpoint=SHA_C, step=1)
+    service, store, runs = _service(
+        [
+            _base_observation(GenerationWorkerStatus.SUSPENDED, continuation=continuation),
+            _completed(),
+        ]
+    )
+    _run(service.start(task, _parent()))
+    legacy_state = json.loads(store.values[task.task_id])
+    legacy_state["continuation"].pop("input_fingerprint")
+    store.values[task.task_id] = canonical_json_bytes(legacy_state)
+
+    view = _run(service.resume(task.task_id, 0, {"answer": "first"}, _parent()))
+
+    assert view.status is GenerationWorkerStatus.COMPLETED
+    assert runs.resumes[0][1].input_fingerprint == continuation.input_fingerprint
+    assert b'"input_fingerprint"' in store.values[task.task_id]
+
+
 def test_resume_rejects_changed_run_and_preserves_original_continuation_run() -> None:
     task = _task()
     first = _continuation(task, checkpoint=SHA_C, step=1)
@@ -431,6 +452,7 @@ def test_continuations_and_verified_runs_cannot_contaminate_task_inputs() -> Non
     contaminated = replace(
         _continuation(task, checkpoint=SHA_C, step=1),
         inputs={"query": "forged", "ambient": {"history": "stolen"}},
+        input_fingerprint=None,
     )
     suspended = _base_observation(
         GenerationWorkerStatus.SUSPENDED, continuation=contaminated

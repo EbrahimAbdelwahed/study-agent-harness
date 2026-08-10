@@ -1,0 +1,75 @@
+{
+  "run_id": "foundation-pf06-consumers-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 2,
+  "lanes": [
+    {
+      "id": "pf06-manifest-consumers",
+      "agent_name": "CalmRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "2862c0d",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-72f",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "tests/support/pf06/fixtures.py",
+        "tests/contract/capabilities/test_capability_registry_contract.py",
+        "tests/contract/events/test_kernel_module.py",
+        "tests/integration/test_capability_gateway_lifecycle.py"
+      ],
+      "forbidden_paths": [
+        "src/**",
+        "tests/unit/hosts/**",
+        "tests/unit/workers/**",
+        "tests/integration/test_tutor_host_runner.py"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/capabilities tests/contract/events/test_kernel_module.py tests/integration/test_capability_gateway_lifecycle.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check tests/support/pf06/fixtures.py tests/contract/capabilities/test_capability_registry_contract.py tests/contract/events/test_kernel_module.py tests/integration/test_capability_gateway_lifecycle.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict tests/support/pf06/fixtures.py tests/contract/capabilities/test_capability_registry_contract.py tests/contract/events/test_kernel_module.py tests/integration/test_capability_gateway_lifecycle.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf06-continuation-consumers",
+      "agent_name": "GreenRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "2862c0d",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-mvv",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "src/study_agent/hosts/runner.py",
+        "src/study_agent/workers/service.py",
+        "src/study_agent/demo/anatomy.py",
+        "tests/integration/test_tutor_host_runner.py",
+        "tests/unit/hosts/test_tutor_host_runner.py",
+        "tests/unit/workers/test_worker_service.py",
+        "tests/unit/workers/test_worker_contracts.py",
+        "tests/unit/capabilities/test_gateway_worker_adapter.py",
+        "tests/evals/test_reference_tutor_host_adversarial.py",
+        "tests/integration/test_reference_tutor_host_demo.py",
+        "tests/integration/demo/TUT08/test_offline_shell.py",
+        "tests/integration/demo/TUT08/test_browser_surface.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/capabilities/**",
+        "src/study_agent/kernel/**",
+        "src/study_agent/ports/**",
+        "tests/support/pf06/**",
+        "tests/contract/capabilities/**",
+        "tests/contract/events/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/unit/hosts/test_tutor_host_runner.py tests/unit/workers/test_worker_contracts.py tests/unit/workers/test_worker_service.py tests/unit/capabilities/test_gateway_worker_adapter.py tests/integration/test_tutor_host_runner.py tests/integration/test_reference_tutor_host_demo.py tests/evals/test_reference_tutor_host_adversarial.py tests/integration/demo/TUT08/test_offline_shell.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/hosts/runner.py src/study_agent/workers/service.py src/study_agent/demo/anatomy.py tests/unit/hosts/test_tutor_host_runner.py tests/unit/workers/test_worker_contracts.py tests/unit/workers/test_worker_service.py tests/unit/capabilities/test_gateway_worker_adapter.py tests/integration/test_tutor_host_runner.py tests/integration/test_reference_tutor_host_demo.py tests/evals/test_reference_tutor_host_adversarial.py tests/integration/demo/TUT08/test_offline_shell.py tests/integration/demo/TUT08/test_browser_surface.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict src/study_agent/hosts/runner.py src/study_agent/workers/service.py src/study_agent/demo/anatomy.py",
+        "git diff --check"
+      ]
+    }
+  ]
+}

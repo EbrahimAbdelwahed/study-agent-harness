@@ -1,0 +1,73 @@
+{
+  "run_id": "foundation-pf05-fix-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 2,
+  "lanes": [
+    {
+      "id": "pf05-source-identity-fix",
+      "agent_name": "BrightRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "0a98df7",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pi4",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "src/study_agent/domain/source.py",
+        "src/study_agent/domain/source_identity.py",
+        "src/study_agent/ingestion/identity.py",
+        "src/study_agent/ingestion/events.py",
+        "src/study_agent/ingestion/service.py",
+        "tests/contract/sources/test_source_revision_contract.py",
+        "tests/unit/ingestion/test_source_revision_state.py",
+        "tests/integration/test_text_ingestion.py",
+        "tests/integration/test_source_projection_replay.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/api/**",
+        "src/study_agent/domain/citation_v2.py",
+        "src/study_agent/knowledge/**",
+        "tests/support/pf05/**",
+        "tests/architecture/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/sources/test_source_revision_contract.py tests/unit/ingestion/test_source_revision_state.py tests/integration/test_text_ingestion.py tests/integration/test_source_projection_replay.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/domain/source.py src/study_agent/domain/source_identity.py src/study_agent/ingestion/identity.py src/study_agent/ingestion/events.py src/study_agent/ingestion/service.py tests/contract/sources/test_source_revision_contract.py tests/unit/ingestion/test_source_revision_state.py tests/integration/test_text_ingestion.py tests/integration/test_source_projection_replay.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict src/study_agent/domain/source.py src/study_agent/domain/source_identity.py src/study_agent/ingestion/identity.py src/study_agent/ingestion/events.py src/study_agent/ingestion/service.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf05-citation-fix",
+      "agent_name": "BoldPine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "0a98df7",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-bs4",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "src/study_agent/domain/citation_v2.py",
+        "tests/support/pf05/fixtures.py",
+        "tests/contract/sources/test_citation_contract.py",
+        "tests/unit/knowledge/test_citation_v2.py",
+        "tests/architecture/test_public_facade_boundaries.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/domain/source.py",
+        "src/study_agent/domain/source_identity.py",
+        "src/study_agent/ingestion/**",
+        "src/study_agent/api/**",
+        "src/study_agent/knowledge/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/sources/test_citation_contract.py tests/unit/knowledge/test_citation_v2.py tests/architecture/test_public_facade_boundaries.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/domain/citation_v2.py tests/support/pf05/fixtures.py tests/contract/sources/test_citation_contract.py tests/unit/knowledge/test_citation_v2.py tests/architecture/test_public_facade_boundaries.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict src/study_agent/domain/citation_v2.py",
+        "git diff --check"
+      ]
+    }
+  ]
+}
