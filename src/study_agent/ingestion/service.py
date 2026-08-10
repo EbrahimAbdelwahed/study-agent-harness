@@ -11,7 +11,13 @@ from pathlib import PurePath
 
 from study_agent.domain.context import ExecutionContext
 from study_agent.domain.events import Actor, DomainEvent
-from study_agent.domain.identifiers import BlobId, RevisionId, SourceId, substrate_id_for
+from study_agent.domain.identifiers import (
+    BlobId,
+    CourseId,
+    RevisionId,
+    SourceId,
+    substrate_id_for,
+)
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
 from study_agent.domain.source import (
     BlobRef,
@@ -30,6 +36,7 @@ from study_agent.ports.storage import (
 
 from .chunking import CHUNKER_VERSION, DEFAULT_CHUNKING_CONFIG, ChunkingConfig, chunk_text
 from .events import (
+    MAX_VERIFIED_BLOB_BYTES,
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
     SOURCE_REVISION_SELECTED,
@@ -51,6 +58,8 @@ from .projection import source_revision_payload
 
 MAX_HISTORY_EVENTS = 4_096
 MAX_HISTORY_BLOB_READS = 8
+MAX_SOURCE_BYTES = 16 * 1024 * 1024
+MAX_HISTORY_BLOB_BYTES = 32 * 1024 * 1024
 
 
 class IngestionErrorCode(StrEnum):
@@ -91,12 +100,19 @@ class _BoundedBlobLoader:
 
     loader: BlobLoader
     max_reads: int
+    max_bytes: int = MAX_HISTORY_BLOB_BYTES
     reads: int = 0
+    bytes_requested: int = 0
 
     def __call__(self, ref: BlobRef) -> bytes:
         if self.reads >= self.max_reads:
             raise ValueError("source verification work budget exceeded")
+        if ref.byte_length > MAX_VERIFIED_BLOB_BYTES:
+            raise ValueError("source verification byte bound exceeded")
+        if self.bytes_requested + ref.byte_length > self.max_bytes:
+            raise ValueError("source verification byte budget exceeded")
         self.reads += 1
+        self.bytes_requested += ref.byte_length
         return self.loader(ref)
 
 
@@ -111,11 +127,14 @@ class TextIngestionService:
         chunking: ChunkingConfig = DEFAULT_CHUNKING_CONFIG,
         max_history_events: int = MAX_HISTORY_EVENTS,
         max_history_blob_reads: int = MAX_HISTORY_BLOB_READS,
+        max_history_blob_bytes: int = MAX_HISTORY_BLOB_BYTES,
     ) -> None:
         if type(max_history_events) is not int or max_history_events < 1:
             raise ValueError("max_history_events must be positive")
         if type(max_history_blob_reads) is not int or max_history_blob_reads < 1:
             raise ValueError("max_history_blob_reads must be positive")
+        if type(max_history_blob_bytes) is not int or max_history_blob_bytes < 1:
+            raise ValueError("max_history_blob_bytes must be positive")
         self._blobs = blobs
         self._events = events
         self._clock = clock
@@ -123,6 +142,7 @@ class TextIngestionService:
         self._chunking = chunking
         self._max_history_events = max_history_events
         self._max_history_blob_reads = max_history_blob_reads
+        self._max_history_blob_bytes = max_history_blob_bytes
 
     def ingest(
         self,
@@ -148,18 +168,7 @@ class TextIngestionService:
         )
         kind, media_type, method = _file_contract(filename)
         self._courses.get(context.course_id)
-        try:
-            stream = _read_domain_events(self._events, context.course_id)
-        except Exception as error:
-            raise TextIngestionError(
-                IngestionErrorCode.INVALID_CONTENT,
-                "source history could not be read",
-            ) from error
-        if len(stream) > self._max_history_events:
-            raise TextIngestionError(
-                IngestionErrorCode.INVALID_CONTENT,
-                "source history exceeds the configured work bound",
-            )
+        stream = self._read_history(context.course_id)
         current_sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and current_sequence != expected_sequence:
             raise TextIngestionError(
@@ -225,7 +234,11 @@ class TextIngestionService:
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
 
-        history_loader = _BoundedBlobLoader(self._blobs.get, self._max_history_blob_reads)
+        history_loader = _BoundedBlobLoader(
+            self._blobs.get,
+            self._max_history_blob_reads,
+            self._max_history_blob_bytes,
+        )
         try:
             current = _current_revision(stream, source_id, history_loader)
         except ValueError as error:
@@ -236,7 +249,7 @@ class TextIngestionService:
         if current is not None and current.source.revision_id == source.revision_id:
             if _matches_request(current, source, self._chunking):
                 if expected_sequence is not None:
-                    latest = _read_domain_events(self._events, context.course_id)
+                    latest = self._read_history(context.course_id)
                     latest_sequence = latest[-1].course_sequence if latest else 0
                     if latest_sequence != expected_sequence:
                         raise TextIngestionError(
@@ -318,17 +331,16 @@ class TextIngestionService:
                 self._events, context.course_id, current_sequence, (event,)
             )
         except EventSequenceConflictError as error:
-            concurrent_stream = _read_domain_events(self._events, context.course_id)
-            if len(concurrent_stream) > self._max_history_events:
-                raise TextIngestionError(
-                    IngestionErrorCode.INVALID_CONTENT,
-                    "source history exceeds the configured work bound",
-                ) from error
+            concurrent_stream = self._read_history(context.course_id)
             try:
                 concurrent = _current_revision(
                     concurrent_stream,
                     source_id,
-                    _BoundedBlobLoader(self._blobs.get, self._max_history_blob_reads),
+                    _BoundedBlobLoader(
+                        self._blobs.get,
+                        self._max_history_blob_reads,
+                        self._max_history_blob_bytes,
+                    ),
                 )
             except ValueError as verify_error:
                 raise TextIngestionError(
@@ -396,17 +408,16 @@ class TextIngestionService:
                 self._events, context.course_id, current_sequence, (event,)
             )
         except EventSequenceConflictError as error:
-            concurrent_stream = _read_domain_events(self._events, context.course_id)
-            if len(concurrent_stream) > self._max_history_events:
-                raise TextIngestionError(
-                    IngestionErrorCode.INVALID_CONTENT,
-                    "source history exceeds the configured work bound",
-                ) from error
+            concurrent_stream = self._read_history(context.course_id)
             try:
                 concurrent = _current_revision(
                     concurrent_stream,
                     revision.source.source_id,
-                    _BoundedBlobLoader(self._blobs.get, self._max_history_blob_reads),
+                    _BoundedBlobLoader(
+                        self._blobs.get,
+                        self._max_history_blob_reads,
+                        self._max_history_blob_bytes,
+                    ),
                 )
             except ValueError as verify_error:
                 raise TextIngestionError(
@@ -435,6 +446,21 @@ class TextIngestionService:
         return TextIngestionResult(
             IngestionStatus.EMITTED, revision.source, revision.chunks, committed
         )
+
+    def _read_history(self, course_id: CourseId) -> tuple[DomainEvent, ...]:
+        try:
+            stream = _read_domain_events(self._events, course_id)
+        except Exception as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be read",
+            ) from error
+        if len(stream) > self._max_history_events:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history exceeds the configured work bound",
+            )
+        return stream
 
 
 def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
@@ -478,6 +504,11 @@ def _validate_ingestion_request(
         raise TextIngestionError(
             IngestionErrorCode.INVALID_CONTENT,
             "content must be bytes",
+        )
+    if len(content) > MAX_SOURCE_BYTES:
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "content exceeds the configured source byte bound",
         )
     if not isinstance(source_id, SourceId):
         raise TextIngestionError(

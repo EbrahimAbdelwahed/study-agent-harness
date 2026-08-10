@@ -18,13 +18,19 @@ cited.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
 from ._validation import JsonObject, require_text
+from .bounded_json import (
+    MAX_CITATION_BYTES,
+    BoundedJsonError,
+    canonical_json_bytes,
+    decode_json_bytes,
+    validate_json_object,
+)
 from .identifiers import RevisionId, SourceId, SubstrateId, UnitId
 
 TEXT_CITATION_VERSION = 2
@@ -64,9 +70,16 @@ def _digest(value: str, field_name: str) -> str:
 
 
 def _object(value: object, name: str, fields: frozenset[str]) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping) or frozenset(value) != fields:
+    try:
+        bounded = validate_json_object(value, max_bytes=MAX_CITATION_BYTES)
+    except (BoundedJsonError, TypeError, ValueError, RecursionError) as error:
+        raise CitationFailure(
+            CitationFailureKind.CORRUPT,
+            f"{name} is outside the bounded JSON profile",
+        ) from error
+    if frozenset(bounded) != fields:
         raise ValueError(f"{name} fields mismatch")
-    return value
+    return bounded
 
 
 def _text(value: object, name: str) -> str:
@@ -88,44 +101,29 @@ def _optional_text(value: object, name: str) -> str | None:
     return None
 
 
-def _jsonable(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _jsonable(child) for key, child in value.items()}
-    if isinstance(value, tuple):
-        return [_jsonable(child) for child in value]
-    return value
-
-
 def _canonical_bytes(value: JsonObject) -> bytes:
-    return json.dumps(
-        _jsonable(value),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    try:
+        return canonical_json_bytes(value, max_bytes=MAX_CITATION_BYTES)
+    except BoundedJsonError as error:
+        raise CitationFailure(
+            CitationFailureKind.CORRUPT,
+            "citation bytes are outside the bounded JSON profile",
+        ) from error
 
 
 def _decode_bytes(data: bytes, name: str) -> JsonObject:
-    if not isinstance(data, bytes):
+    if type(data) is not bytes:
         raise CitationFailure(CitationFailureKind.CORRUPT, f"{name} bytes must be bytes")
     try:
-        decoded: Any = json.loads(data)
-        if not isinstance(decoded, dict):
+        value = decode_json_bytes(data, max_bytes=MAX_CITATION_BYTES)
+        if not isinstance(value, Mapping):
             raise ValueError(f"{name} must be a JSON object")
-        value = cast(JsonObject, decoded)
-        canonical = _canonical_bytes(value)
-    except (TypeError, UnicodeError, ValueError) as error:
+        return value
+    except (BoundedJsonError, TypeError, UnicodeError, ValueError, RecursionError) as error:
         raise CitationFailure(
             CitationFailureKind.CORRUPT,
             f"{name} bytes are not valid canonical JSON",
         ) from error
-    if canonical != data:
-        raise CitationFailure(
-            CitationFailureKind.CORRUPT,
-            f"{name} bytes are not canonical",
-        )
-    return value
 
 
 def _require_codec_version(
@@ -420,17 +418,22 @@ class DerivedRef:
 
 def citation_from_json(value: JsonObject) -> Citation:
     """Decode one canonical citation without accepting derived text as evidence."""
-    if not isinstance(value, Mapping):
-        raise CitationFailure(CitationFailureKind.CORRUPT, "citation must be an object")
-    version = value.get("version")
+    try:
+        bounded = validate_json_object(value, max_bytes=MAX_CITATION_BYTES)
+    except (BoundedJsonError, TypeError, ValueError, RecursionError) as error:
+        raise CitationFailure(
+            CitationFailureKind.CORRUPT,
+            "citation is outside the bounded JSON profile",
+        ) from error
+    version = bounded.get("version")
     if type(version) is not int:
         raise CitationFailure(
             CitationFailureKind.CORRUPT, "citation version must be an integer"
         )
     if version == TEXT_CITATION_VERSION:
-        return TextCitationV2.from_json(value)
+        return TextCitationV2.from_json(bounded)
     if version == FIGURE_CITATION_VERSION:
-        return FigureCitationV1.from_json(value)
+        return FigureCitationV1.from_json(bounded)
     raise CitationFailure(
         CitationFailureKind.UNSUPPORTED_VERSION,
         f"unsupported citation version: {version}",

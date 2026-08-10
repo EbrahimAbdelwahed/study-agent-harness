@@ -36,22 +36,32 @@ class _FrozenObject(Mapping[str, JsonValue]):
     create after validating exact built-in dictionaries.
     """
 
-    __slots__ = ("_values",)
+    __slots__ = ("_items_data",)
+    _items_data: tuple[tuple[str, JsonValue], ...]
 
-    def __init__(self, values: dict[str, JsonValue]) -> None:
-        self._values = values
+    def __init__(self, items: tuple[tuple[str, JsonValue], ...]) -> None:
+        object.__setattr__(self, "_items_data", items)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise TypeError("bounded JSON objects are immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise TypeError("bounded JSON objects are immutable")
 
     def __getitem__(self, key: str) -> JsonValue:
-        return self._values[key]
+        for item_key, item in self._items_data:
+            if item_key == key:
+                return item
+        raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._values)
+        return (key for key, _ in self._items_data)
 
     def __len__(self) -> int:
-        return len(self._values)
+        return len(self._items_data)
 
     def _items(self) -> tuple[tuple[str, JsonValue], ...]:
-        return tuple(self._values.items())
+        return self._items_data
 
 
 def _is_object(value: object) -> bool:
@@ -174,7 +184,9 @@ def _validate(value: object, *, max_bytes: int | None) -> JsonValue:
         # conversion cannot receive hostile depth.  It also never invokes
         # user-defined methods because the tree contains only built-ins.
         if isinstance(value_to_freeze, dict):
-            return _FrozenObject({key: freeze(item) for key, item in value_to_freeze.items()})
+            return _FrozenObject(
+                tuple((key, freeze(item)) for key, item in value_to_freeze.items())
+            )
         if isinstance(value_to_freeze, list):
             return tuple(freeze(item) for item in value_to_freeze)
         return cast(JsonValue, value_to_freeze)

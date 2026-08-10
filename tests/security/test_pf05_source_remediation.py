@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
 
+import study_agent.api.sources as source_facade
 from study_agent.adapters.sqlite import SQLiteEventStore
-from study_agent.domain import SourceId, substrate_id_for
+from study_agent.api.sources import citation_from_bytes
+from study_agent.domain import BlobRef, SourceId, substrate_id_for
 from study_agent.domain.bounded_json import BoundedJsonError, validate_json
 from study_agent.domain.errors import ValidationFailure
 from study_agent.domain.events import EventEnvelope
-from study_agent.domain.source import SourceRevision
+from study_agent.domain.source import MetadataAuthority, SourceRevision
 from study_agent.domain.source_identity import source_revision_id_for, source_revision_manifest
 from study_agent.ingestion import ChunkingConfig, decode_source_revision_event
 from study_agent.ingestion.events import upcast_source_revision_ingested_v1
@@ -80,9 +83,40 @@ def test_revision_identity_rejects_open_or_mismatched_manifests() -> None:
         source_revision_id_for(forged)
 
 
+def test_source_metadata_is_deeply_immutable_after_identity_validation() -> None:
+    revision = SourceRevision.create(
+        source_id=SourceId("source-security"),
+        content=b"immutable metadata",
+        media_type="text/plain",
+        created_at=datetime(2026, 8, 10, tzinfo=UTC),
+        normalization_version="utf8-newlines-nfc-v1",
+        substrate_id=substrate_id_for(b"immutable metadata"),
+        metadata={"nested": {"value": 1}},
+    )
+    assert not hasattr(revision.metadata, "_values")
+    with pytest.raises(TypeError):
+        revision.metadata["nested"] = {"value": 2}  # type: ignore[index]
+    nested = revision.metadata["nested"]
+    assert isinstance(nested, Mapping)
+    with pytest.raises(TypeError):
+        nested["value"] = 2  # type: ignore[index]
+    assert revision.to_json()["metadata"] == {"nested": {"value": 1}}
+
+
+def test_public_citation_facade_maps_deep_input_without_exposing_private_failure() -> None:
+    assert not hasattr(source_facade, "CitationFailure")
+    deep = b"[" * 20 + b"0" + b"]" * 20
+    with pytest.raises(ValidationFailure) as error:
+        citation_from_bytes(deep)
+    assert type(error.value) is ValidationFailure
+    assert error.value.message == "citation failed validation"
+    assert isinstance(error.value.details, Mapping)
+    assert error.value.details["reason_kind"] == "corrupt"
+
+
 @pytest.mark.parametrize("marker", [True, False, "legacy"])
 def test_schema_two_legacy_marker_smuggling_fails_registry_and_sqlite(
-    tmp_path, marker: object
+    tmp_path: Path, marker: bool | str
 ) -> None:
     valid, load_blob = make_event()
     payload = {**valid.payload, "__legacy_v1_replay": marker}
@@ -110,7 +144,7 @@ def test_schema_two_legacy_marker_smuggling_fails_registry_and_sqlite(
 
 
 def test_tampered_v1_timestamp_is_rejected_at_direct_registry_and_sqlite_boundaries(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     historical, load_blob = make_event(legacy_identity=True)
     source = historical.payload["source"]
@@ -143,12 +177,35 @@ def test_tampered_v1_timestamp_is_rejected_at_direct_registry_and_sqlite_boundar
     assert store.read(historical.course_id) == ()
 
 
+def test_coordinated_v1_timestamp_shift_is_quarantined_as_legacy_provenance() -> None:
+    historical, load_blob = make_event(legacy_identity=True)
+    source = historical.payload["source"]
+    assert isinstance(source, Mapping)
+    shifted = historical.occurred_at + timedelta(days=30)
+    shifted_source = {**source, "created_at": shifted.isoformat()}
+    tampered = historical.__class__(
+        historical.event_id,
+        historical.course_id,
+        historical.course_sequence,
+        historical.event_type,
+        historical.schema_version,
+        historical.actor,
+        shifted,
+        historical.correlation_id,
+        {**historical.payload, "source": shifted_source},
+    )
+    replayed = upcast_source_revision_ingested_v1(tampered, load_blob)
+    assert tampered.event_id == historical.event_id
+    assert replayed.source.created_at == shifted
+    assert replayed.source.metadata_authority is MetadataAuthority.LEGACY_UNVERIFIED
+
+
 def test_blob_loader_failures_have_no_adapter_text_at_registry_or_storage_boundary(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     valid, _ = make_event()
 
-    def loader(_ref) -> bytes:
+    def loader(_ref: BlobRef) -> bytes:
         raise RuntimeError("Bearer token=/private/secret/path trace=secret")
 
     registry = EventRegistry()
@@ -170,7 +227,7 @@ def test_history_index_limits_blob_verification_to_current_or_matching_candidate
     second, second_loader = make_event(original=b"second source", sequence=2)
     calls: list[str] = []
 
-    def load(ref) -> bytes:
+    def load(ref: BlobRef) -> bytes:
         calls.append(str(ref.id))
         try:
             return first_loader(ref)
@@ -180,7 +237,11 @@ def test_history_index_limits_blob_verification_to_current_or_matching_candidate
     bounded = _BoundedBlobLoader(load, max_reads=2)
     current = _current_revision((first, second), SourceId("source-1"), bounded)
     assert current is not None
-    assert str(current.source.revision_id) == second.payload["source"]["revision_id"]  # type: ignore[index]
+    second_source = second.payload["source"]
+    assert isinstance(second_source, Mapping)
+    second_revision_id = second_source["revision_id"]
+    assert isinstance(second_revision_id, str)
+    assert str(current.source.revision_id) == second_revision_id
     assert len(calls) == 2
 
     calls.clear()
@@ -195,6 +256,21 @@ def test_history_index_limits_blob_verification_to_current_or_matching_candidate
     assert matched is not None
     assert matched.source.revision_id == requested.revision_id
     assert len(calls) == 2
+
+
+def test_declared_blob_size_is_rejected_before_loader_work() -> None:
+    event, load_blob = make_event()
+    ref = decode_source_revision_event(event, load_blob).source.blob
+    calls: list[BlobRef] = []
+
+    def load(value: BlobRef) -> bytes:
+        calls.append(value)
+        return b""
+
+    bounded = _BoundedBlobLoader(load, max_reads=2, max_bytes=1)
+    with pytest.raises(ValueError, match="byte budget"):
+        bounded(ref)
+    assert calls == []
 
 
 def test_historical_identity_helpers_are_not_public_ingestion_exports() -> None:

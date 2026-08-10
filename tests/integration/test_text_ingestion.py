@@ -39,7 +39,7 @@ from study_agent.ingestion import (
     normalize_utf8,
     register_source_revision_events,
 )
-from study_agent.ingestion.legacy import historical_source_event_id_for, legacy_revision_id_for
+from study_agent.ingestion.legacy import _historical_source_event_id_for, _legacy_revision_id_for
 from study_agent.ingestion.projection import source_revision_payload_v1
 from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.state import EventRegistry
@@ -605,7 +605,7 @@ def test_legacy_revision_is_replay_only_and_current_ingestion_emits_v3() -> None
         blobs=blobs, events=events, clock=FixedClock(), courses=ExistingCourseView()
     )
     first = ingest(service, b"Legacy identity content")
-    legacy_id = legacy_revision_id_for(
+    legacy_id = _legacy_revision_id_for(
         original_sha256=first.source.checksum_sha256,
         source_id=first.source.source_id,
         kind=first.source.kind,
@@ -623,7 +623,7 @@ def test_legacy_revision_is_replay_only_and_current_ingestion_emits_v3() -> None
     )
     events.events = [
         DomainEvent(
-            historical_source_event_id_for(context().course_id, legacy_id),
+            _historical_source_event_id_for(context().course_id, legacy_id),
             context().course_id,
             1,
             SOURCE_REVISION_INGESTED,

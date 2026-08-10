@@ -19,7 +19,7 @@ class HistoricalIdentityVariant(StrEnum):
 _HISTORICAL_NAMESPACE = b"study-agent-source-revision-v2\0"
 
 
-def historical_source_event_id_for(course_id: CourseId, revision_id: RevisionId) -> EventId:
+def _historical_source_event_id_for(course_id: CourseId, revision_id: RevisionId) -> EventId:
     """Reconstruct the v0.1 source receipt identity during private replay."""
 
     identity = f"{course_id}\0{revision_id}".encode()
@@ -33,7 +33,7 @@ def _historical_json_revision_id(manifest: dict[str, object]) -> RevisionId:
     )
 
 
-def historical_public_manifest_revision_id(
+def _historical_public_manifest_revision_id(
     *,
     source: SourceDocument,
     chunker_version: str,
@@ -60,7 +60,7 @@ def historical_public_manifest_revision_id(
     )
 
 
-def historical_ingestion_v2_revision_id(
+def _historical_ingestion_v2_revision_id(
     *,
     original_sha256: str,
     source_id: SourceId,
@@ -89,7 +89,7 @@ def historical_ingestion_v2_revision_id(
     )
 
 
-def legacy_revision_id_for(
+def _legacy_revision_id_for(
     *,
     original_sha256: str,
     source_id: SourceId,
@@ -116,13 +116,13 @@ def classify_historical_identity(
     """Require exactly one known historical identity to authenticate."""
 
     candidates: list[HistoricalIdentityVariant] = []
-    if source.revision_id == historical_public_manifest_revision_id(
+    if source.revision_id == _historical_public_manifest_revision_id(
         source=source,
         chunker_version=chunker_version,
         max_characters=max_characters,
     ):
         candidates.append(HistoricalIdentityVariant.PUBLIC_MANIFEST)
-    if source.revision_id == historical_ingestion_v2_revision_id(
+    if source.revision_id == _historical_ingestion_v2_revision_id(
         original_sha256=source.checksum_sha256,
         source_id=source.source_id,
         kind=source.kind,
@@ -134,7 +134,7 @@ def classify_historical_identity(
         max_characters=max_characters,
     ):
         candidates.append(HistoricalIdentityVariant.INGESTION_V2)
-    if source.revision_id == legacy_revision_id_for(
+    if source.revision_id == _legacy_revision_id_for(
         original_sha256=source.checksum_sha256,
         source_id=source.source_id,
         kind=source.kind,

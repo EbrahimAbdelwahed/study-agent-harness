@@ -271,8 +271,12 @@ class SourceRevision:
         cls, payload: Mapping[str, object], *, receipt_created_at: datetime
     ) -> SourceRevision:
         """Decode a revision against the trusted capture receipt timestamp."""
-        if not isinstance(payload, Mapping):
-            raise ValueError("source revision payload must be an object")
+        try:
+            payload = validate_json_object(payload)
+        except Exception as error:
+            raise ValueError(
+                "source revision payload is outside the bounded JSON profile"
+            ) from error
         expected = {
             "blob",
             "created_at",

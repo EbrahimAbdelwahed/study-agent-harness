@@ -6,13 +6,9 @@ from hashlib import sha256
 import pytest
 
 from study_agent.api.sources import (
-    CitationFailure,
-    CitationFailureKind,
     DerivedRef,
     FigureCitationV1,
     TextCitationV2,
-    citation_from_bytes,
-    citation_from_json,
 )
 from study_agent.domain import Citation as LegacyCitation
 from study_agent.domain import (
@@ -25,6 +21,12 @@ from study_agent.domain import (
     UnitMeta,
     substrate_id_for,
     unit_id_for,
+)
+from study_agent.domain.citation_v2 import (
+    CitationFailure,
+    CitationFailureKind,
+    citation_from_bytes,
+    citation_from_json,
 )
 from study_agent.domain.identifiers import ChunkId
 from study_agent.domain.lineage import RevisionRef

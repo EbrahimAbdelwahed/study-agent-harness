@@ -169,7 +169,9 @@ def test_answer_export_omits_model_trace_adapter_and_verbatim_snippet(
 ) -> None:
     blobs, stored_events, _, _ = _stack(tmp_path)
     base_stream = tuple(stored_events._read_records(COURSE))
-    source = decode_source_revision_ingested(base_stream[1].payload)
+    source = decode_source_revision_ingested(
+        base_stream[1].payload, receipt_created_at=base_stream[1].occurred_at
+    )
     chunk = source.chunks[0]
     run_id = RunId("run-sensitive")
     question_id = InteractionId("interaction-question")

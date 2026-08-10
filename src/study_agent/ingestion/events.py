@@ -34,8 +34,8 @@ from .identity import (
 )
 from .legacy import (
     HistoricalIdentityVariant,
+    _historical_source_event_id_for,
     classify_historical_identity,
-    historical_source_event_id_for,
 )
 from .normalization import normalize_utf8
 
@@ -85,6 +85,11 @@ _CHUNK_KEYS = frozenset(
     }
 )
 _CHUNKING_KEYS = frozenset({"version", "max_characters"})
+
+# A source receipt can name at most one original and one normalized blob.  The
+# limit is checked from the declared reference before invoking a host loader;
+# the ingestion service adds a smaller aggregate budget across history reads.
+MAX_VERIFIED_BLOB_BYTES = 16 * 1024 * 1024
 
 type BlobLoader = Callable[[BlobRef], bytes]
 
@@ -234,7 +239,12 @@ def _source(
         structure_origin=structure_origin,
         ingestion_method=_text(payload.get("ingestion_method"), "source.ingestion_method"),
         content_origin=content_origin,
-        metadata_authority=authority,
+        # Historical receipt time was not committed by the v1 event identity.
+        # Keep the original timestamp for byte-preserving replay, but quarantine
+        # its provenance instead of presenting it as a trusted current receipt.
+        metadata_authority=(
+            MetadataAuthority.LEGACY_UNVERIFIED if historical else authority
+        ),
     )
 
 
@@ -391,6 +401,8 @@ def _validate_current_identity(
 def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
     if str(ref.id) != f"sha256:{ref.checksum_sha256}":
         raise ValueError(f"{name} id does not match its checksum")
+    if ref.byte_length > MAX_VERIFIED_BLOB_BYTES:
+        raise ValueError(f"{name} exceeds the bounded verification size")
     try:
         content = load_blob(ref)
     except KeyError as error:
@@ -494,6 +506,19 @@ def upcast_source_revision_ingested_v1(
 ) -> SourceRevisionIngested:
     """Verify and deterministically project one historical schema-1 event."""
 
+    decoded = _decode_historical_source_event(event)
+    _verify_content(decoded, event, load_blob)
+    return decoded
+
+
+def _decode_historical_source_event(event: DomainEvent) -> SourceRevisionIngested:
+    """Decode a retained v1 envelope without needing its blob adapter.
+
+    Export has only canonical event bytes, not a blob port.  It still needs the
+    same schema, identity, timestamp, and weak-metadata quarantine checks as
+    replay; full content verification remains on ``upcast_source_revision_ingested_v1``.
+    """
+
     if (event.event_type, event.schema_version) != SOURCE_REVISION_INGESTED_V1:
         raise ValueError("event envelope does not match source.revision_ingested@1")
     decoded = _decode_payload(event.payload, receipt_created_at=None, historical=True)
@@ -504,8 +529,7 @@ def upcast_source_revision_ingested_v1(
         chunker_version=decoded.chunking.version,
         max_characters=decoded.chunking.max_characters,
     )
-    _verify_content(decoded, event, load_blob)
-    if event.event_id != historical_source_event_id_for(
+    if event.event_id != _historical_source_event_id_for(
         event.course_id, decoded.source.revision_id
     ):
         raise ValueError("historical event_id does not match its preserved identity")

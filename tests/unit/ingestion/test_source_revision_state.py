@@ -52,10 +52,10 @@ from study_agent.ingestion.events import (
 from study_agent.ingestion.identity import source_revision_ingested_event_id_for
 from study_agent.ingestion.legacy import (
     HistoricalIdentityVariant,
-    historical_ingestion_v2_revision_id,
-    historical_public_manifest_revision_id,
-    historical_source_event_id_for,
-    legacy_revision_id_for,
+    _historical_ingestion_v2_revision_id,
+    _historical_public_manifest_revision_id,
+    _historical_source_event_id_for,
+    _legacy_revision_id_for,
 )
 from study_agent.ingestion.projection import source_revision_payload_v1
 from study_agent.state import EventRegistry, PayloadValidationError, Projection, apply_event
@@ -81,7 +81,7 @@ def make_event(
     source_id = SourceId("source-1")
     occurred_at = datetime(2026, 7, 11, 8, sequence, tzinfo=UTC)
     if legacy_identity:
-        revision_id = legacy_revision_id_for(
+        revision_id = _legacy_revision_id_for(
             original_sha256=original_blob.checksum_sha256,
             source_id=source_id,
             kind=SourceKind.TEXT,
@@ -134,7 +134,7 @@ def make_event(
     )
     event = DomainEvent(
         (
-            historical_source_event_id_for(CourseId("course-1"), revision_id)
+            _historical_source_event_id_for(CourseId("course-1"), revision_id)
             if legacy_identity
             else source_revision_ingested_event_id_for(
                 CourseId("course-1"), revision_id, occurred_at
@@ -202,8 +202,12 @@ def test_schema_one_is_replay_only_and_schema_two_is_the_append_contract() -> No
     with pytest.raises(ValueError, match="schema 2"):
         prepare_for_append(legacy_event, legacy_loader)
     replayed = prepare_for_replay(legacy_event, legacy_loader)
+    source = legacy_event.payload["source"]
+    assert isinstance(source, Mapping)
+    revision_id = source["revision_id"]
+    assert isinstance(revision_id, str)
     assert replayed.source.revision_id == RevisionId(
-        str(legacy_event.payload["source"]["revision_id"])  # type: ignore[index]
+        revision_id
     )
 
     current_event, current_loader = make_event()
@@ -219,13 +223,13 @@ def test_all_historical_identity_variants_replay_through_the_v1_upcaster(
     current_event, loader = make_event()
     current = decode_source_revision_event(current_event, loader)
     if variant is HistoricalIdentityVariant.PUBLIC_MANIFEST:
-        revision_id = historical_public_manifest_revision_id(
+        revision_id = _historical_public_manifest_revision_id(
             source=current.source,
             chunker_version=current.chunking.version,
             max_characters=current.chunking.max_characters,
         )
     elif variant is HistoricalIdentityVariant.INGESTION_V2:
-        revision_id = historical_ingestion_v2_revision_id(
+        revision_id = _historical_ingestion_v2_revision_id(
             original_sha256=current.source.checksum_sha256,
             source_id=current.source.source_id,
             kind=current.source.kind,
@@ -237,7 +241,7 @@ def test_all_historical_identity_variants_replay_through_the_v1_upcaster(
             max_characters=current.chunking.max_characters,
         )
     else:
-        revision_id = legacy_revision_id_for(
+        revision_id = _legacy_revision_id_for(
             original_sha256=current.source.checksum_sha256,
             source_id=current.source.source_id,
             kind=current.source.kind,
@@ -259,7 +263,7 @@ def test_all_historical_identity_variants_replay_through_the_v1_upcaster(
         ),
     )
     event = DomainEvent(
-        historical_source_event_id_for(current_event.course_id, revision_id),
+        _historical_source_event_id_for(current_event.course_id, revision_id),
         current_event.course_id,
         current_event.course_sequence,
         SOURCE_REVISION_INGESTED,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,6 +10,8 @@ import pytest
 
 from study_agent.adapters.filesystem import FilesystemBlobStore
 from study_agent.adapters.sqlite import SQLiteEventStore
+from study_agent.application.export import ExportService, ExportVersion
+from study_agent.courses import register_course_events
 from study_agent.domain import (
     Actor,
     BlobRef,
@@ -33,6 +37,7 @@ from study_agent.ingestion import (
     SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
     ChunkingConfig,
     chunk_text,
+    decode_source_revision_event,
     normalize_utf8,
     register_source_revision_events,
     source_revision_payload,
@@ -40,7 +45,10 @@ from study_agent.ingestion import (
     source_revision_selected_payload,
 )
 from study_agent.ingestion.identity import source_revision_ingested_event_id_for
-from study_agent.state import EventRegistry, PayloadValidationError
+from study_agent.ingestion.legacy import _historical_source_event_id_for, _legacy_revision_id_for
+from study_agent.ingestion.projection import source_revision_payload_v1
+from study_agent.state import EventRegistry, PayloadValidationError, event_to_bytes
+from tests.course_fixtures import create_canonical_course
 
 
 def make_event(
@@ -137,6 +145,48 @@ def select_event(revision_event: DomainEvent, sequence: int) -> DomainEvent:
     )
 
 
+def historical_event_from_current(
+    event: DomainEvent, blobs: FilesystemBlobStore
+) -> DomainEvent:
+    decoded = decode_source_revision_event(event, blobs.get)
+    revision_id = _legacy_revision_id_for(
+        original_sha256=decoded.source.checksum_sha256,
+        source_id=decoded.source.source_id,
+        kind=decoded.source.kind,
+        normalization_version=decoded.source.normalization_version,
+        chunker_version=decoded.chunking.version,
+        max_characters=decoded.chunking.max_characters,
+    )
+    source = replace(decoded.source, revision_id=revision_id)
+    normalized = blobs.get(source.normalized_blob).decode("utf-8")
+    chunks = chunk_text(
+        normalized,
+        source_id=source.source_id,
+        revision_id=source.revision_id,
+        kind=source.kind,
+        config=ChunkingConfig(
+            max_characters=decoded.chunking.max_characters,
+            version=decoded.chunking.version,
+        ),
+    )
+    return DomainEvent(
+        _historical_source_event_id_for(event.course_id, revision_id),
+        event.course_id,
+        event.course_sequence,
+        SOURCE_REVISION_INGESTED,
+        1,
+        event.actor,
+        event.occurred_at,
+        event.correlation_id,
+        source_revision_payload_v1(
+            source,
+            chunks,
+            chunker_version=decoded.chunking.version,
+            max_characters=decoded.chunking.max_characters,
+        ),
+    )
+
+
 def test_sqlite_replay_reloads_content_and_preserves_byte_identical_revisions(
     tmp_path: Path,
 ) -> None:
@@ -161,6 +211,71 @@ def test_sqlite_replay_reloads_content_and_preserves_byte_identical_revisions(
     assert isinstance(source_state, Mapping)
     revision_ids = source_state["revision_ids"]
     assert isinstance(revision_ids, tuple) and len(revision_ids) == 2
+    blobs.close()
+
+
+def test_persisted_mixed_v1_v2_history_rebuilds_and_exports_without_rewriting_bytes(
+    tmp_path: Path,
+) -> None:
+    blobs = FilesystemBlobStore(tmp_path / "blobs")
+    registry = EventRegistry()
+    register_course_events(registry)
+    register_source_revision_events(registry, blobs.get)
+    database = tmp_path / "events.sqlite3"
+    store = SQLiteEventStore(database, registry)
+    course_id = CourseId("course-1")
+    create_canonical_course(store, course_id)
+
+    current = make_event(blobs, b"Retained v1 text", 2)
+    historical = historical_event_from_current(current, blobs)
+    successor = make_event(blobs, b"Current v2 text", 3)
+    retained = (historical, successor)
+    with sqlite3.connect(database) as connection:
+        for event in retained:
+            connection.execute(
+                """
+                INSERT INTO events (
+                    course_id, course_sequence, event_id, event_type,
+                    schema_version, envelope
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(event.course_id),
+                    event.course_sequence,
+                    str(event.event_id),
+                    event.event_type,
+                    event.schema_version,
+                    event_to_bytes(event),
+                ),
+            )
+
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT envelope FROM events WHERE course_sequence > 1 ORDER BY course_sequence"
+        ).fetchall()
+    assert [bytes(row[0]) for row in rows] == [event_to_bytes(event) for event in retained]
+
+    rebuilt = store.rebuild_projection(course_id)
+    assert store.verify_projection(course_id)
+    assert rebuilt == store.projection_bytes(course_id)
+    exported = ExportService(store).assemble(course_id, version=ExportVersion.V2)
+    historical_source = historical.payload["source"]
+    successor_source = successor.payload["source"]
+    assert isinstance(historical_source, Mapping)
+    assert isinstance(successor_source, Mapping)
+    historical_revision_id = str(historical_source["revision_id"])
+    successor_revision_id = str(successor_source["revision_id"])
+    assert {row["revision_id"] for row in exported.sources} == {
+        historical_revision_id,
+        successor_revision_id,
+    }
+    historical_export = next(
+        row for row in exported.sources if row["revision_id"] == historical_revision_id
+    )
+    assert historical_export["title"] == "Legacy source"
+    tail = make_event(blobs, b"Post-rebuild v2 text", 4)
+    assert store.append(course_id, 3, (tail,)) == 4
+    assert store.verify_projection(course_id)
     blobs.close()
 
 

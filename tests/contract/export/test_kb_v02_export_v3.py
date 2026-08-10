@@ -77,8 +77,12 @@ def test_v3_replays_kb_v02_substrate_lineage_and_scope_events(tmp_path: Path) ->
         context=_context(),
     )
     base = tuple(events._read_records(COURSE))
-    predecessor = decode_source_revision_ingested(base[1].payload).source
-    successor = decode_source_revision_ingested(base[3].payload).source
+    predecessor = decode_source_revision_ingested(
+        base[1].payload, receipt_created_at=base[1].occurred_at
+    ).source
+    successor = decode_source_revision_ingested(
+        base[3].payload, receipt_created_at=base[3].occurred_at
+    ).source
 
     succession = SourceSuccession(
         RevisionRef(predecessor.source_id, predecessor.revision_id),

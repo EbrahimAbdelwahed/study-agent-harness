@@ -40,14 +40,6 @@ def chunk_id_for(
     return ChunkId(f"chunk-sha256:{sha256(identity).hexdigest()}")
 
 
-def source_event_id_for(course_id: CourseId, revision_id: RevisionId) -> EventId:
-    """Compatibility bridge for the private historical replay recipe."""
-
-    from .legacy import historical_source_event_id_for
-
-    return historical_source_event_id_for(course_id, revision_id)
-
-
 def source_revision_ingested_event_id_for(
     course_id: CourseId, revision_id: RevisionId, occurred_at: datetime
 ) -> EventId:
