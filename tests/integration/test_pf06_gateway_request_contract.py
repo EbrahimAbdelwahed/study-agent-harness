@@ -4,21 +4,16 @@ import asyncio
 
 import pytest
 
-from study_agent.capabilities import (
-    CancelledCapabilityOutcome,
-    CapabilityGatewayError,
-    CapabilityGatewayErrorCode,
-    StaleCapabilityOutcome,
-)
-from study_agent.capabilities.contracts import CapabilityRequest
+from study_agent.api import authority as authority_api
+from study_agent.api import capabilities as capabilities_api
 from study_agent.domain import ExecutionContext, PrincipalKind
 from study_agent.domain._validation import JsonObject
 from study_agent.playbooks import ReadDependency
-from study_agent.ports.authority import HostAuthority
 from tests.support.pf06.fixtures import (
     INPUTS,
     SESSION,
     Dependencies,
+    GatewayFixture,
     build_gateway,
     context,
 )
@@ -33,15 +28,26 @@ class UnrelatedSequenceDependencies(Dependencies):
         return (ReadDependency("unrelated", "other-resource", "sequence-999"),)
 
 
+class CancelOnSecondProbe:
+    """Request cancellation at the deterministic last pre-dispatch probe."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> bool:
+        self.calls += 1
+        return self.calls == 2
+
+
 def _request(
-    manifest_identity: str,
+    fixture: GatewayFixture,
     *,
-    issuer: HostAuthority | None = None,
+    issuer: authority_api.HostAuthority | None = None,
     inputs: JsonObject = INPUTS,
     expected_high_water: int = 1,
     key: str = "pf06-request",
-) -> tuple[CapabilityRequest, ExecutionContext]:
-    selected_issuer = issuer or HostAuthority()
+) -> tuple[capabilities_api.CapabilityRequest, ExecutionContext]:
+    selected_issuer = fixture.authority if issuer is None else issuer
     authority = selected_issuer.issue(
         PrincipalKind.SERVICE,
         "pf06-host",
@@ -50,8 +56,8 @@ def _request(
         session_id=str(SESSION),
     )
     return (
-        CapabilityRequest(
-            manifest_identity,
+        capabilities_api.CapabilityRequest(
+            fixture.binding.manifest.identity,
             inputs,
             authority,
             "pf06-correlation",
@@ -66,14 +72,14 @@ def test_high_water_requires_the_authoritative_course_stream_proof() -> None:
     dependencies = UnrelatedSequenceDependencies()
     fixture = build_gateway(dependencies=dependencies)
     request, execution_context = _request(
-        fixture.binding.manifest.identity,
+        fixture,
         expected_high_water=999,
         key="unrelated-high-water",
     )
 
     outcome = asyncio.run(fixture.gateway.start(request, execution_context))
 
-    assert isinstance(outcome, StaleCapabilityOutcome)
+    assert isinstance(outcome, capabilities_api.StaleCapabilityOutcome)
     assert dependencies.calls == 1
     assert fixture.tool.calls == 0
     assert fixture.store.data == {}
@@ -81,9 +87,9 @@ def test_high_water_requires_the_authoritative_course_stream_proof() -> None:
 
 def test_stale_request_key_cannot_be_reused_with_changed_input_bytes() -> None:
     fixture = build_gateway(supports_suspension=True)
-    issuer = HostAuthority()
+    issuer = fixture.authority
     stale_request, stale_context = _request(
-        fixture.binding.manifest.identity,
+        fixture,
         issuer=issuer,
         expected_high_water=2,
         key="stale-retry-key",
@@ -91,44 +97,41 @@ def test_stale_request_key_cannot_be_reused_with_changed_input_bytes() -> None:
 
     stale = asyncio.run(fixture.gateway.start(stale_request, stale_context))
 
-    assert isinstance(stale, StaleCapabilityOutcome)
+    assert isinstance(stale, capabilities_api.StaleCapabilityOutcome)
+    assert fixture.store.data == {}
     changed_request, changed_context = _request(
-        fixture.binding.manifest.identity,
+        fixture,
         issuer=issuer,
         inputs={"topic": "mitral valve"},
         expected_high_water=1,
         key="stale-retry-key",
     )
-    with pytest.raises(CapabilityGatewayError) as caught:
+    with pytest.raises(authority_api.ConflictFailure):
         asyncio.run(fixture.gateway.start(changed_request, changed_context))
 
-    assert caught.value.code is CapabilityGatewayErrorCode.CONFLICT
     assert fixture.dependencies.calls == 1
     assert fixture.tool.calls == 0
+    assert fixture.store.data == {}
 
 
-def test_cancellation_between_last_preflight_and_commit_converges_safely() -> None:
+def test_cancellation_at_last_pre_dispatch_probe_has_no_effects() -> None:
     fixture = build_gateway()
-    cancellation_state = {"requested": False}
-    original_invoke = fixture.tool.invoke
-
-    async def invoke(arguments: JsonObject) -> JsonObject:
-        cancellation_state["requested"] = True
-        return await original_invoke(arguments)
-
-    object.__setattr__(fixture.tool, "invoke", invoke)
+    cancellation = CancelOnSecondProbe()
     request, execution_context = _request(
-        fixture.binding.manifest.identity,
-        key="cancel-at-commit",
+        fixture,
+        key="cancel-before-dispatch",
     )
 
     outcome = asyncio.run(
         fixture.gateway.start(
             request,
             execution_context,
-            cancellation=lambda: cancellation_state["requested"],
+            cancellation=cancellation,
         )
     )
 
-    assert isinstance(outcome, CancelledCapabilityOutcome)
-    assert fixture.tool.calls == 1
+    assert isinstance(outcome, capabilities_api.CancelledCapabilityOutcome)
+    assert cancellation.calls == 2
+    assert fixture.dependencies.calls == 1
+    assert fixture.tool.calls == 0
+    assert fixture.store.data == {}

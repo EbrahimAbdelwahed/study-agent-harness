@@ -4,12 +4,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from study_agent.capabilities import (
-    CapabilityBinding,
-    CapabilityManifest,
-    StudyCapabilityGateway,
-    TutorCapabilityId,
-)
+from study_agent.api import capabilities as capability_api
+from study_agent.api.authority import HostAuthority
 from study_agent.domain import (
     CorrelationId,
     CourseId,
@@ -170,20 +166,21 @@ class Dependencies:
 
 @dataclass(frozen=True)
 class GatewayFixture:
-    gateway: StudyCapabilityGateway
+    gateway: capability_api.StudyCapabilityGateway
     tool: RecordingTool
     dependencies: Dependencies
     store: MemoryRunStore
-    binding: CapabilityBinding
+    binding: capability_api.CapabilityBinding
+    authority: HostAuthority
 
 
 def manifest(
     *,
     authority: tuple[str, ...] = ("study:explain",),
     supports_suspension: bool = False,
-) -> CapabilityManifest:
-    return CapabilityManifest(
-        TutorCapabilityId.EXPLAIN_CONCEPT,
+) -> capability_api.CapabilityManifest:
+    return capability_api.CapabilityManifest(
+        capability_api.TutorCapabilityId.EXPLAIN_CONCEPT,
         V1,
         INPUT_SCHEMA,
         OUTPUT_SCHEMA,
@@ -269,11 +266,12 @@ def build_gateway(
     skill = _skill(definition)
     selected_dependencies = dependencies or Dependencies()
     selected_store = store or MemoryRunStore()
+    host_authority = HostAuthority()
     selected_manifest = manifest(
         authority=authority,
         supports_suspension=supports_suspension,
     )
-    binding = CapabilityBinding(
+    binding = capability_api.CapabilityBinding(
         selected_manifest,
         selected_manifest.fingerprint,
         skill,
@@ -293,11 +291,12 @@ def build_gateway(
         clock=FixedClock(),
     )
     return GatewayFixture(
-        StudyCapabilityGateway(bindings=(binding,), engine=engine),
+        capability_api.StudyCapabilityGateway(bindings=(binding,), engine=engine),
         tool,
         selected_dependencies,
         selected_store,
         binding,
+        host_authority,
     )
 
 
@@ -321,7 +320,9 @@ def context(
     )
 
 
-def build_model_failure_gateway(error: ModelError) -> tuple[StudyCapabilityGateway, FailingModel]:
+def build_model_failure_gateway(
+    error: ModelError,
+) -> tuple[capability_api.StudyCapabilityGateway, FailingModel]:
     definition = PlaybookDefinition(
         "pf06-model-flow",
         V1,
@@ -362,7 +363,7 @@ def build_model_failure_gateway(error: ModelError) -> tuple[StudyCapabilityGatew
         ArtifactReference("pf06-state", V1),
     )
     dependencies = Dependencies()
-    binding = CapabilityBinding(
+    binding = capability_api.CapabilityBinding(
         selected_manifest,
         selected_manifest.fingerprint,
         skill,
@@ -381,4 +382,4 @@ def build_model_failure_gateway(error: ModelError) -> tuple[StudyCapabilityGatew
         run_store=MemoryRunStore(),
         clock=FixedClock(),
     )
-    return StudyCapabilityGateway(bindings=(binding,), engine=engine), model
+    return capability_api.StudyCapabilityGateway(bindings=(binding,), engine=engine), model
