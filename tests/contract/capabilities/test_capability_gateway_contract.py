@@ -5,6 +5,8 @@ from dataclasses import replace
 
 import pytest
 
+from study_agent.api.authority import HostAuthority
+from study_agent.api.capabilities import CapabilityRequest
 from study_agent.capabilities import (
     CancelledCapabilityOutcome,
     CapabilityGatewayError,
@@ -56,6 +58,66 @@ def test_authority_and_schema_rejection_happen_before_dependency_or_tool_effects
     assert fixture.dependencies.calls == 0
     assert fixture.tool.calls == 0
     assert fixture.store.data == {}
+
+
+def test_canonical_request_enforces_host_authority_and_executes_by_manifest_identity() -> None:
+    fixture = build_gateway()
+    host = HostAuthority()
+    authority = host.issue(
+        PrincipalKind.SERVICE,
+        "tutor-host",
+        grants=("study:explain",),
+        scopes=("course:course-1",),
+        correlation_id="correlation-1",
+        session_id="session-1",
+    )
+    request = CapabilityRequest(
+        "explain_concept@1.0.0",
+        INPUTS,
+        authority,
+        "correlation-1",
+        1,
+        "canonical-request-1",
+    )
+
+    outcome = asyncio.run(fixture.gateway.start(request))
+
+    assert isinstance(outcome, CompletedCapabilityOutcome)
+    assert fixture.tool.calls == 1
+    assert fixture.dependencies.calls == 1
+
+    unauthorized = host.issue(
+        PrincipalKind.SERVICE,
+        "tutor-host",
+        grants=(),
+        scopes=("course:course-1",),
+        correlation_id="correlation-1",
+        session_id="session-1",
+    )
+    rejected = CapabilityRequest(
+        "explain_concept@1.0.0",
+        INPUTS,
+        unauthorized,
+        "correlation-1",
+        1,
+        "canonical-request-2",
+    )
+    with pytest.raises(CapabilityGatewayError) as caught:
+        asyncio.run(fixture.gateway.start(rejected))
+    assert caught.value.code is CapabilityGatewayErrorCode.UNAUTHORIZED
+    assert fixture.tool.calls == 1
+
+    stale_request = CapabilityRequest(
+        "explain_concept@1.0.0",
+        INPUTS,
+        authority,
+        "correlation-1",
+        2,
+        "canonical-request-stale",
+    )
+    stale = asyncio.run(fixture.gateway.start(stale_request))
+    assert isinstance(stale, StaleCapabilityOutcome)
+    assert fixture.tool.calls == 1
 
 
 def test_equal_retry_reuses_one_completed_outcome_and_changed_input_conflicts() -> None:

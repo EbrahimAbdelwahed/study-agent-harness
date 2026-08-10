@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping
 from hashlib import sha256
-from typing import NoReturn
+from typing import NoReturn, Protocol, cast
 
-from study_agent.domain import CourseId, ExecutionContext, PrincipalKind, RunId, SessionId
+from study_agent.domain import (
+    CorrelationId,
+    CourseId,
+    ExecutionContext,
+    PrincipalKind,
+    RunId,
+    SessionId,
+)
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_json, freeze_object
+from study_agent.domain.authority import AuthorityContext
 from study_agent.playbooks import (
     DialogueStep,
     EngineErrorCode,
@@ -31,8 +40,10 @@ from .contracts import (
     CapabilityContinuation,
     CapabilityGatewayError,
     CapabilityGatewayErrorCode,
+    CapabilityIdentifier,
     CapabilityManifest,
     CapabilityOutcome,
+    CapabilityRequest,
     CompletedCapabilityOutcome,
     FailedCapabilityOutcome,
     StaleCapabilityOutcome,
@@ -41,6 +52,13 @@ from .contracts import (
     TutorCapabilityId,
 )
 from .registry import StudyCapabilityRegistry
+
+_AUTHORITY_DEPENDENCY_KIND = "capability.authority"
+_STREAM_HIGH_WATER_DEPENDENCY_KIND = "capability.stream"
+
+
+class CapabilityHighWaterResolver(Protocol):
+    def __call__(self, *, context: ExecutionContext, inputs: JsonObject) -> int: ...
 
 
 class StudyCapabilityGateway:
@@ -51,6 +69,7 @@ class StudyCapabilityGateway:
         *,
         bindings: tuple[CapabilityBinding, ...],
         engine: PlaybookEngine,
+        stream_high_water_resolver: CapabilityHighWaterResolver | None = None,
     ) -> None:
         values = tuple(bindings)
         if not values:
@@ -65,18 +84,55 @@ class StudyCapabilityGateway:
         self._bindings = {item.manifest.id: item for item in values}
         self._registry = StudyCapabilityRegistry(tuple(item.manifest for item in values))
         self._engine = engine
+        if stream_high_water_resolver is not None and not callable(
+            stream_high_water_resolver
+        ):
+            raise TypeError("stream_high_water_resolver must be callable")
+        self._stream_high_water_resolver = stream_high_water_resolver
 
     def discover(self) -> tuple[CapabilityManifest, ...]:
         return self._registry.discover()
 
     async def start(
         self,
-        capability_id: TutorCapabilityId,
-        inputs: JsonObject,
-        context: ExecutionContext,
+        capability_id: CapabilityIdentifier | CapabilityRequest,
+        inputs: JsonObject | None = None,
+        context: ExecutionContext | None = None,
     ) -> CapabilityOutcome:
+        if isinstance(capability_id, CapabilityRequest):
+            if inputs is not None:
+                raise TypeError("CapabilityRequest start does not accept positional inputs")
+            return await self.start_request(capability_id, context=context)
+        if inputs is None or context is None:
+            raise TypeError("capability start requires inputs and ExecutionContext")
         binding = self._binding(capability_id)
         return await self._start_bound(binding, inputs, inputs, context)
+
+    async def start_request(
+        self,
+        request: CapabilityRequest,
+        *,
+        context: ExecutionContext | None = None,
+    ) -> CapabilityOutcome:
+        """Execute one canonical request after binding its opaque authority.
+
+        The legacy three-argument ``start`` form remains available for existing
+        hosts.  Requests carry the public manifest identity and host-issued
+        authority, so this path resolves by exact manifest identity and never
+        accepts an ordinal or provider-selected implementation.
+        """
+
+        if not isinstance(request, CapabilityRequest):
+            raise TypeError("capability request must be CapabilityRequest")
+        binding = self._binding_identity(request.manifest_identity)
+        execution_context = _request_context(request, context)
+        return await self._start_bound(
+            binding,
+            request.inputs,
+            request.inputs,
+            execution_context,
+            expected_stream_high_water=request.expected_stream_high_water,
+        )
 
     async def _start_bound(
         self,
@@ -84,6 +140,8 @@ class StudyCapabilityGateway:
         public_inputs: JsonObject,
         execution_inputs: JsonObject,
         context: ExecutionContext,
+        *,
+        expected_stream_high_water: int | None = None,
     ) -> CapabilityOutcome:
         authority, retry = self._authorize(binding, context)
         try:
@@ -99,10 +157,32 @@ class StudyCapabilityGateway:
 
         inspected = self._inspect_optional(binding, run_id)
         if inspected is not None:
-            self._require_start_retry(binding, inspected, frozen_inputs)
+            self._require_start_retry(
+                binding,
+                inspected,
+                frozen_inputs,
+                authority,
+                expected_stream_high_water,
+            )
             return self._observed(binding, inspected, authority, retry)
 
-        dependencies = _dependencies(binding, context, frozen_public_inputs)
+        dependencies = _dependencies(
+            binding,
+            context,
+            frozen_public_inputs,
+            authority=authority,
+            expected_stream_high_water=expected_stream_high_water,
+        )
+        if expected_stream_high_water is not None:
+            stale = self._check_stream_high_water(
+                run_id,
+                context,
+                frozen_public_inputs,
+                expected_stream_high_water,
+                dependencies,
+            )
+            if stale is not None:
+                return stale
         try:
             await self._engine.execute(
                 run_id=run_id,
@@ -112,10 +192,23 @@ class StudyCapabilityGateway:
                 pins=binding.pins,
                 read_dependencies=dependencies,
             )
+        except asyncio.CancelledError:
+            committed = self._observe_after_host_cancellation(
+                binding, run_id, authority, retry
+            )
+            if committed is not None:
+                return committed
+            raise
         except PlaybookEngineError as error:
             if error.failure.code is EngineErrorCode.DUPLICATE_RUN:
                 inspected = self._inspect_required(binding, run_id)
-                self._require_start_retry(binding, inspected, frozen_inputs)
+                self._require_start_retry(
+                    binding,
+                    inspected,
+                    frozen_inputs,
+                    authority,
+                    expected_stream_high_water,
+                )
                 if inspected.read_dependencies != dependencies:
                     return StaleCapabilityOutcome(
                         run_id, "capability read dependencies changed since start"
@@ -181,7 +274,24 @@ class StudyCapabilityGateway:
             binding,
             context,
             _public_input_projection(binding, continuation.inputs),
+            authority=authority,
+            expected_stream_high_water=_expected_stream_high_water(
+                continuation.read_dependencies
+            ),
         )
+        expected_stream_high_water = _expected_stream_high_water(
+            continuation.read_dependencies
+        )
+        if expected_stream_high_water is not None:
+            stale = self._check_stream_high_water(
+                continuation.run_id,
+                context,
+                _public_input_projection(binding, continuation.inputs),
+                expected_stream_high_water,
+                dependencies,
+            )
+            if stale is not None:
+                return stale
         try:
             await self._engine.resume(
                 run_id=continuation.run_id,
@@ -206,13 +316,20 @@ class StudyCapabilityGateway:
                 )
                 return self._observed(binding, raced, authority, retry)
             return self._engine_error(continuation.run_id, error)
+        except asyncio.CancelledError:
+            committed = self._observe_after_host_cancellation(
+                binding, continuation.run_id, authority, retry
+            )
+            if committed is not None:
+                return committed
+            raise
         inspected = self._inspect_required(binding, continuation.run_id)
         self._require_persisted_resume(binding, continuation, inspected, frozen_response)
         return self._observed(binding, inspected, authority, retry)
 
-    def _binding(self, capability_id: TutorCapabilityId) -> CapabilityBinding:
-        if not isinstance(capability_id, TutorCapabilityId):
-            raise TypeError("capability id must use TutorCapabilityId")
+    def _binding(self, capability_id: CapabilityIdentifier) -> CapabilityBinding:
+        if not isinstance(capability_id, (TutorCapabilityId, str)):
+            raise TypeError("capability id must use a CapabilityIdentifier")
         try:
             return self._bindings[capability_id]
         except KeyError as error:
@@ -220,6 +337,21 @@ class StudyCapabilityGateway:
                 CapabilityGatewayErrorCode.NOT_FOUND,
                 "capability is not registered",
             ) from error
+
+    def _binding_identity(self, manifest_identity: str) -> CapabilityBinding:
+        if not isinstance(manifest_identity, str) or not manifest_identity.strip():
+            raise TypeError("capability manifest identity must be non-empty text")
+        try:
+            manifest = self._registry.get_identity(manifest_identity)
+        except (KeyError, TypeError) as error:
+            raise CapabilityGatewayError(
+                CapabilityGatewayErrorCode.NOT_FOUND,
+                "capability manifest is not registered",
+            ) from error
+        binding = self._bindings[manifest.id]
+        if binding.manifest.identity != manifest_identity:
+            self._conflict("capability manifest identity is not the trusted binding")
+        return binding
 
     def _authorize(
         self,
@@ -275,6 +407,11 @@ class StudyCapabilityGateway:
         except PlaybookEngineError as error:
             if error.failure.code is EngineErrorCode.CHECKPOINT_NOT_FOUND:
                 return None
+            if error.failure.code is EngineErrorCode.INCOMPATIBLE_CHECKPOINT:
+                raise CapabilityGatewayError(
+                    CapabilityGatewayErrorCode.CONFLICT,
+                    "persisted capability slot differs from the trusted binding",
+                ) from error
             raise CapabilityGatewayError(
                 CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
                 "capability checkpoint could not be inspected safely",
@@ -313,6 +450,8 @@ class StudyCapabilityGateway:
         binding: CapabilityBinding | ProfiledCapabilityBinding,
         inspected: InspectedRunRecord,
         inputs: JsonObject,
+        authority: str,
+        expected_stream_high_water: int | None,
     ) -> None:
         if inspected.definition_fingerprint != playbook_definition_fingerprint(
             binding.playbook
@@ -322,6 +461,22 @@ class StudyCapabilityGateway:
             self._conflict("idempotency identity was reused with different inputs")
         if _pins_payload(inspected.pins) != _pins_payload(binding.pins):
             self._conflict("persisted capability pins differ from the trusted binding")
+        persisted_authority = _metadata_dependency(
+            inspected.read_dependencies, _AUTHORITY_DEPENDENCY_KIND
+        )
+        if persisted_authority is not None and persisted_authority.version != authority:
+            self._conflict("idempotency identity was reused with another authority")
+        if expected_stream_high_water is not None:
+            persisted_high_water = _metadata_dependency(
+                inspected.read_dependencies, _STREAM_HIGH_WATER_DEPENDENCY_KIND
+            )
+            if (
+                persisted_high_water is None
+                or persisted_high_water.version != str(expected_stream_high_water)
+            ):
+                self._conflict(
+                    "idempotency identity was reused with another stream high-water mark"
+                )
 
     def _require_continuation_authority(
         self,
@@ -447,7 +602,7 @@ class StudyCapabilityGateway:
         except PlaybookEngineError as error:
             return self._engine_error(inspected.run_id, error)
         if run.status is PlaybookRunStatus.TERMINATED:
-            return TerminatedCapabilityOutcome(run)
+            return cast(CapabilityOutcome, TerminatedCapabilityOutcome(run))
         if binding.output_key not in run.outputs:
             return FailedCapabilityOutcome(
                 inspected.run_id, "verified capability output is missing"
@@ -469,6 +624,86 @@ class StudyCapabilityGateway:
             return CancelledCapabilityOutcome(run_id, "capability execution was cancelled")
         return FailedCapabilityOutcome(run_id, "capability execution failed safely")
 
+    def _observe_after_host_cancellation(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        run_id: RunId,
+        authority: str,
+        retry: str,
+    ) -> CapabilityOutcome | None:
+        """Return a committed result, but preserve an ambiguous pre-CAS cancel.
+
+        ``PlaybookEngine`` owns the checkpoint CAS.  A host task cancellation
+        can race the await boundary on either side of that CAS.  A RUNNING
+        checkpoint is deliberately left ambiguous and the cancellation is
+        re-raised; a non-running checkpoint is already durable and can be
+        observed without replaying effects.
+        """
+
+        try:
+            inspected = self._engine.inspect(run_id=run_id, definition=binding.playbook)
+        except PlaybookEngineError:
+            return None
+        if inspected.status is RunStatus.RUNNING:
+            return None
+        return self._observed(binding, inspected, authority, retry)
+
+    def _check_stream_high_water(
+        self,
+        run_id: RunId,
+        context: ExecutionContext,
+        inputs: JsonObject,
+        expected: int,
+        dependencies: tuple[ReadDependency, ...],
+    ) -> StaleCapabilityOutcome | None:
+        actual = self._stream_high_water(context, inputs, dependencies)
+        if actual != expected:
+            return StaleCapabilityOutcome(
+                run_id,
+                "capability stream high-water changed before execution",
+            )
+        return None
+
+    def _stream_high_water(
+        self,
+        context: ExecutionContext,
+        inputs: JsonObject,
+        dependencies: tuple[ReadDependency, ...],
+    ) -> int:
+        if self._stream_high_water_resolver is not None:
+            try:
+                actual = self._stream_high_water_resolver(context=context, inputs=inputs)
+            except Exception as error:
+                raise CapabilityGatewayError(
+                    CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+                    "capability stream high-water could not be read safely",
+                ) from error
+            if type(actual) is not int or actual < 0:
+                raise CapabilityGatewayError(
+                    CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+                    "capability stream high-water resolver returned an invalid value",
+                )
+            return actual
+        inferred = _inferred_high_water(dependencies)
+        if inferred is None:
+            # A request at the empty stream origin is safe when a host has no
+            # stream adapter to consult. Any later mark must be verified by an
+            # injected resolver rather than guessed.
+            if _metadata_dependency(
+                dependencies, _STREAM_HIGH_WATER_DEPENDENCY_KIND
+            ) is not None:
+                expected = _metadata_dependency(
+                    dependencies, _STREAM_HIGH_WATER_DEPENDENCY_KIND
+                )
+                assert expected is not None
+                if expected.version != "0":
+                    raise CapabilityGatewayError(
+                        CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+                        "capability stream high-water requires a host resolver",
+                    )
+            return 0
+        return inferred
+
     @staticmethod
     def _conflict(message: str) -> NoReturn:
         raise CapabilityGatewayError(CapabilityGatewayErrorCode.CONFLICT, message)
@@ -478,6 +713,9 @@ def _dependencies(
     binding: CapabilityBinding | ProfiledCapabilityBinding,
     context: ExecutionContext,
     inputs: JsonObject,
+    *,
+    authority: str,
+    expected_stream_high_water: int | None,
 ) -> tuple[ReadDependency, ...]:
     try:
         dependencies = tuple(
@@ -493,13 +731,151 @@ def _dependencies(
             CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
             "capability dependency resolver returned invalid values",
         )
-    keys = tuple((item.kind, item.id) for item in dependencies)
+    metadata = [
+        ReadDependency(_AUTHORITY_DEPENDENCY_KIND, binding.manifest.identity, authority)
+    ]
+    if expected_stream_high_water is not None:
+        metadata.append(
+            ReadDependency(
+                _STREAM_HIGH_WATER_DEPENDENCY_KIND,
+                str(context.course_id),
+                str(expected_stream_high_water),
+            )
+        )
+    combined = (*dependencies, *metadata)
+    keys = tuple((item.kind, item.id) for item in combined)
     if len(set(keys)) != len(keys):
         raise CapabilityGatewayError(
             CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
             "capability dependency resolver returned duplicate identities",
         )
-    return dependencies
+    return combined
+
+
+def _request_context(
+    request: CapabilityRequest, context: ExecutionContext | None
+) -> ExecutionContext:
+    authority = request.authority
+    if not isinstance(authority, AuthorityContext):
+        raise TypeError("capability request authority must be AuthorityContext")
+    if authority.principal_kind not in {PrincipalKind.HUMAN, PrincipalKind.SERVICE}:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.UNAUTHORIZED,
+            "capability authority must be a trusted human or service",
+        )
+    grants = frozenset(grant.name for grant in authority.grants)
+    correlation_id = (
+        request.correlation_id
+        if isinstance(request.correlation_id, CorrelationId)
+        else CorrelationId(request.correlation_id)
+    )
+    session_id = (
+        None if authority.session_id is None else SessionId(authority.session_id)
+    )
+    if context is not None:
+        if not isinstance(context, ExecutionContext):
+            raise TypeError("capability request context must be ExecutionContext")
+        scoped_courses = {
+            scope.name.removeprefix("course:")
+            for scope in authority.scopes
+            if scope.name.startswith("course:")
+        }
+        if (
+            context.principal_kind is not authority.principal_kind
+            or context.principal_id != authority.principal_id
+            or context.requested_capabilities != grants
+            or context.session_id != session_id
+            or context.correlation_id != correlation_id
+            or context.idempotency_key != request.idempotency_key
+            or (scoped_courses and str(context.course_id) not in scoped_courses)
+        ):
+            raise CapabilityGatewayError(
+                CapabilityGatewayErrorCode.UNAUTHORIZED,
+                "capability request authority does not match the execution context",
+            )
+        return context
+
+    course_scopes = tuple(
+        scope.name.removeprefix("course:")
+        for scope in authority.scopes
+        if scope.name.startswith("course:")
+    )
+    if len(course_scopes) != 1 or not course_scopes[0]:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INVALID_REQUEST,
+            "capability request authority must identify one course scope",
+        )
+    if session_id is None:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INVALID_REQUEST,
+            "capability request authority must identify a session",
+        )
+    return ExecutionContext(
+        authority.principal_kind,
+        authority.principal_id,
+        CourseId(course_scopes[0]),
+        correlation_id,
+        grants,
+        session_id,
+        idempotency_key=request.idempotency_key,
+    )
+
+
+def _metadata_dependency(
+    dependencies: tuple[ReadDependency, ...], kind: str
+) -> ReadDependency | None:
+    matches = tuple(item for item in dependencies if item.kind == kind)
+    if len(matches) > 1:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+            "capability checkpoint contains duplicate gateway metadata",
+        )
+    return matches[0] if matches else None
+
+
+def _expected_stream_high_water(
+    dependencies: tuple[ReadDependency, ...],
+) -> int | None:
+    metadata = _metadata_dependency(dependencies, _STREAM_HIGH_WATER_DEPENDENCY_KIND)
+    if metadata is None:
+        return None
+    try:
+        value = int(metadata.version)
+    except ValueError as error:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+            "capability checkpoint contains an invalid stream high-water mark",
+        ) from error
+    if value < 0 or str(value) != metadata.version:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+            "capability checkpoint contains an invalid stream high-water mark",
+        )
+    return value
+
+
+def _inferred_high_water(dependencies: tuple[ReadDependency, ...]) -> int | None:
+    candidates: list[int] = []
+    for dependency in dependencies:
+        if dependency.kind not in {"course", "stream", "event_stream"}:
+            continue
+        prefix = "sequence-"
+        if not dependency.version.startswith(prefix):
+            continue
+        try:
+            value = int(dependency.version.removeprefix(prefix))
+        except ValueError:
+            continue
+        if value >= 0:
+            candidates.append(value)
+    if not candidates:
+        return None
+    if len(set(candidates)) != 1:
+        raise CapabilityGatewayError(
+            CapabilityGatewayErrorCode.INCOMPATIBLE_RUNTIME,
+            "capability dependencies contain conflicting stream high-water marks",
+        )
+    return candidates[0]
 
 
 def _public_input_projection(
@@ -525,12 +901,14 @@ def _public_input_projection(
 def _run_id(
     binding: CapabilityBinding | ProfiledCapabilityBinding, authority: str, retry: str
 ) -> RunId:
+    del authority
     digest = _fingerprint(
         "study-agent-capability-run-v1",
         {
-            "capability_identity": binding.manifest.identity,
-            "manifest_fingerprint": binding.manifest_fingerprint,
-            "authority_fingerprint": authority,
+            # The run store is the idempotency slot.  All request material
+            # other than the capability identity and host key is checked
+            # against the persisted checkpoint after this slot is found.
+            "capability_id": binding.manifest.id.value,
             "retry_identity_fingerprint": retry,
         },
     )
