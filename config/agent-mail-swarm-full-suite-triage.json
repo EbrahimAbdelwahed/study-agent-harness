@@ -1,0 +1,36 @@
+{
+  "run_id": "foundation-full-suite-triage-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 1,
+  "lanes": [
+    {
+      "id": "integrated-full-suite-triage",
+      "agent_name": "MistyPine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "206cd9a",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-1u7",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-10.md",
+      "reserve_paths": [
+        "dev/logs/2026-08-10-0040--package-foundation--integrated-full-suite-triage--log.md"
+      ],
+      "forbidden_paths": [
+        "src/**",
+        "tests/**",
+        "specs/**",
+        "docs/worker-briefs/**",
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "verification": [
+        ".venv/bin/python -m pytest -q",
+        ".venv/bin/python -m ruff check .",
+        ".venv/bin/python -m mypy",
+        "git diff --check"
+      ]
+    }
+  ]
+}

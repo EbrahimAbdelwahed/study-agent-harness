@@ -22,7 +22,6 @@ from study_agent.capabilities import (
     StaleCapabilityOutcome,
     StudyCapabilityGateway,
     SuspendedCapabilityOutcome,
-    TerminatedCapabilityOutcome,
     TutorCapabilityId,
     assess_understanding_binding,
     builtin_tutor_validators,
@@ -659,7 +658,7 @@ def test_null_scope_suspends_once_then_resumes_same_generation(
 
 @pytest.mark.parametrize("package", PACKAGES, ids=("explain", "assess"))
 @pytest.mark.parametrize("status", (EvidenceStatus.INSUFFICIENT, EvidenceStatus.CONFLICTING))
-def test_unsupported_evidence_terminates_before_dialogue_and_model(
+def test_unsupported_evidence_fails_closed_before_dialogue_and_model(
     package: PackageCase, status: EvidenceStatus
 ) -> None:
     runtime = _runtime(
@@ -670,10 +669,13 @@ def test_unsupported_evidence_terminates_before_dialogue_and_model(
         exchanges=(),
     )
     outcome = asyncio.run(runtime.gateway.start(package.id, package.ambiguous_inputs, _context()))
-    assert isinstance(outcome, TerminatedCapabilityOutcome)
+    assert isinstance(outcome, FailedCapabilityOutcome)
     assert len(runtime.retrieval.queries) == 1
     assert runtime.model.requests == ()
-    assert all(trace.step_id != "check_readiness" for trace in outcome.run.traces)
+    inspected = runtime.engine.inspect(
+        run_id=outcome.run_id, definition=runtime.binding.playbook
+    )
+    assert all(trace.step_id != "check_readiness" for trace in inspected.traces)
 
 
 def test_changed_input_dependency_drift_and_authority_tamper_add_no_model_effect() -> None:

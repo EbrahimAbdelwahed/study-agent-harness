@@ -1,0 +1,37 @@
+{
+  "commands_exit_ok": true,
+  "has_commands": true,
+  "results": [
+    {
+      "command": "/private/tmp/pf01-py312-venv/bin/python -m pytest -q tests/contract/test_public_manifest.py tests/contract/test_public_manifest_import_safety.py tests/architecture/test_public_facade_boundaries.py",
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "..........                                                               [100%]\n10 passed in 0.20s\n"
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q tests/contract/test_public_manifest.py tests/contract/test_public_manifest_import_safety.py tests/architecture/test_public_facade_boundaries.py",
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "..........                                                               [100%]\n10 passed in 0.18s\n"
+    },
+    {
+      "command": ".venv/bin/ruff check src/study_agent/__init__.py src/study_agent/api tests/contract/test_public_manifest.py tests/contract/test_public_manifest_import_safety.py tests/architecture/test_public_facade_boundaries.py",
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "All checks passed!\n"
+    },
+    {
+      "command": ".venv/bin/mypy src/study_agent/api tests/contract/test_public_manifest.py tests/contract/test_public_manifest_import_safety.py",
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "Success: no issues found in 12 source files\n"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": ""
+    }
+  ],
+  "run_id": "20260809-harness-package-foundation"
+}

@@ -1,0 +1,61 @@
+{
+  "run_id": "foundation-wave1b-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 2,
+  "lanes": [
+    {
+      "id": "pf05-facade",
+      "agent_name": "BrightRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "0d5b12e8e7b93f7fdf6a206d4794a0a4cdfa486c",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf-05-qkc.1",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "src/study_agent/api/sources.py",
+        "tests/contract/test_public_sources_facade.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/api/manifest.py",
+        "src/study_agent/domain/**",
+        "src/study_agent/knowledge/**",
+        "src/study_agent/ingestion/**",
+        "tests/contract/sources/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/test_public_sources_facade.py tests/contract/sources tests/unit/knowledge/test_citation_v2.py tests/contract/test_public_manifest_import_safety.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/api/sources.py tests/contract/test_public_sources_facade.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf06-facade",
+      "agent_name": "BoldPine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "0d5b12e8e7b93f7fdf6a206d4794a0a4cdfa486c",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf06-public-capabilities-facade-my7",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "src/study_agent/api/capabilities.py",
+        "tests/contract/test_public_capabilities_facade.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/api/manifest.py",
+        "src/study_agent/capabilities/**",
+        "src/study_agent/kernel/**",
+        "src/study_agent/ports/**",
+        "tests/contract/capabilities/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/test_public_capabilities_facade.py tests/contract/capabilities tests/contract/test_public_manifest_import_safety.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/api/capabilities.py tests/contract/test_public_capabilities_facade.py",
+        "git diff --check"
+      ]
+    }
+  ]
+}

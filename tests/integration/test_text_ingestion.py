@@ -209,7 +209,7 @@ class CountingBlobStore:
         self.contents: dict[str, bytes] = {}
         self.mismatch = mismatch
 
-    def put(self, content: bytes) -> BlobRef:
+    def put(self, content: bytes, ref: BlobRef | None = None) -> BlobRef:
         self.puts.append(content)
         digest = sha256(content).hexdigest()
         if self.mismatch:

@@ -1,0 +1,77 @@
+{
+  "run_id": "foundation-pf06-typing-fixes-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 3,
+  "lanes": [
+    {
+      "id": "assessment-exam-typing",
+      "agent_name": "AmberRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-1u7.1.2",
+      "brief": "docs/worker-briefs/20260810-pf06-assessment-exam-typing.md",
+      "reserve_paths": [
+        "src/study_agent/assessments/verified_grading.py",
+        "src/study_agent/exams/analysis.py",
+        "tests/unit/assessments/test_verified_grading.py",
+        "tests/unit/exams/test_exam_analysis.py"
+      ],
+      "forbidden_paths": ["src/study_agent/capabilities/**", "tests/unit/capabilities/**", "specs/**", "pyproject.toml", "uv.lock"],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/unit/assessments/test_verified_grading.py tests/unit/exams/test_exam_analysis.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/assessments/verified_grading.py src/study_agent/exams/analysis.py tests/unit/assessments/test_verified_grading.py tests/unit/exams/test_exam_analysis.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict src/study_agent/assessments/verified_grading.py src/study_agent/exams/analysis.py tests/unit/assessments/test_verified_grading.py tests/unit/exams/test_exam_analysis.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "flashcard-profile-typing",
+      "agent_name": "CedarField",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-1u7.1.3",
+      "brief": "docs/worker-briefs/20260810-pf06-flashcard-profile-typing.md",
+      "reserve_paths": [
+        "src/study_agent/capabilities/morphology_flashcards.py",
+        "src/study_agent/capabilities/hybrid_flashcards.py",
+        "tests/unit/capabilities/test_morphology_flashcards.py",
+        "tests/unit/capabilities/test_hybrid_flashcards.py",
+        "tests/integration/test_headless_artifact_flow.py"
+      ],
+      "forbidden_paths": ["src/study_agent/capabilities/gateway.py", "tests/unit/capabilities/test_flashcard_dispatch.py", "specs/**", "pyproject.toml", "uv.lock"],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/unit/capabilities/test_morphology_flashcards.py tests/unit/capabilities/test_hybrid_flashcards.py tests/integration/test_headless_artifact_flow.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/capabilities/morphology_flashcards.py src/study_agent/capabilities/hybrid_flashcards.py tests/unit/capabilities/test_morphology_flashcards.py tests/unit/capabilities/test_hybrid_flashcards.py tests/integration/test_headless_artifact_flow.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict src/study_agent/capabilities/morphology_flashcards.py src/study_agent/capabilities/hybrid_flashcards.py tests/unit/capabilities/test_morphology_flashcards.py tests/unit/capabilities/test_hybrid_flashcards.py tests/integration/test_headless_artifact_flow.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "independent-test-typing",
+      "agent_name": "GoldenPine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-1u7.1.1",
+      "brief": "docs/worker-briefs/20260810-pf06-independent-test-typing.md",
+      "reserve_paths": [
+        "tests/contract/test_public_sources_facade.py",
+        "tests/architecture/test_tool_registry_boundaries.py"
+      ],
+      "forbidden_paths": ["src/**", "specs/**", "pyproject.toml", "uv.lock"],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/test_public_sources_facade.py tests/architecture/test_tool_registry_boundaries.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check tests/contract/test_public_sources_facade.py tests/architecture/test_tool_registry_boundaries.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict tests/contract/test_public_sources_facade.py tests/architecture/test_tool_registry_boundaries.py",
+        "git diff --check"
+      ]
+    }
+  ]
+}

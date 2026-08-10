@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC
 from enum import StrEnum
 
 from study_agent.artifacts import (
@@ -18,7 +19,12 @@ from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.domain.course import CourseProfile
 from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
 from study_agent.domain.grounding import GroundedAnswer
-from study_agent.domain.identifiers import CorrelationId, CourseId, EventId
+from study_agent.domain.identifiers import (
+    CorrelationId,
+    CourseId,
+    EventId,
+    substrate_production_event_id_for,
+)
 from study_agent.domain.session import (
     AnswerRecord,
     ContinuationSummaryV1,
@@ -27,10 +33,14 @@ from study_agent.domain.session import (
     StudySessionRecord,
 )
 from study_agent.domain.source import Citation, SourceChunk
+from study_agent.domain.substrate import SubstrateProduction
 from study_agent.ingestion import (
     SOURCE_REVISION_SELECTED,
     SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+    SOURCE_SUBSTRATE_PRODUCED,
+    SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION,
     decode_source_revision_selected_event,
+    decode_source_substrate_produced,
     reduce_source_revision,
     reduce_source_revision_selected,
 )
@@ -41,7 +51,21 @@ from study_agent.ingestion.events import (
     decode_source_revision_ingested,
 )
 from study_agent.ingestion.identity import source_event_id_for
-from study_agent.ports import EventStore
+from study_agent.ingestion.substrate_projection import reduce_substrate_produced
+from study_agent.ingestion.succession import (
+    SOURCE_SUPERSEDED_BY,
+    SOURCE_SUPERSEDED_BY_SCHEMA_VERSION,
+    decode_source_superseded_by_event,
+    reduce_source_superseded_by,
+)
+from study_agent.knowledge import register_scope_events
+from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
+from study_agent.recall.contracts import AppliedSchedule, ReviewRecord
+from study_agent.recall.events import (
+    RECALL_EVENT_TYPES,
+)
+from study_agent.recall.projection import register_recall_events
+from study_agent.recall.view import ProjectionRecallView
 from study_agent.sessions import (
     SESSION_EVENT_TYPES,
     ProjectionSessionView,
@@ -78,11 +102,13 @@ from study_agent.study_context import (
 
 EXPORT_SCHEMA_VERSION = 1
 EXPORT_V2_SCHEMA_VERSION = 2
+EXPORT_V3_SCHEMA_VERSION = 3
 
 
 class ExportVersion(StrEnum):
     V1 = "1"
     V2 = "2"
+    V3 = "3"
 
 
 class ExportStateError(ValueError):
@@ -140,23 +166,64 @@ class ExportBundleV2:
             object.__setattr__(self, name, tuple(freeze_object(item) for item in values))
 
 
+@dataclass(frozen=True, slots=True)
+class ExportBundleV3:
+    """Immutable allowlisted records for explicit export v3.
+
+    Recall is represented by one typed receipt stream.  Package scheduler
+    objects, raw policy configuration, retry identities, and adapter-owned
+    state never enter this DTO.
+    """
+
+    course_id: CourseId
+    high_water_sequence: int
+    course: JsonObject
+    sources: tuple[JsonObject, ...]
+    sessions: tuple[JsonObject, ...]
+    answers: tuple[JsonObject, ...]
+    events: tuple[JsonObject, ...]
+    artifacts: tuple[JsonObject, ...]
+    recall: tuple[JsonObject, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.course_id) is not CourseId:
+            raise TypeError("course_id must be a CourseId")
+        if type(self.high_water_sequence) is not int or self.high_water_sequence < 1:
+            raise ValueError("high_water_sequence must be a positive integer")
+        object.__setattr__(self, "course", freeze_object(self.course))
+        for name in (
+            "sources",
+            "sessions",
+            "answers",
+            "events",
+            "artifacts",
+            "recall",
+        ):
+            values = getattr(self, name)
+            if not isinstance(values, tuple):
+                raise TypeError(f"{name} must be a tuple")
+            object.__setattr__(self, name, tuple(freeze_object(item) for item in values))
+
+
 class ExportService:
     """Build an export solely from canonical events and projection read ports."""
 
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
     ) -> None:
         self._events = events
 
     def assemble(
         self, course_id: CourseId, *, version: ExportVersion = ExportVersion.V1
-    ) -> ExportBundle | ExportBundleV2:
+    ) -> ExportBundle | ExportBundleV2 | ExportBundleV3:
         if not isinstance(version, ExportVersion):
             raise TypeError("version must be an ExportVersion")
-        stream = tuple(self._events.read(course_id))
+        stream = _read_domain_events(self._events, course_id)
         if version is ExportVersion.V2:
             return self._assemble_v2(course_id, stream)
+        if version is ExportVersion.V3:
+            return self._assemble_v3(course_id, stream)
         _reject_v1_artifact_stream(stream)
         _validate_stream(course_id, stream)
 
@@ -215,6 +282,7 @@ class ExportService:
         )
 
     def _assemble_v2(self, course_id: CourseId, stream: tuple[DomainEvent, ...]) -> ExportBundleV2:
+        _reject_recall_stream(stream)
         projection = _replay_v2(course_id, stream)
         created = decode_course_created(stream[0])
         revisions = tuple(
@@ -277,15 +345,83 @@ class ExportService:
             artifacts,
         )
 
+    def _assemble_v3(self, course_id: CourseId, stream: tuple[DomainEvent, ...]) -> ExportBundleV3:
+        projection = _replay_v3(course_id, stream)
+        created = decode_course_created(stream[0])
+        revisions = tuple(
+            _decode_source_event(event)
+            for event in stream
+            if event.event_type == SOURCE_REVISION_INGESTED
+        )
+        revision_keys = tuple(
+            (item.source.source_id, item.source.revision_id) for item in revisions
+        )
+        if len(set(revision_keys)) != len(revision_keys):
+            raise ExportStateError("event stream contains duplicate source revisions")
+
+        def context_loader(requested: CourseId) -> Projection:
+            return _owned_projection(requested, projection)
+
+        ProjectionStudyContextView(context_loader).get(course_id)
+        session_view = ProjectionSessionView(context_loader)
+        session_records = session_view.list_sessions(course_id)
+        answers: list[JsonObject] = []
+        sessions: list[JsonObject] = []
+        domain_answers: list[AnswerRecord] = []
+        for record in session_records:
+            interactions = session_view.interactions(course_id, record.id)
+            session_answers = session_view.answers(course_id, record.id)
+            sessions.append(_session_record_v2(record, interactions))
+            answers.extend(
+                _with_schema(_answer_record(record, item), EXPORT_V3_SCHEMA_VERSION)
+                for item in session_answers
+            )
+            domain_answers.extend(session_answers)
+        _validate_source_references(revisions, domain_answers)
+        try:
+            snapshot = ProjectionArtifactView(context_loader).get(course_id)
+            from .artifact_export import artifact_rows
+
+            artifacts = artifact_rows(stream, snapshot, revisions)
+        except (TypeError, ValueError, LookupError) as error:
+            raise ExportStateError("artifact events cannot be exported canonically") from error
+        recall = _recall_rows(projection)
+        return ExportBundleV3(
+            course_id,
+            stream[-1].course_sequence,
+            _with_schema(_course_record(created.profile), EXPORT_V3_SCHEMA_VERSION),
+            tuple(
+                _with_schema(_source_record(item), EXPORT_V3_SCHEMA_VERSION)
+                for item in sorted(
+                    revisions,
+                    key=lambda item: (str(item.source.source_id), str(item.source.revision_id)),
+                )
+            ),
+            tuple(sessions),
+            tuple(
+                sorted(
+                    answers,
+                    key=lambda item: (str(item["session_id"]), str(item["answer_id"])),
+                )
+            ),
+            tuple(_event_record(event) for event in stream),
+            tuple(artifacts),
+            recall,
+        )
+
 
 type _EventDecoder = Callable[[DomainEvent], object]
 
 
 def _reject_v1_artifact_stream(stream: Sequence[DomainEvent]) -> None:
-    if any(
-        event.event_type in ARTIFACT_EVENT_TYPES | ASSESSMENT_EVENT_TYPES for event in stream
-    ):
+    _reject_recall_stream(stream)
+    if any(event.event_type in ARTIFACT_EVENT_TYPES | ASSESSMENT_EVENT_TYPES for event in stream):
         raise ExportStateError("artifact export requires v2")
+
+
+def _reject_recall_stream(stream: Sequence[DomainEvent]) -> None:
+    if any(event.event_type in RECALL_EVENT_TYPES for event in stream):
+        raise ExportStateError("recall export requires v3")
 
 
 def _decode_allowlisted_event(event: DomainEvent) -> object:
@@ -344,6 +480,35 @@ def _decode_source_event(event: DomainEvent) -> SourceRevisionIngested:
     return decoded
 
 
+def _decode_substrate_event(event: DomainEvent) -> SubstrateProduction:
+    """Decode a substrate receipt without requiring the blob store.
+
+    Export replays the canonical event stream from an ``EventStore`` only;
+    unlike the ingestion registry, it has no blob loader.  The payload codec
+    still validates the complete receipt shape, while the envelope checks
+    preserve the identity and authority guarantees that are independent of
+    blob contents.
+    """
+    if (
+        event.event_type != SOURCE_SUBSTRATE_PRODUCED
+        or event.schema_version != SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION
+    ):
+        raise ValueError("event envelope does not match source.substrate_produced@1")
+    decoded = decode_source_substrate_produced(event.payload)
+    expected_id = substrate_production_event_id_for(
+        event.course_id,
+        decoded.substrate_production_id,
+        event.course_sequence,
+    )
+    if event.event_id != expected_id:
+        raise ValueError("event_id does not match substrate production identity")
+    if event.actor.kind is not PrincipalKind.SERVICE:
+        raise ValueError("substrate production events require a service actor")
+    if decoded.produced_at != event.occurred_at.astimezone(UTC):
+        raise ValueError("production produced_at must equal event.occurred_at")
+    return decoded
+
+
 def _validate_stream(course_id: CourseId, stream: Sequence[DomainEvent]) -> None:
     if type(course_id) is not CourseId:
         raise TypeError("course_id must be a CourseId")
@@ -374,6 +539,7 @@ def _replay_contextual_state(course_id: CourseId, stream: Sequence[DomainEvent])
 
 
 def _replay_v2(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection:
+    _reject_recall_stream(stream)
     if type(course_id) is not CourseId:
         raise TypeError("course_id must be a CourseId")
     if not stream:
@@ -409,6 +575,153 @@ def _replay_v2(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
     except (TypeError, ValueError, LookupError) as error:
         raise ExportStateError("event stream cannot be replayed for export v2") from error
     return Projection(course_id, stream[-1].course_sequence, state)
+
+
+def _replay_v3(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection:
+    if type(course_id) is not CourseId:
+        raise TypeError("course_id must be a CourseId")
+    if not stream:
+        raise ExportStateError("course event stream is empty")
+    registry = EventRegistry()
+    register_course_events(registry)
+    registry.register_event(
+        SOURCE_REVISION_INGESTED,
+        SOURCE_REVISION_SCHEMA_VERSION,
+        _decode_source_event,
+        reduce_source_revision,
+    )
+    registry.register_event(
+        SOURCE_REVISION_SELECTED,
+        SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+        decode_source_revision_selected_event,
+        reduce_source_revision_selected,
+    )
+    registry.register_event(
+        SOURCE_SUBSTRATE_PRODUCED,
+        SOURCE_SUBSTRATE_PRODUCED_SCHEMA_VERSION,
+        _decode_substrate_event,
+        reduce_substrate_produced,
+    )
+    registry.register_event(
+        SOURCE_SUPERSEDED_BY,
+        SOURCE_SUPERSEDED_BY_SCHEMA_VERSION,
+        decode_source_superseded_by_event,
+        reduce_source_superseded_by,
+    )
+    register_scope_events(registry)
+    register_session_events(registry)
+    register_study_context_events(registry)
+    register_artifact_events(registry)
+    register_assessment_events(registry)
+    register_recall_events(registry)
+    state: JsonObject = {}
+    try:
+        for expected_sequence, event in enumerate(stream, start=1):
+            if event.course_id != course_id:
+                raise ExportStateError("event stream contains another course")
+            if event.course_sequence != expected_sequence:
+                raise ExportStateError("event stream sequence is not contiguous")
+            state = registry.reduce(state, event)
+    except ExportStateError:
+        raise
+    except (TypeError, ValueError, LookupError) as error:
+        raise ExportStateError("event stream cannot be replayed for export v3") from error
+    return Projection(course_id, stream[-1].course_sequence, state)
+
+
+def _recall_rows(projection: Projection) -> tuple[JsonObject, ...]:
+    """Render the exact v3 recall receipt allowlist from one replayed projection."""
+
+    if "recall" not in projection.state:
+        return ()
+    raw = projection.state["recall"]
+    if not isinstance(raw, Mapping):
+        raise ExportStateError("recall projection cannot be exported canonically")
+    schedules = raw.get("schedules", {})
+    reviews = raw.get("reviews", {})
+    if not isinstance(schedules, Mapping) or not isinstance(reviews, Mapping):
+        raise ExportStateError("recall projection cannot be exported canonically")
+    try:
+        snapshot = ProjectionRecallView(lambda _: projection).get(projection.course_id)
+    except (TypeError, ValueError, LookupError) as error:
+        raise ExportStateError("recall projection cannot be exported canonically") from error
+
+    schedule_receipts: list[JsonObject] = []
+    for schedule in snapshot.schedules:
+        source = schedules.get(str(schedule.decision_id))
+        if not isinstance(source, Mapping):
+            raise ExportStateError("recall schedule receipt is missing its event scope")
+        schedule_receipts.append(_schedule_receipt(schedule, source))
+    review_receipts: list[JsonObject] = []
+    for review in snapshot.reviews:
+        source = reviews.get(str(review.review_id))
+        if not isinstance(source, Mapping):
+            raise ExportStateError("recall review receipt is missing its event scope")
+        review_receipts.append(_review_receipt(review, source))
+    return tuple(
+        sorted(
+            (*review_receipts, *schedule_receipts),
+            key=lambda row: (
+                _receipt_sequence(row),
+                str(row["receipt_type"]),
+                str(row.get("review_id", row.get("decision_id", ""))),
+            ),
+        )
+    )
+
+
+def _receipt_sequence(row: Mapping[str, object]) -> int:
+    sequence = row.get("course_sequence")
+    if type(sequence) is not int:
+        raise ExportStateError("recall receipt course sequence is invalid")
+    return sequence
+
+
+def _review_receipt(review: ReviewRecord, source: Mapping[str, object]) -> JsonObject:
+    sequence = source.get("course_sequence")
+    session_id = source.get("session_id")
+    if type(sequence) is not int or not isinstance(session_id, str):
+        raise ExportStateError("recall review receipt scope is invalid")
+    return {
+        "schema_version": EXPORT_V3_SCHEMA_VERSION,
+        "receipt_type": "review",
+        "course_sequence": sequence,
+        "session_id": session_id,
+        "review_id": str(review.review_id),
+        "revision_id": str(review.revision_id),
+        "rating": review.rating.value,
+        "latency_ms": review.latency_ms,
+        "confidence_bps": review.confidence_bps,
+        "occurred_at": review.occurred_at.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _schedule_receipt(
+    schedule: AppliedSchedule, source: Mapping[str, object]
+) -> JsonObject:
+    sequence = source.get("course_sequence")
+    session_id = source.get("session_id")
+    if type(sequence) is not int or not isinstance(session_id, str):
+        raise ExportStateError("recall schedule receipt scope is invalid")
+    return {
+        "schema_version": EXPORT_V3_SCHEMA_VERSION,
+        "receipt_type": "schedule",
+        "course_sequence": sequence,
+        "session_id": session_id,
+        "decision_id": str(schedule.decision_id),
+        "revision_id": str(schedule.revision_id),
+        "trigger": schedule.trigger,
+        "review_id": str(schedule.review_id) if schedule.review_id is not None else None,
+        "enrollment_at": schedule.enrollment_at.isoformat().replace("+00:00", "Z"),
+        "due_at": schedule.due_at.isoformat().replace("+00:00", "Z"),
+        "policy_id": schedule.policy_id,
+        "policy_version": schedule.policy_version,
+        "policy_fingerprint": schedule.policy_fingerprint,
+        "implementation_id": schedule.implementation_id,
+        "implementation_version": schedule.implementation_version,
+        "history_fingerprint": schedule.history_fingerprint,
+        "result_fingerprint": schedule.result_fingerprint,
+    }
 
 
 def _owned_projection(requested: CourseId, projection: Projection) -> Projection:

@@ -43,7 +43,10 @@ class FilesystemSourceInput:
     """Capture immutable source bytes beneath one trusted local root."""
 
     def __init__(self, trusted_root: str | Path) -> None:
-        raw = os.fspath(trusted_root)
+        try:
+            raw = os.fspath(trusted_root)
+        except (TypeError, ValueError):
+            raise SourceInputError("trusted source root must be a local path") from None
         if not isinstance(raw, str) or not raw:
             raise SourceInputError("trusted source root must be a local path")
         self._trusted_root = Path(os.path.abspath(os.path.expanduser(raw)))
@@ -137,11 +140,14 @@ class FilesystemSourceInput:
 
         if isinstance(relative_paths, (str, bytes)):
             raise SourceInputError("source paths must be a sequence of paths")
-        if len(relative_paths) > MAX_TOTAL_SOURCES:
+        try:
+            declared = tuple(relative_paths)
+        except (TypeError, ValueError):
+            raise SourceInputError("source paths must be a sequence of paths") from None
+        if len(declared) > MAX_TOTAL_SOURCES:
             raise SourceInputError(
                 f"source count exceeds the {MAX_TOTAL_SOURCES}-file limit"
             )
-        declared = tuple(relative_paths)
         for relative_path in declared:
             _validate_snapshot_path(relative_path)
 
@@ -161,7 +167,10 @@ class FilesystemSourceInput:
     def snapshot_explicit(self, path: str | Path) -> SourceSnapshot:
         """Capture a trusted-host path that is lexically inside this root."""
 
-        raw = os.fspath(path)
+        try:
+            raw = os.fspath(path)
+        except (TypeError, ValueError):
+            raise SourceInputError("source path must be a local path") from None
         if not isinstance(raw, str) or not raw:
             raise SourceInputError("source path must be a local path")
         expanded = os.path.expanduser(raw)

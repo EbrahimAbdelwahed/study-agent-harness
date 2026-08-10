@@ -32,7 +32,7 @@ class MemoryBlobs:
     def __init__(self) -> None:
         self.values: dict[str, bytes] = {}
 
-    def put(self, content: bytes) -> BlobRef:
+    def put(self, content: bytes, ref: BlobRef | None = None) -> BlobRef:
         digest = sha256(content).hexdigest()
         ref = BlobRef(BlobId(f"sha256:{digest}"), digest, len(content))
         self.values[str(ref.id)] = content

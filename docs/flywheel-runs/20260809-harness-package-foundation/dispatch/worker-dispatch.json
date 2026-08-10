@@ -1,0 +1,41 @@
+{
+  "notes": [
+    "The local CLI cannot invoke Codex spawn_agent directly; the orchestrator should call multi_agent_v1.spawn_agent with each packet's spawn_agent object.",
+    "Use max_workers and ready_only to keep parallelism bounded."
+  ],
+  "packets": [
+    {
+      "br_id": "study-agent-harness-integration-pf-02-17u",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-02.md",
+      "coordination_commands": {
+        "claim_br": "/Users/ebrahimabdelwahed/Desktop/Med/20_Progetti/study-agent-devkit/scripts/flywheel-core.py update-bead --project /Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration --id study-agent-harness-integration-pf-02-17u --claim",
+        "reserve_agent_mail": "Use flywheel-core.py start-session with --reserve for the file_hints if Agent Mail is active."
+      },
+      "file_hints": [
+        "src/study_agent/api/authority.py",
+        "src/study_agent/domain/{errors,authority}.py",
+        "src/study_agent/application/errors.py",
+        "src/study_agent/ports/authority.py",
+        "tests/contract/test_public_failures.py",
+        "tests/contract/test_authority_context.py",
+        "tests/architecture/test_authority_boundaries.py"
+      ],
+      "required_report_fields": [
+        "Files changed",
+        "Behavior implemented",
+        "Verification commands and outcomes",
+        "Open questions or blockers",
+        "Follow-up beads needed"
+      ],
+      "spawn_agent": {
+        "agent_type": "worker",
+        "fork_context": false,
+        "message": "You are a Codex worker implementing one scoped flywheel task.\n\nYou are not alone in this codebase. Other agents or the user may have active changes. Do not revert unrelated edits; inspect and work with the current tree.\n\nProject: `/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration`\nRun ID: `20260809-harness-package-foundation`\nTask ID: `pf-02`\n- `br` bead id: `study-agent-harness-integration-pf-02-17u`\n\nRead first:\n- `docs/specs/harness-package-foundation.md`\n- `docs/flywheel-runs/20260809-harness-package-foundation/context-pack.md`\n- `docs/tasks/20260809-harness-package-foundation/pf-02.md`\n- `docs/worker-briefs/20260809-harness-package-foundation/pf-02.md`\n- Applicable `AGENTS.md` files for any path you touch.\n\nAssignment:\n- Implement only the task described by `docs/tasks/20260809-harness-package-foundation/pf-02.md` and `docs/worker-briefs/20260809-harness-package-foundation/pf-02.md`.\n- Keep the change small, reviewable, and within the file/package scope listed in the task.\n- If scope is unclear or product/architecture risk appears, write a decision request instead of guessing.\n- Add or update tests for changed behavior.\n- Run the verification commands listed in the task bead.\n\nCoordination protocol:\n- If `br` is available and a bead id is listed, claim/update that bead before editing.\n- If Agent Mail is active, reserve the likely file paths before editing and release reservations at the end.\n- Leave progress in the task bead or coordination thread if work is partial.\n\nFinal report format:\n- Files changed:\n- Behavior implemented:\n- Verification commands and outcomes:\n- Open questions or blockers:\n- Follow-up beads needed:\n"
+      },
+      "task": "docs/tasks/20260809-harness-package-foundation/pf-02.md",
+      "task_id": "pf-02"
+    }
+  ],
+  "project": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+  "run_id": "20260809-harness-package-foundation"
+}

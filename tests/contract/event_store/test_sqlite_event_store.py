@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import sqlite3
+from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
+from unittest.mock import Mock
 
 import pytest
 
 from study_agent.adapters.sqlite import SequenceConflictError, SQLiteEventStore
+from study_agent.adapters.sqlite.event_store import SQLITE_BUSY_TIMEOUT_SECONDS
 from study_agent.domain import (
     Actor,
     CorrelationId,
@@ -16,8 +22,14 @@ from study_agent.domain import (
     PrincipalKind,
 )
 from study_agent.domain._validation import JsonObject, JsonValue
-from study_agent.ports import EventStore
-from study_agent.ports.storage import EventSequenceConflictError
+from study_agent.domain.events import EventEnvelope
+from study_agent.ports.storage import (
+    CourseStreamHighWater,
+    CourseStreamHighWaterPort,
+    EventSequenceConflictError,
+    _append_legacy,
+    _LegacyEventStore,
+)
 from study_agent.state import EventRegistry
 
 
@@ -55,20 +67,124 @@ def registry() -> EventRegistry:
     return result
 
 
-def exercise_event_store_contract(store: EventStore) -> None:
+def exercise_event_store_contract(store: _LegacyEventStore) -> None:
     course_id = CourseId("course-contract")
     events = (make_event(course_id, 1), make_event(course_id, 2))
 
     assert store.read(course_id) == ()
-    assert store.append(course_id, 0, events) == 2
-    assert store.read(course_id) == events
-    assert store.read(course_id, after_sequence=1) == (events[1],)
-    assert store.append(course_id, 2, ()) == 2
+    assert _append_legacy(store, course_id, 0, events) == 2
+    public_events = store.read(course_id)
+    assert all(isinstance(event, EventEnvelope) for event in public_events)
+    assert tuple(event.event_id for event in public_events) == tuple(
+        event.event_id for event in events
+    )
+    assert tuple(event.event_id for event in store.read(course_id, after_sequence=1)) == (
+        events[1].event_id,
+    )
+    assert _append_legacy(store, course_id, 2, ()) == 2
 
 
 def test_sqlite_adapter_conforms_to_event_store_port(tmp_path: Path) -> None:
     store = SQLiteEventStore(tmp_path / "events.sqlite3", registry())
     exercise_event_store_contract(store)
+
+
+def test_sqlite_high_water_uses_the_canonical_events_table(tmp_path: Path) -> None:
+    database = tmp_path / "events.sqlite3"
+    store = SQLiteEventStore(database, registry())
+    course_id = CourseId("course-high-water")
+
+    assert isinstance(store, CourseStreamHighWaterPort)
+    assert store.observe_high_water(course_id) == CourseStreamHighWater(course_id, 0)
+    _append_legacy(store, course_id, 0, (make_event(course_id, 1),))
+    assert store.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
+
+    with sqlite3.connect(database) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert "events" in tables
+    assert not any("high_water" in table for table in tables)
+
+
+def test_read_only_high_water_observes_live_writer_with_normal_sqlite_locking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "events.sqlite3"
+    writer = SQLiteEventStore(database, registry())
+    course_id = CourseId("course-live-reader")
+    _append_legacy(writer, course_id, 0, (make_event(course_id, 1),))
+    reader = SQLiteEventStore(database, registry(), read_only=True)
+
+    writer_started = Barrier(2)
+    release_writer = Barrier(2)
+    original_transaction = writer._transaction
+
+    @contextmanager
+    def hold_writer_transaction() -> Iterator[sqlite3.Connection]:
+        with original_transaction() as connection:
+            writer_started.wait()
+            release_writer.wait()
+            yield connection
+
+    monkeypatch.setattr(writer, "_transaction", hold_writer_transaction)
+    connect_spy = Mock(wraps=sqlite3.connect)
+    monkeypatch.setattr(sqlite3, "connect", connect_spy)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        append_future = executor.submit(
+            _append_legacy, writer, course_id, 1, (make_event(course_id, 2),)
+        )
+        writer_started.wait()
+        assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
+        release_writer.wait()
+        assert append_future.result() == 2
+
+    assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 2)
+    read_only_uris = tuple(
+        call.args[0]
+        for call in connect_spy.call_args_list
+        if call.args
+        and isinstance(call.args[0], str)
+        and "?mode=ro" in call.args[0]
+    )
+    assert read_only_uris
+    assert all("immutable" not in uri for uri in read_only_uris)
+    assert all(
+        call.kwargs.get("timeout") == SQLITE_BUSY_TIMEOUT_SECONDS
+        for call in connect_spy.call_args_list
+    )
+
+
+def test_read_only_high_water_binds_initial_symlink_target(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.sqlite3"
+    second = tmp_path / "second.sqlite3"
+    link = tmp_path / "events.sqlite3"
+    first_store = SQLiteEventStore(first)
+    second_store = SQLiteEventStore(second)
+    course_id = CourseId("course-symlink")
+    _append_legacy(first_store, course_id, 0, (make_event(course_id, 1),))
+    _append_legacy(
+        second_store,
+        course_id,
+        0,
+        (make_event(course_id, 1), make_event(course_id, 2)),
+    )
+    try:
+        link.symlink_to(first)
+    except OSError as error:
+        pytest.skip(f"symlinks are unavailable: {error}")
+
+    reader = SQLiteEventStore(link, registry(), read_only=True)
+    assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
+    link.unlink()
+    link.symlink_to(second)
+    assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
 
 
 def test_event_schema_cannot_be_registered_without_a_payload_decoder() -> None:
@@ -86,10 +202,10 @@ def test_event_schema_cannot_be_registered_without_a_payload_decoder() -> None:
 def test_sqlite_conflict_implements_portable_sequence_conflict(tmp_path: Path) -> None:
     store = SQLiteEventStore(tmp_path / "events.sqlite3", registry())
     course_id = CourseId("course-conflict")
-    store.append(course_id, 0, (make_event(course_id, 1),))
+    _append_legacy(store, course_id, 0, (make_event(course_id, 1),))
 
     with pytest.raises(EventSequenceConflictError) as caught:
-        store.append(course_id, 0, ())
+        _append_legacy(store, course_id, 0, ())
 
     assert isinstance(caught.value, SequenceConflictError)
     assert (caught.value.expected, caught.value.actual) == (0, 1)

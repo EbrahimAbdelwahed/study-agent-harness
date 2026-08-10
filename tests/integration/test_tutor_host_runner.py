@@ -69,7 +69,7 @@ class _Assembler:
             (
                 AdvertisedCapability(
                     "explain_concept",
-                    "explain_concept@1",
+                    "explain_concept@1.0.0",
                     SHA_A,
                     {
                         "type": "object",
@@ -988,7 +988,7 @@ def _seed_record(
     session = SessionId("session") if session is None else session
     descriptor = PendingContinuationDescriptor(
         continuation.fingerprint,
-        "explain_concept@1",
+        "explain_concept@1.0.0",
         continuation.dialogue_step_id,
         "Confirm the answer.",
         {"type": "boolean"},
