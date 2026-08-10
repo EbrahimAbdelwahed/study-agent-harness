@@ -6,6 +6,7 @@ from hashlib import sha256
 
 import pytest
 
+from study_agent.api.sources import SourceRevision
 from study_agent.domain import (
     Actor,
     BlobId,
@@ -20,6 +21,7 @@ from study_agent.domain import (
     SourceId,
     SourceKind,
     StructureOrigin,
+    SubstrateId,
 )
 from study_agent.ingestion import (
     CHUNK_MAX_CHARACTERS,
@@ -168,6 +170,116 @@ def test_full_event_decoder_preserves_legacy_revision_identity() -> None:
 
     assert str(decoded.source.revision_id) == raw_revision_id
     assert registry.decode(event) == decoded
+
+
+def test_facade_revision_identity_decodes_through_ingestion_and_replays() -> None:
+    event, load_blob = make_event()
+    original = "Cafe\u0301 🫀 valve".encode()
+    normalized_text = normalize_utf8(original).text
+    normalized = normalized_text.encode()
+    source_id = SourceId("source-1")
+    metadata = {
+        "chunker_version": CHUNKER_POLICY_VERSION,
+        "kind": SourceKind.TEXT.value,
+        "max_characters": CHUNK_MAX_CHARACTERS,
+        "source_role": "primary",
+        "title": "Cardiac anatomy",
+        "trust_level": 90,
+    }
+    facade_revision = SourceRevision.create(
+        source_id=source_id,
+        content=original,
+        media_type="text/plain",
+        created_at=event.occurred_at,
+        normalization_version=NORMALIZATION_POLICY_VERSION,
+        substrate_id=SubstrateId(
+            f"substrate:sha256:{sha256(normalized).hexdigest()}"
+        ),
+        metadata=metadata,
+    )
+    source = SourceDocument(
+        source_id,
+        facade_revision.revision_id,
+        SourceKind.TEXT,
+        "Cardiac anatomy",
+        "text/plain",
+        sha256(original).hexdigest(),
+        len(original),
+        event.occurred_at,
+        90,
+        "primary",
+        _blob(original),
+        _blob(normalized),
+        NORMALIZATION_POLICY_VERSION,
+        len(normalized_text),
+        StructureOrigin.MECHANICALLY_EXTRACTED,
+        "utf8-text-v1",
+    )
+    chunks = chunk_text(
+        normalized_text,
+        source_id=source_id,
+        revision_id=facade_revision.revision_id,
+        kind=SourceKind.TEXT,
+        config=ChunkingConfig(
+            max_characters=CHUNK_MAX_CHARACTERS,
+            version=CHUNKER_POLICY_VERSION,
+        ),
+    )
+    public_event = DomainEvent(
+        source_event_id_for(event.course_id, facade_revision.revision_id),
+        event.course_id,
+        event.course_sequence,
+        event.event_type,
+        event.schema_version,
+        event.actor,
+        event.occurred_at,
+        event.correlation_id,
+        source_revision_payload(source, chunks),
+    )
+
+    decoded = decode_source_revision_event(public_event, load_blob)
+    registry = EventRegistry()
+    register_source_revision_events(registry, load_blob)
+    first = apply_event(Projection(event.course_id), public_event, registry)
+    replayed = apply_event(Projection(event.course_id), public_event, registry)
+
+    assert decoded.source.revision_id == facade_revision.revision_id
+    assert first.state == replayed.state
+
+
+def test_legacy_identity_is_a_historical_envelope_for_unencoded_metadata() -> None:
+    event, load_blob = make_event(legacy_identity=True)
+    source = event.payload["source"]
+    assert isinstance(source, Mapping)
+    legacy_revision_id = source["revision_id"]
+    assert isinstance(legacy_revision_id, str)
+    historical = _replace_source(
+        event,
+        title="Historical title",
+        trust_level=10,
+        source_role="secondary",
+    )
+
+    decoded = decode_source_revision_event(historical, load_blob)
+
+    assert str(decoded.source.revision_id) == legacy_revision_id
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"kind": SourceKind.MARKDOWN.value},
+        {"normalization_version": "future-normalization-v2"},
+        {"revision_id": "revision-sha256:" + "0" * 64},
+    ],
+)
+def test_legacy_decoder_rejects_mutation_of_legacy_identity_inputs(
+    updates: dict[str, object],
+) -> None:
+    event, _ = make_event(legacy_identity=True)
+
+    with pytest.raises(ValueError):
+        decode_source_revision_ingested(_replace_source(event, **updates).payload)
 
 
 def test_payload_decoder_rejects_a_forged_revision_manifest() -> None:

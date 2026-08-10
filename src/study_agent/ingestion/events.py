@@ -12,7 +12,14 @@ from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import DomainEvent
 from study_agent.domain.identifiers import BlobId, ChunkId, RevisionId, SourceId
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
-from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, SourceKind
+from study_agent.domain.source import (
+    BlobRef,
+    SourceChunk,
+    SourceDocument,
+    SourceKind,
+    source_revision_identity_manifest,
+)
+from study_agent.domain.source_identity import source_revision_id_for
 
 from .chunking import CHUNKER_VERSION, ChunkingConfig, chunk_text
 from .identity import (
@@ -329,6 +336,11 @@ def _validate_revision_identity(
     original_sha256: str,
     chunking: PersistedChunkingConfig,
 ) -> None:
+    # The ingestion adapter's established manifest remains readable, but the
+    # facade manifest is also a first-class event identity.  Both identities
+    # use the same source_identity codec, namespace, and digest format; only
+    # the manifest projection differs because SourceDocument carries
+    # ingestion-only fields.
     expected_revision = revision_id_for(
         original_sha256=original_sha256,
         source_id=source.source_id,
@@ -340,6 +352,23 @@ def _validate_revision_identity(
         chunker_version=chunking.version,
         max_characters=chunking.max_characters,
     )
+    expected_facade_revision = source_revision_id_for(
+        source_revision_identity_manifest(
+            source_id=source.source_id,
+            blob=source.blob,
+            media_type=source.media_type,
+            normalization_version=source.normalization_version,
+            substrate_id=source.substrate_id,
+            metadata={
+                "chunker_version": chunking.version,
+                "kind": source.kind.value,
+                "max_characters": chunking.max_characters,
+                "source_role": source.source_role,
+                "title": source.title,
+                "trust_level": source.trust_level,
+            },
+        )
+    )
     legacy_revision = legacy_revision_id_for(
         original_sha256=original_sha256,
         source_id=source.source_id,
@@ -348,7 +377,11 @@ def _validate_revision_identity(
         chunker_version=chunking.version,
         max_characters=chunking.max_characters,
     )
-    if source.revision_id not in (expected_revision, legacy_revision):
+    if source.revision_id not in (
+        expected_revision,
+        expected_facade_revision,
+        legacy_revision,
+    ):
         raise ValueError("revision_id does not match canonical immutable inputs")
 
 
