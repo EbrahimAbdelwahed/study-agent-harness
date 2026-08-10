@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -12,6 +13,7 @@ from study_agent.sessions.events import grounded_answer_manifest
 from study_agent.state import canonical_json_bytes
 from study_agent.tools import StudyEvent
 from tests.support.host_composition import (
+    COURSE,
     HostScenario,
     SupportedAnswer,
     build_host,
@@ -105,7 +107,11 @@ def test_supported_answer_and_provenance_are_identical_across_surfaces(
 ) -> None:
     host = build_host(
         tmp_path,
-        scenario=HostScenario(supported_answer=SupportedAnswer("aortic valve")),
+        scenario=HostScenario(
+            supported_answer=SupportedAnswer(
+                "aortic valve", response_id="parity-supported"
+            )
+        ),
     )
     try:
         question = "aortic valve"
@@ -122,6 +128,24 @@ def test_supported_answer_and_provenance_are_identical_across_surfaces(
         assert direct.answer.answer.segments[0].citations[0].quoted_snippet == (
             "The aortic valve has three cusps."
         )
+        assert direct.answer.answer.provenance.model is not None
+        assert (
+            direct.answer.answer.provenance.model.adapter_id,
+            direct.answer.answer.provenance.model.adapter_version,
+            direct.answer.answer.provenance.model.model_id,
+            direct.answer.answer.provenance.model.response_id,
+        ) == ("scripted-model", "1.0.0", "fixture-model", "parity-supported")
+        persisted = next(
+            event
+            for event in host.events.read(COURSE)
+            if event.event_type == "session.answer_recorded"
+        )
+        persisted_provenance = cast(Mapping[str, object], persisted.payload["provenance"])
+        persisted_model = cast(Mapping[str, object], persisted_provenance["model"])
+        assert tuple(
+            persisted_model[field]
+            for field in ("adapter_id", "adapter_version", "model_id", "response_id")
+        ) == ("scripted-model", "1.0.0", "fixture-model", "parity-supported")
         assert tool.error is None and tool.value is not None
         assert tool.value["answer_record_json"] == _answer_record_json(direct.answer)
         assert tuple(item.to_json() for item in streamed) == tool.value["events"]

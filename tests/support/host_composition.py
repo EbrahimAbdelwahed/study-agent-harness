@@ -82,6 +82,7 @@ SESSION = SessionId("session-grounding-ask")
 class SupportedAnswer:
     question: str
     text: str = "The aortic valve has three cusps."
+    response_id: str = "response-supported"
 
 
 class FinalizerScenario(Enum):
@@ -319,7 +320,7 @@ def _build_supported_model(
                     None,
                     ModelFinishReason.STOP,
                     ModelInvocation(
-                        "scripted-model", "1.0.0", "fixture-model", "response-supported"
+                        "scripted-model", "1.0.0", "fixture-model", answer.response_id
                     ),
                     structured_output={
                         "status": "answered",

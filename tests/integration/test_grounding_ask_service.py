@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -54,7 +55,9 @@ def test_supported_answer_executes_model_once_and_retry_is_identical(tmp_path: P
     host = build_host(
         tmp_path,
         scenario=HostScenario(
-            supported_answer=SupportedAnswer("aortic valve"),
+            supported_answer=SupportedAnswer(
+                "aortic valve", response_id="response-supported"
+            ),
         ),
     )
     try:
@@ -68,6 +71,24 @@ def test_supported_answer_executes_model_once_and_retry_is_identical(tmp_path: P
         assert first.answer.answer.segments[0].citations[0].quoted_snippet == (
             "The aortic valve has three cusps."
         )
+        assert first.answer.answer.provenance.model is not None
+        assert (
+            first.answer.answer.provenance.model.adapter_id,
+            first.answer.answer.provenance.model.adapter_version,
+            first.answer.answer.provenance.model.model_id,
+            first.answer.answer.provenance.model.response_id,
+        ) == ("scripted-model", "1.0.0", "fixture-model", "response-supported")
+        persisted = next(
+            event
+            for event in host.events.read(COURSE)
+            if event.event_type == "session.answer_recorded"
+        )
+        persisted_provenance = cast(Mapping[str, object], persisted.payload["provenance"])
+        persisted_model = cast(Mapping[str, object], persisted_provenance["model"])
+        assert tuple(
+            persisted_model[field]
+            for field in ("adapter_id", "adapter_version", "model_id", "response_id")
+        ) == ("scripted-model", "1.0.0", "fixture-model", "response-supported")
         assert host.retrieval.search_calls == 1
         assert len(host.events.read(COURSE)) == before + 3
         host.engine_factory.model.assert_exhausted()
