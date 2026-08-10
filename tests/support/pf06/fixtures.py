@@ -86,6 +86,14 @@ class MemoryRunStore:
     def __init__(self) -> None:
         self.data: dict[RunId, bytes] = {}
 
+    def snapshot(self) -> dict[RunId, bytes]:
+        return dict(self.data)
+
+    def sole_record(self, run_id: RunId) -> bytes:
+        if set(self.data) != {run_id}:
+            raise AssertionError("expected exactly one durable record for the run")
+        return self.data[run_id]
+
     def create(self, run_id: RunId, payload: bytes) -> bool:
         if run_id in self.data:
             return False
@@ -121,17 +129,23 @@ class RecordingTool:
 
 
 class UnusedModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
     @property
     def capabilities(self) -> ModelCapabilities:
         return ModelCapabilities()
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        self.calls += 1
         raise AssertionError(f"model should not run: {request}")
 
     def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        self.calls += 1
         raise AssertionError(f"model should not stream: {request}")
 
     async def cancel(self, token: CancellationToken) -> None:
+        self.calls += 1
         raise AssertionError(f"model should not cancel: {token}")
 
 
@@ -168,6 +182,7 @@ class Dependencies:
 class GatewayFixture:
     gateway: capability_api.StudyCapabilityGateway
     tool: RecordingTool
+    model: UnusedModel
     dependencies: Dependencies
     store: MemoryRunStore
     binding: capability_api.CapabilityBinding
@@ -261,12 +276,13 @@ def build_gateway(
     tool_error: Exception | None = None,
     dependencies: Dependencies | None = None,
     store: MemoryRunStore | None = None,
+    host_authority: HostAuthority | None = None,
 ) -> GatewayFixture:
     definition = _definition(supports_suspension=supports_suspension)
     skill = _skill(definition)
     selected_dependencies = dependencies or Dependencies()
     selected_store = store or MemoryRunStore()
-    host_authority = HostAuthority()
+    selected_authority = HostAuthority() if host_authority is None else host_authority
     selected_manifest = manifest(
         authority=authority,
         supports_suspension=supports_suspension,
@@ -281,11 +297,12 @@ def build_gateway(
         selected_dependencies,
     )
     tool = RecordingTool(output=tool_output, error=tool_error)
+    model = UnusedModel()
     engine = PlaybookEngine(
         engine_version=V1,
         model_adapter=ArtifactReference("pf06-model", V1),
         state_contract=ArtifactReference("pf06-state", V1),
-        model=UnusedModel(),
+        model=model,
         registries=RuntimeRegistries((tool,)),
         run_store=selected_store,
         clock=FixedClock(),
@@ -293,10 +310,11 @@ def build_gateway(
     return GatewayFixture(
         capability_api.StudyCapabilityGateway(bindings=(binding,), engine=engine),
         tool,
+        model,
         selected_dependencies,
         selected_store,
         binding,
-        host_authority,
+        selected_authority,
     )
 
 
