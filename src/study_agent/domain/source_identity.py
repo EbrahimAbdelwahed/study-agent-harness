@@ -9,8 +9,12 @@ from hashlib import sha256
 from ._validation import JsonObject, JsonValue
 from .identifiers import RevisionId
 
-SOURCE_REVISION_ID_NAMESPACE = "study-agent/source-revision/v1"
-INGESTION_REVISION_ID_NAMESPACE = "study-agent-source-revision-v2"
+# Public facade and ingestion revisions share one identity domain.  The
+# ingestion module keeps its old constant as an alias below so persisted
+# callers do not grow a second hash namespace while migrating to the facade.
+SOURCE_REVISION_ID_NAMESPACE = "study-agent-source-revision-v2"
+SOURCE_REVISION_ID_PREFIX = "revision-sha256:"
+INGESTION_REVISION_ID_NAMESPACE = SOURCE_REVISION_ID_NAMESPACE
 
 
 def _jsonable(value: JsonValue) -> object:
@@ -35,7 +39,7 @@ def source_revision_id_for(
     manifest: JsonObject,
     *,
     namespace: str = SOURCE_REVISION_ID_NAMESPACE,
-    identifier_prefix: str = "revision:sha256:",
+    identifier_prefix: str = SOURCE_REVISION_ID_PREFIX,
 ) -> RevisionId:
     """Derive an immutable revision ID from one canonical manifest.
 
@@ -59,7 +63,7 @@ def verify_source_revision_id(
     manifest: JsonObject,
     *,
     namespace: str = SOURCE_REVISION_ID_NAMESPACE,
-    identifier_prefix: str = "revision:sha256:",
+    identifier_prefix: str = SOURCE_REVISION_ID_PREFIX,
 ) -> None:
     """Reject a revision manifest whose declared identity has been forged."""
 
@@ -75,6 +79,7 @@ def verify_source_revision_id(
 __all__ = (
     "INGESTION_REVISION_ID_NAMESPACE",
     "SOURCE_REVISION_ID_NAMESPACE",
+    "SOURCE_REVISION_ID_PREFIX",
     "source_revision_id_for",
     "verify_source_revision_id",
 )

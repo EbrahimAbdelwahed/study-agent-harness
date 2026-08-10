@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, is_dataclass
 from hashlib import sha256
 
 import pytest
@@ -13,6 +13,12 @@ from study_agent.api.sources import (
     TextCitationV2,
 )
 from study_agent.domain import SourceKind, substrate_id_for
+from study_agent.domain.source_identity import (
+    INGESTION_REVISION_ID_NAMESPACE,
+    SOURCE_REVISION_ID_NAMESPACE,
+    SOURCE_REVISION_ID_PREFIX,
+    source_revision_id_for,
+)
 from study_agent.ingestion.identity import CHUNKER_POLICY_VERSION, revision_id_for
 from tests.support.pf05 import (
     BYTES,
@@ -23,6 +29,13 @@ from tests.support.pf05 import (
 )
 
 
+def _is_frozen_dataclass(value: object) -> bool:
+    if not is_dataclass(value) or not isinstance(value, type):
+        return False
+    params = getattr(value, "__dataclass_params__", None)
+    return bool(getattr(params, "frozen", False))
+
+
 def test_public_source_values_are_frozen_and_importable_from_the_sources_facade() -> None:
     assert BlobRef.__name__ == "BlobRef"
     assert SourceRevision.__name__ == "SourceRevision"
@@ -30,7 +43,7 @@ def test_public_source_values_are_frozen_and_importable_from_the_sources_facade(
     assert SubstrateRef.__name__ == "SubstrateRef"
     assert TextCitationV2.__name__ == "TextCitationV2"
     assert all(
-        value.__dataclass_params__.frozen
+        _is_frozen_dataclass(value)
         for value in (BlobRef, SourceRevision, SourceRevisionRef, SubstrateRef, TextCitationV2)
     )
 
@@ -58,24 +71,70 @@ def test_raw_blob_normalized_substrate_and_revision_keep_distinct_identities() -
 
 
 def test_revision_identity_reuses_equal_bytes_and_changes_for_new_bytes() -> None:
-    kwargs = {
-        "source_id": SOURCE_ID,
-        "kind": SourceKind.MARKDOWN,
-        "title": "PF05 notes",
-        "trust_level": 90,
-        "source_role": "primary",
-        "normalization_version": "utf8-newlines-nfc-v1",
-        "chunker_version": CHUNKER_POLICY_VERSION,
-        "max_characters": 1200,
-    }
-    first = revision_id_for(original_sha256=sha256(BYTES).hexdigest(), **kwargs)
-    retry = revision_id_for(original_sha256=sha256(BYTES).hexdigest(), **kwargs)
+    first = revision_id_for(
+        original_sha256=sha256(BYTES).hexdigest(),
+        source_id=SOURCE_ID,
+        kind=SourceKind.MARKDOWN,
+        title="PF05 notes",
+        trust_level=90,
+        source_role="primary",
+        normalization_version="utf8-newlines-nfc-v1",
+        chunker_version=CHUNKER_POLICY_VERSION,
+        max_characters=1200,
+    )
+    retry = revision_id_for(
+        original_sha256=sha256(BYTES).hexdigest(),
+        source_id=SOURCE_ID,
+        kind=SourceKind.MARKDOWN,
+        title="PF05 notes",
+        trust_level=90,
+        source_role="primary",
+        normalization_version="utf8-newlines-nfc-v1",
+        chunker_version=CHUNKER_POLICY_VERSION,
+        max_characters=1200,
+    )
     changed = revision_id_for(
-        original_sha256=sha256(BYTES + b" changed").hexdigest(), **kwargs
+        original_sha256=sha256(BYTES + b" changed").hexdigest(),
+        source_id=SOURCE_ID,
+        kind=SourceKind.MARKDOWN,
+        title="PF05 notes",
+        trust_level=90,
+        source_role="primary",
+        normalization_version="utf8-newlines-nfc-v1",
+        chunker_version=CHUNKER_POLICY_VERSION,
+        max_characters=1200,
     )
 
     assert first == retry
     assert changed != first
+
+
+def test_public_and_ingestion_revision_ids_share_one_identity_domain_and_codec() -> None:
+    manifest: dict[str, str | int] = {
+        "chunker_version": CHUNKER_POLICY_VERSION,
+        "kind": SourceKind.MARKDOWN.value,
+        "max_characters": 1200,
+        "normalization_version": "utf8-newlines-nfc-v1",
+        "original_sha256": sha256(BYTES).hexdigest(),
+        "source_id": str(SOURCE_ID),
+        "source_role": "primary",
+        "title": "PF05 notes",
+        "trust_level": 90,
+    }
+
+    assert SOURCE_REVISION_ID_NAMESPACE == INGESTION_REVISION_ID_NAMESPACE
+    assert revision_id_for(
+        original_sha256=sha256(BYTES).hexdigest(),
+        source_id=SOURCE_ID,
+        kind=SourceKind.MARKDOWN,
+        title="PF05 notes",
+        trust_level=90,
+        source_role="primary",
+        normalization_version="utf8-newlines-nfc-v1",
+        chunker_version=CHUNKER_POLICY_VERSION,
+        max_characters=1200,
+    ) == source_revision_id_for(manifest)
+    assert str(make_source_revision().revision_id).startswith(SOURCE_REVISION_ID_PREFIX)
 
 
 def test_substrate_identity_is_derived_from_normalized_canonical_bytes() -> None:
@@ -112,6 +171,25 @@ def test_source_revision_json_rejects_a_forged_immutable_manifest() -> None:
     revision = make_source_revision(metadata={"role": "primary"})
     forged = dict(revision.to_json())
     forged["metadata"] = {"role": "forged"}
+
+    with pytest.raises(ValueError, match="revision_id"):
+        SourceRevision.from_json(forged)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("media_type", "text/plain"),
+        ("normalization_version", "future-normalization-v2"),
+        ("substrate_id", "substrate:sha256:" + "0" * 64),
+    ],
+)
+def test_source_revision_json_rejects_mutation_of_each_identity_field(
+    field: str, value: str
+) -> None:
+    revision = make_source_revision()
+    forged = dict(revision.to_json())
+    forged[field] = value
 
     with pytest.raises(ValueError, match="revision_id"):
         SourceRevision.from_json(forged)

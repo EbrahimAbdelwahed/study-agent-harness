@@ -10,7 +10,10 @@ from typing import cast
 from ._validation import JsonObject, freeze_object, require_aware, require_text
 from .identifiers import BlobId, ChunkId, RevisionId, SourceId, SubstrateId
 from .provenance import ContentOrigin, StructureOrigin
-from .source_identity import source_revision_id_for, verify_source_revision_id
+from .source_identity import (
+    source_revision_id_for,
+    verify_source_revision_id,
+)
 
 _SHA256_HEX_LENGTH = 64
 
@@ -56,7 +59,7 @@ def _encode_metadata(value: Mapping[str, object]) -> JsonObject:
     return encoded
 
 
-def _source_revision_identity_manifest(
+def source_revision_identity_manifest(
     *,
     source_id: SourceId,
     blob: BlobRef,
@@ -207,7 +210,7 @@ class SourceRevision:
         """
         blob = BlobRef.from_bytes(content)
         canonical_metadata = _encode_metadata({} if metadata is None else metadata)
-        manifest = _source_revision_identity_manifest(
+        manifest = source_revision_identity_manifest(
             source_id=source_id,
             blob=blob,
             media_type=media_type,
@@ -259,7 +262,7 @@ class SourceRevision:
         object.__setattr__(self, "metadata", freeze_object(metadata))
         verify_source_revision_id(
             self.revision_id,
-            _source_revision_identity_manifest(
+            source_revision_identity_manifest(
                 source_id=self.source_id,
                 blob=self.blob,
                 media_type=self.media_type,
