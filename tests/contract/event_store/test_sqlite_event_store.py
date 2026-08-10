@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,8 @@ from study_agent.domain import (
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import EventEnvelope
 from study_agent.ports.storage import (
+    CourseStreamHighWater,
+    CourseStreamHighWaterPort,
     EventSequenceConflictError,
     _append_legacy,
     _LegacyEventStore,
@@ -79,6 +82,27 @@ def exercise_event_store_contract(store: _LegacyEventStore) -> None:
 def test_sqlite_adapter_conforms_to_event_store_port(tmp_path: Path) -> None:
     store = SQLiteEventStore(tmp_path / "events.sqlite3", registry())
     exercise_event_store_contract(store)
+
+
+def test_sqlite_high_water_uses_the_canonical_events_table(tmp_path: Path) -> None:
+    database = tmp_path / "events.sqlite3"
+    store = SQLiteEventStore(database, registry())
+    course_id = CourseId("course-high-water")
+
+    assert isinstance(store, CourseStreamHighWaterPort)
+    assert store.observe_high_water(course_id) == CourseStreamHighWater(course_id, 0)
+    _append_legacy(store, course_id, 0, (make_event(course_id, 1),))
+    assert store.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
+
+    with sqlite3.connect(database) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert "events" in tables
+    assert not any("high_water" in table for table in tables)
 
 
 def test_event_schema_cannot_be_registered_without_a_payload_decoder() -> None:

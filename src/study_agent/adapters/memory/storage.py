@@ -19,6 +19,7 @@ from study_agent.ports.clock import require_utc
 from study_agent.ports.id_factory import IdFactory
 from study_agent.ports.storage import (
     BlobStore,
+    CourseStreamHighWater,
     EventSequenceConflictError,
     EventStore,
     IdempotencyConflictError,
@@ -179,6 +180,15 @@ class MemoryEventStore:
             events,
             _legacy=True,
         )
+
+    def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater:
+        """Return the canonical sequence for ``course_id`` without a second index."""
+        if not isinstance(course_id, CourseId):
+            raise ValidationFailure("course_id must be a CourseId")
+        with self._lock:
+            events = self._events.get(course_id, ())
+            sequence = events[-1].course_sequence if events else 0
+            return CourseStreamHighWater(course_id, sequence)
 
     def read(self, stream_id: CourseId, after_sequence: int = 0) -> tuple[EventEnvelope, ...]:
         if (

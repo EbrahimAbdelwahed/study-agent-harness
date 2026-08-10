@@ -24,7 +24,11 @@ from study_agent.domain.errors import (
 from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
 from study_agent.kernel.module import KernelModuleRegistry, KernelSnapshot
-from study_agent.ports.storage import EventSequenceConflictError, IdempotencyConflictError
+from study_agent.ports.storage import (
+    CourseStreamHighWater,
+    EventSequenceConflictError,
+    IdempotencyConflictError,
+)
 from study_agent.state import (
     EventRegistry,
     PayloadValidationError,
@@ -458,6 +462,25 @@ class SQLiteEventStore:
             events,
             _legacy=True,
         )
+
+    def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater:
+        """Read the canonical stream high-water from the existing events table."""
+        if not isinstance(course_id, CourseId):
+            raise ValidationFailure("course_id must be a CourseId")
+        try:
+            with closing(self._connect()) as connection:
+                sequence = self._current_sequence(connection, course_id)
+            return CourseStreamHighWater(course_id, sequence)
+        except HarnessError:
+            raise
+        except (OSError, sqlite3.Error) as error:
+            raise UnavailableDependencyFailure(
+                "storage dependency is unavailable", retryable=True
+            ) from error
+        except (TypeError, ValueError) as error:
+            raise InternalFailure("stored event stream high-water is invalid") from error
+        except Exception as error:
+            raise InternalFailure("event stream high-water observation failed") from error
 
     def read(
         self, course_id: CourseId, after_sequence: int = 0

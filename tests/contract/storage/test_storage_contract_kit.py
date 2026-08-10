@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier
+from typing import cast
 
 import pytest
 
@@ -33,12 +34,15 @@ from study_agent.domain.errors import (
     NotFoundFailure,
     StaleFailure,
     UnauthorizedFailure,
+    UnavailableDependencyFailure,
     ValidationFailure,
 )
 from study_agent.domain.events import EventEnvelope, PrincipalKind
 from study_agent.domain.identifiers import RunId
 from study_agent.ports.storage import (
     BlobStore,
+    CourseStreamHighWater,
+    CourseStreamHighWaterPort,
     EventSequenceConflictError,
     EventStore,
     IdempotencyConflictError,
@@ -70,6 +74,56 @@ def test_all_six_host_ports_are_importable_without_provider_types() -> None:
         port = getattr(storage, name)
         assert inspect.isclass(port)
         assert getattr(port, "__module__", "").startswith("study_agent.")
+
+
+def test_course_stream_high_water_is_exposed_without_provider_types() -> None:
+    assert storage.CourseStreamHighWater is CourseStreamHighWater
+    assert storage.CourseStreamHighWaterPort is CourseStreamHighWaterPort
+    assert inspect.isclass(storage.CourseStreamHighWater)
+    assert inspect.isclass(storage.CourseStreamHighWaterPort)
+
+
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+def test_event_store_high_water_is_typed_course_bound_and_empty_zero(
+    kind: str, tmp_path: Path
+) -> None:
+    stream = CourseId("course-high-water")
+    other = CourseId("other-high-water")
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    assert isinstance(store, CourseStreamHighWaterPort)
+    assert store.observe_high_water(stream) == CourseStreamHighWater(stream, 0)
+    assert store.observe_high_water(other) == CourseStreamHighWater(other, 0)
+
+    store.append(stream, 0, (_event(stream, 1),), idempotency_key="high-water-command")
+    assert store.observe_high_water(stream) == CourseStreamHighWater(stream, 1)
+    assert store.observe_high_water(other) == CourseStreamHighWater(other, 0)
+
+    with pytest.raises(ValidationFailure):
+        store.observe_high_water(cast(CourseId, "course-high-water"))
+
+
+@pytest.mark.parametrize("sequence", (True, -1, 1.0))
+def test_course_stream_high_water_rejects_invalid_sequences(sequence: object) -> None:
+    with pytest.raises(ValidationFailure):
+        CourseStreamHighWater(CourseId("course-high-water"), cast(int, sequence))
+
+
+def test_sqlite_high_water_adapter_failure_is_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    def fail_connect() -> sqlite3.Connection:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "_connect", fail_connect)
+    with pytest.raises(UnavailableDependencyFailure):
+        store.observe_high_water(CourseId("course-high-water"))
 
 
 @pytest.mark.parametrize("kind", ("memory", "sqlite"))

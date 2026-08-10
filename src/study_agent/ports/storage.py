@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from study_agent.domain.authority import IdempotencyKey
-from study_agent.domain.errors import ConflictFailure, NotFoundFailure, StaleFailure
+from study_agent.domain.errors import (
+    ConflictFailure,
+    NotFoundFailure,
+    StaleFailure,
+    ValidationFailure,
+)
 from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId, RevisionId, RunId
 from study_agent.domain.source import BlobRef, Citation, ResolvedCitation
@@ -66,6 +72,27 @@ class SourceContentPort(Protocol):
 
 
 type _EventRecord = DomainEvent | EventEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class CourseStreamHighWater:
+    """The authoritative sequence observed for one course event stream."""
+
+    course_id: CourseId
+    sequence: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.course_id, CourseId):
+            raise ValidationFailure("course_id must be a CourseId")
+        if type(self.sequence) is not int or self.sequence < 0:
+            raise ValidationFailure("course stream high-water must be a non-negative integer")
+
+
+@runtime_checkable
+class CourseStreamHighWaterPort(Protocol):
+    """Observe the sequence owned by a canonical course event stream."""
+
+    def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater: ...
 
 
 @runtime_checkable
