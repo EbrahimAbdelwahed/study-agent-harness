@@ -32,6 +32,7 @@ from study_agent.ingestion import (
     ChunkingConfig,
     chunk_text,
     decode_source_revision_event,
+    decode_source_revision_ingested,
     decode_source_revision_selected_event,
     normalize_utf8,
     register_source_revision_events,
@@ -167,6 +168,14 @@ def test_full_event_decoder_preserves_legacy_revision_identity() -> None:
 
     assert str(decoded.source.revision_id) == raw_revision_id
     assert registry.decode(event) == decoded
+
+
+def test_payload_decoder_rejects_a_forged_revision_manifest() -> None:
+    event, _ = make_event()
+    forged = _replace_source(event, title="Forged title")
+
+    with pytest.raises(ValueError, match="revision_id"):
+        decode_source_revision_ingested(forged.payload)
 
 
 @pytest.mark.parametrize(
