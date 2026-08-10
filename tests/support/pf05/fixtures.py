@@ -93,7 +93,7 @@ def make_text_citation(*, start: int = 0, end: int = len(TEXT)) -> TextCitationV
     """Mint a citation from canonical bytes, never from fixture text."""
 
     return text_citation_for(
-        make_unit(start=start, end=end),
+        make_unit(),
         substrate_bytes=BYTES,
         start=start,
         end=end,

@@ -111,13 +111,20 @@ def _decode_bytes(data: bytes, name: str) -> JsonObject:
         raise TypeError(f"{name} bytes must be bytes")
     try:
         decoded: Any = json.loads(data)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"{name} bytes are not valid JSON") from error
-    if not isinstance(decoded, dict):
-        raise ValueError(f"{name} must be a JSON object")
-    value = cast(JsonObject, decoded)
-    if _canonical_bytes(value) != data:
-        raise ValueError(f"{name} bytes are not canonical")
+        if not isinstance(decoded, dict):
+            raise ValueError(f"{name} must be a JSON object")
+        value = cast(JsonObject, decoded)
+        canonical = _canonical_bytes(value)
+    except (UnicodeError, ValueError) as error:
+        raise CitationFailure(
+            CitationFailureKind.CORRUPT,
+            f"{name} bytes are not valid canonical JSON",
+        ) from error
+    if canonical != data:
+        raise CitationFailure(
+            CitationFailureKind.CORRUPT,
+            f"{name} bytes are not canonical",
+        )
     return value
 
 

@@ -48,6 +48,22 @@ def test_every_listed_subfacade_is_importable_without_optional_modules() -> None
             "RunStore",
             "RunStoreConflictFailure",
         },
+        "sources": {
+            "BlobRef",
+            "Citation",
+            "CitationFailure",
+            "CitationFailureKind",
+            "DerivedRef",
+            "FIGURE_CITATION_VERSION",
+            "FigureCitationV1",
+            "SourceRevision",
+            "SourceRevisionRef",
+            "SubstrateRef",
+            "TEXT_CITATION_VERSION",
+            "TextCitationV2",
+            "citation_from_bytes",
+            "citation_from_json",
+        },
     }
     for name in api.public_manifest().subfacades:
         module = __import__(f"study_agent.api.{name}", fromlist=["*"])
