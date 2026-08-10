@@ -78,7 +78,7 @@ def test_tool_registry_does_not_reintroduce_import_time_plugin_discovery() -> No
         ROOT / "tools" / "registry.py",
         ROOT / "tools" / "builtin.py",
     )
-    violations = []
+    violations: list[str] = []
     for path in checked:
         source = path.read_text(encoding="utf-8")
         violations.extend(

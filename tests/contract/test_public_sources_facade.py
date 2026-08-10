@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import Protocol, TypeGuard
 
 import study_agent.api.sources as sources
 
@@ -23,6 +24,18 @@ EXPECTED_EXPORTS = {
 }
 
 
+class _DataclassParams(Protocol):
+    frozen: bool
+
+
+class _DataclassType(Protocol):
+    __dataclass_params__: _DataclassParams
+
+
+def _has_dataclass_params(value: object) -> TypeGuard[_DataclassType]:
+    return hasattr(value, "__dataclass_params__")
+
+
 def test_sources_facade_exports_only_frozen_source_and_citation_contracts() -> None:
     assert set(sources.__all__) == EXPECTED_EXPORTS
     assert {
@@ -41,6 +54,7 @@ def test_sources_facade_exports_only_frozen_source_and_citation_contracts() -> N
         sources.FigureCitationV1,
         sources.DerivedRef,
     ):
+        assert _has_dataclass_params(contract)
         assert contract.__dataclass_params__.frozen
 
 
