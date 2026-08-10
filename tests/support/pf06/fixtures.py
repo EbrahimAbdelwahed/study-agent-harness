@@ -189,10 +189,12 @@ def manifest(
         OUTPUT_SCHEMA,
         authority,
         supports_suspension,
+        V1,
     )
 
 
 def _definition(*, supports_suspension: bool) -> PlaybookDefinition:
+    steps: tuple[DialogueStep | ToolStep, ...]
     if supports_suspension:
         steps = (
             DialogueStep(

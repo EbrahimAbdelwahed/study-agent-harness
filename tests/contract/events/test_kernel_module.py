@@ -2,13 +2,14 @@ import pytest
 
 from study_agent.capabilities import CapabilityManifest
 from study_agent.capabilities.contracts import CapabilityId
+from study_agent.domain._validation import JsonObject
 from study_agent.domain.errors import ConflictFailure, ValidationFailure
 from study_agent.kernel.module import EventSchema, KernelModule, KernelModuleRegistry
 from study_agent.skills import SemanticVersion
 
 
 def capability(identifier: str) -> CapabilityManifest:
-    schema = {
+    schema: JsonObject = {
         "type": "object",
         "required": (),
         "properties": {},
@@ -21,6 +22,7 @@ def capability(identifier: str) -> CapabilityManifest:
         schema,
         ("study:write",),
         False,
+        SemanticVersion.parse("1.0.0"),
     )
 
 
