@@ -29,6 +29,7 @@ def _manifest(
         schema,
         ("study:write",),
         False,
+        SemanticVersion.parse("1.0.0"),
     )
 
 
@@ -46,6 +47,7 @@ def _namespaced_manifest(identifier: str) -> CapabilityManifest:
         schema,
         ("study:write",),
         False,
+        SemanticVersion.parse("1.0.0"),
     )
 
 
@@ -57,8 +59,8 @@ def test_discovery_is_sorted_stable_and_returns_an_immutable_tuple() -> None:
     discovered = registry.discover()
     assert isinstance(discovered, tuple)
     assert tuple(item.identity for item in discovered) == (
-        "assess_understanding@1",
-        "explain_concept@1",
+        "assess_understanding@1.0.0",
+        "explain_concept@1.0.0",
     )
     assert registry.discover() == discovered
     assert tuple(item.fingerprint for item in registry.discover()) == tuple(
