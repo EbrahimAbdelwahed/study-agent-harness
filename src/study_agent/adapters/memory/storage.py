@@ -98,13 +98,16 @@ class MemoryEventStore:
         *,
         _legacy: bool = False,
     ) -> int:
-        if not isinstance(stream_id, CourseId):
-            raise ValidationFailure("stream_id must be CourseId")
+        stream_id = _require_canonical_course_id(stream_id)
         if type(expected_sequence) is not int or expected_sequence < 0:
             raise ValidationFailure("expected_sequence must be a non-negative integer")
         batch = tuple(events)
         if any(not isinstance(event, (DomainEvent, EventEnvelope)) for event in batch):
             raise ValidationFailure("every event must be a trusted event value")
+        for event in batch:
+            event_course_id = _require_canonical_course_id(event.course_id)
+            if event_course_id != stream_id:
+                raise ValidationFailure("event stream sequence is not contiguous")
         if idempotency_key is None and not _legacy:
             legacy_batch = tuple(event for event in batch if isinstance(event, DomainEvent))
             if batch and len(legacy_batch) == len(batch):
@@ -196,9 +199,9 @@ class MemoryEventStore:
             raise InternalFailure("event stream high-water observation failed") from error
 
     def read(self, stream_id: CourseId, after_sequence: int = 0) -> tuple[EventEnvelope, ...]:
+        stream_id = _require_canonical_course_id(stream_id)
         if (
-            not isinstance(stream_id, CourseId)
-            or type(after_sequence) is not int
+            type(after_sequence) is not int
             or after_sequence < 0
         ):
             raise ValidationFailure("stream and high-water position are invalid")
@@ -212,9 +215,9 @@ class MemoryEventStore:
     def _read_records(
         self, stream_id: CourseId, after_sequence: int = 0
     ) -> tuple[_EventInput, ...]:
+        stream_id = _require_canonical_course_id(stream_id)
         if (
-            not isinstance(stream_id, CourseId)
-            or type(after_sequence) is not int
+            type(after_sequence) is not int
             or after_sequence < 0
         ):
             raise ValidationFailure("stream and high-water position are invalid")
@@ -226,13 +229,14 @@ class MemoryEventStore:
             )
 
     def projection(self, stream_id: CourseId) -> Projection:
+        stream_id = _require_canonical_course_id(stream_id)
         with self._lock:
             if self._registry is None:
                 raise ValidationFailure("projection reduction requires an EventRegistry")
             return self._projections.get(stream_id, Projection(stream_id))
 
     def projection_bytes(self, stream_id: CourseId) -> bytes:
-        return self.projection(stream_id).canonical_bytes()
+        return self.projection(_require_canonical_course_id(stream_id)).canonical_bytes()
 
 
 class MemoryBlobStore:

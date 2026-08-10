@@ -40,6 +40,7 @@ from study_agent.domain.errors import (
 from study_agent.domain.events import EventEnvelope, PrincipalKind
 from study_agent.domain.identifiers import RunId
 from study_agent.ports.storage import (
+    MAX_COURSE_ID_LENGTH,
     BlobStore,
     CourseStreamHighWater,
     CourseStreamHighWaterPort,
@@ -83,6 +84,16 @@ class _HostileText(str):
     def __hash__(self) -> int:
         raise AssertionError("hostile hash must not be called")
 
+    def __str__(self) -> str:
+        raise AssertionError("hostile string conversion must not be called")
+
+
+class _HostileHashCourseId(CourseId):
+    def __hash__(self) -> int:
+        raise AssertionError("hostile hash must not be called")
+
+
+class _HostileStringCourseId(CourseId):
     def __str__(self) -> str:
         raise AssertionError("hostile string conversion must not be called")
 
@@ -159,6 +170,75 @@ def test_high_water_rejects_hostile_course_identity_before_lookup(
         CourseStreamHighWater(malformed_course, 0)
 
 
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+@pytest.mark.parametrize(
+    "malformed_course",
+    (
+        _AliasedCourseId("attacker-course"),
+        _HostileHashCourseId("attacker-course"),
+        _HostileStringCourseId("attacker-course"),
+        CourseId(cast(str, _HostileText("victim-course"))),
+        CourseId(cast(str, b"victim-course")),
+    ),
+)
+def test_public_append_rejects_hostile_course_identity_without_mutation(
+    kind: str, malformed_course: CourseId, tmp_path: Path
+) -> None:
+    victim = CourseId("victim-course")
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    store.append(victim, 0, (_event(victim, 1),), idempotency_key="victim-command")
+    with pytest.raises(ValidationFailure) as caught:
+        store.append(malformed_course, 1, (), idempotency_key="attacker-command")
+    assert str(caught.value) in {
+        "course_id must contain bounded plain text",
+        "course_id must be a CourseId",
+    }
+    assert "attacker" not in str(caught.value)
+    assert store.observe_high_water(victim) == CourseStreamHighWater(victim, 1)
+
+
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+def test_public_append_rejects_hostile_event_course_identity(
+    kind: str, tmp_path: Path
+) -> None:
+    victim = CourseId("victim-course")
+    hostile_event = _event(
+        CourseId(cast(str, _HostileText("victim-course"))),
+        1,
+    )
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    with pytest.raises(ValidationFailure):
+        store.append(victim, 0, (hostile_event,), idempotency_key="attacker-command")
+    assert store.observe_high_water(victim) == CourseStreamHighWater(victim, 0)
+
+
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+def test_course_identifier_length_is_bounded_before_lookup_or_storage(
+    kind: str, tmp_path: Path
+) -> None:
+    oversized = CourseId("x" * (MAX_COURSE_ID_LENGTH + 1))
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    with pytest.raises(ValidationFailure):
+        store.observe_high_water(oversized)
+    with pytest.raises(ValidationFailure):
+        store.append(oversized, 0, (), idempotency_key="oversized-command")
+
+
 def test_sqlite_high_water_adapter_failure_is_typed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -191,7 +271,7 @@ def test_sqlite_high_water_arbitrary_adapter_fault_is_sanitized(
     assert "HOSTILE_ADAPTER_SECRET" not in str(caught.value)
 
 
-@pytest.mark.parametrize("sequence", (True, -1, 1.0))
+@pytest.mark.parametrize("sequence", (True, -1, 1.0, 2**63, 10**100))
 def test_sqlite_high_water_invalid_adapter_sequence_is_internal(
     sequence: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -205,6 +285,39 @@ def test_sqlite_high_water_invalid_adapter_sequence_is_internal(
         store.observe_high_water(CourseId("course-high-water"))
     assert str(caught.value) == "stored event stream high-water is invalid"
     assert isinstance(caught.value.__cause__, ValidationFailure)
+
+
+@pytest.mark.parametrize("stored_sequence", ("7", b"9", 2.75, -1, 0))
+def test_sqlite_high_water_rejects_malformed_persisted_sequence(
+    stored_sequence: object, tmp_path: Path
+) -> None:
+    database = tmp_path / "corrupt.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE events (course_id TEXT, course_sequence)")
+        connection.execute(
+            "INSERT INTO events (course_id, course_sequence) VALUES (?, ?)",
+            ("course-corrupt", stored_sequence),
+        )
+
+    store = SQLiteEventStore(database, read_only=True)
+    with pytest.raises(InternalFailure) as caught:
+        store.observe_high_water(CourseId("course-corrupt"))
+    assert str(caught.value) == "stored event stream high-water is invalid"
+
+
+def test_sqlite_high_water_rejects_persisted_sequence_gap(tmp_path: Path) -> None:
+    database = tmp_path / "gap.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE events (course_id TEXT, course_sequence)")
+        connection.executemany(
+            "INSERT INTO events (course_id, course_sequence) VALUES (?, ?)",
+            (("course-gap", 1), ("course-gap", 3)),
+        )
+
+    store = SQLiteEventStore(database, read_only=True)
+    with pytest.raises(InternalFailure) as caught:
+        store.observe_high_water(CourseId("course-gap"))
+    assert str(caught.value) == "stored event stream high-water is invalid"
 
 
 @pytest.mark.parametrize("kind", ("memory", "sqlite"))

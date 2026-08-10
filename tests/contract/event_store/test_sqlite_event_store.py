@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from study_agent.adapters.sqlite import SequenceConflictError, SQLiteEventStore
+from study_agent.adapters.sqlite.event_store import SQLITE_BUSY_TIMEOUT_SECONDS
 from study_agent.domain import (
     Actor,
     CorrelationId,
@@ -152,6 +153,38 @@ def test_read_only_high_water_observes_live_writer_with_normal_sqlite_locking(
     )
     assert read_only_uris
     assert all("immutable" not in uri for uri in read_only_uris)
+    assert all(
+        call.kwargs.get("timeout") == SQLITE_BUSY_TIMEOUT_SECONDS
+        for call in connect_spy.call_args_list
+    )
+
+
+def test_read_only_high_water_binds_initial_symlink_target(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.sqlite3"
+    second = tmp_path / "second.sqlite3"
+    link = tmp_path / "events.sqlite3"
+    first_store = SQLiteEventStore(first)
+    second_store = SQLiteEventStore(second)
+    course_id = CourseId("course-symlink")
+    _append_legacy(first_store, course_id, 0, (make_event(course_id, 1),))
+    _append_legacy(
+        second_store,
+        course_id,
+        0,
+        (make_event(course_id, 1), make_event(course_id, 2)),
+    )
+    try:
+        link.symlink_to(first)
+    except OSError as error:
+        pytest.skip(f"symlinks are unavailable: {error}")
+
+    reader = SQLiteEventStore(link, registry(), read_only=True)
+    assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
+    link.unlink()
+    link.symlink_to(second)
+    assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
 
 
 def test_event_schema_cannot_be_registered_without_a_payload_decoder() -> None:
