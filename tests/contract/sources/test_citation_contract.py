@@ -13,6 +13,8 @@ from study_agent.api.sources import (
     DerivedRef,
     FigureCitationV1,
     TextCitationV2,
+    citation_from_bytes,
+    citation_from_json,
 )
 from study_agent.domain import (
     RevisionId,
@@ -135,12 +137,16 @@ def test_citation_resolution_rejects_quote_hash_and_out_of_unit_tampering() -> N
 )
 def test_citation_resolution_rejects_cross_reference_mismatches(field: str) -> None:
     citation = make_text_citation()
-    replacement = {
-        "source_id": SourceId("foreign-source"),
-        "revision_id": RevisionId("revision-sha256:" + "3" * 64),
-        "unit_id": make_unit(start=1, end=len(TEXT)).unit_id,
-    }[field]
-    tampered = replace(citation, **{field: replacement})
+    if field == "source_id":
+        tampered = replace(citation, source_id=SourceId("foreign-source"))
+    elif field == "revision_id":
+        tampered = replace(
+            citation, revision_id=RevisionId("revision-sha256:" + "3" * 64)
+        )
+    else:
+        tampered = replace(
+            citation, unit_id=make_unit(start=1, end=len(TEXT)).unit_id
+        )
 
     with pytest.raises(CitationFailure) as error:
         verify_text_citation(
@@ -179,7 +185,7 @@ def test_derived_text_preserves_lineage_but_is_not_primary_evidence() -> None:
     assert not derived.is_canonical
     assert derived.to_json()["subject"] == citation.to_json()
     with pytest.raises(CitationFailure) as error:
-        verify_text_citation(  # type: ignore[arg-type]
+        verify_text_citation(
             derived,
             substrate_bytes=BYTES,
             unit=make_unit(),
@@ -192,7 +198,7 @@ def test_unsupported_versions_and_invalid_spans_fail_closed() -> None:
     image = b"figure"
     figure = FigureCitationV1(sha256(image).hexdigest(), len(image))
     with pytest.raises(CitationFailure) as version_error:
-        verify_text_citation(  # type: ignore[arg-type]
+        verify_text_citation(
             figure,
             substrate_bytes=BYTES,
             unit=make_unit(),
@@ -219,3 +225,19 @@ def test_citation_and_derived_export_bytes_are_deterministic() -> None:
     )
     assert TextCitationV2.from_bytes(citation.to_bytes()) == citation
     assert DerivedRef.from_bytes(derived.to_bytes()) == derived
+
+
+def test_public_citation_codecs_never_leak_raw_value_error_for_bad_versions() -> None:
+    payload = dict(make_text_citation().to_json())
+    payload["version"] = 99
+
+    with pytest.raises(CitationFailure) as json_error:
+        citation_from_json(payload)
+    assert type(json_error.value) is CitationFailure
+    assert failure_kind(json_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+    malformed = b'{"version":2}'
+    with pytest.raises(CitationFailure) as bytes_error:
+        citation_from_bytes(malformed)
+    assert type(bytes_error.value) is CitationFailure
+    assert failure_kind(bytes_error) is CitationFailureKind.CORRUPT

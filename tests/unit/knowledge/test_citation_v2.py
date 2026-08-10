@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from hashlib import sha256
 
 import pytest
@@ -11,6 +12,7 @@ from study_agent.api.sources import (
     FigureCitationV1,
     TextCitationV2,
     citation_from_bytes,
+    citation_from_json,
 )
 from study_agent.domain import Citation as LegacyCitation
 from study_agent.domain import (
@@ -237,7 +239,7 @@ def test_derived_text_cannot_be_created_without_a_canonical_subject() -> None:
 def test_derived_text_is_rejected_by_the_verifier() -> None:
     derived = DerivedRef("model", "v1", "testo", cite())
     with pytest.raises(CitationFailure) as error:
-        verify_text_citation(derived, substrate_bytes=BYTES, unit=unit(), selection_status=CURRENT)  # type: ignore[arg-type]
+        verify_text_citation(derived, substrate_bytes=BYTES, unit=unit(), selection_status=CURRENT)
     assert kind_of(error) is CitationFailureKind.NOT_A_CITATION
 
 
@@ -388,4 +390,65 @@ def test_noncanonical_citation_bytes_fail_as_corrupt() -> None:
     with pytest.raises(CitationFailure) as error:
         citation_from_bytes(noncanonical)
 
+    assert kind_of(error) is CitationFailureKind.CORRUPT
+
+
+def test_text_codec_maps_unknown_versions_to_a_typed_failure() -> None:
+    payload = dict(cite().to_json())
+    payload["version"] = 99
+
+    with pytest.raises(CitationFailure) as json_error:
+        TextCitationV2.from_json(payload)
+    assert type(json_error.value) is CitationFailure
+    assert kind_of(json_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+    with pytest.raises(CitationFailure) as bytes_error:
+        citation_from_bytes(cite().to_bytes().replace(b'"version":2', b'"version":99'))
+    assert type(bytes_error.value) is CitationFailure
+    assert kind_of(bytes_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+
+def test_figure_codec_maps_unknown_versions_to_a_typed_failure() -> None:
+    image = b"figure"
+    figure = FigureCitationV1(sha256(image).hexdigest(), len(image))
+    payload = dict(figure.to_json())
+    payload["version"] = 99
+
+    with pytest.raises(CitationFailure) as json_error:
+        FigureCitationV1.from_json(payload)
+    assert type(json_error.value) is CitationFailure
+    assert kind_of(json_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+    with pytest.raises(CitationFailure) as bytes_error:
+        FigureCitationV1.from_bytes(figure.to_bytes().replace(b'"version":1', b'"version":99'))
+    assert type(bytes_error.value) is CitationFailure
+    assert kind_of(bytes_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+
+def test_public_dispatch_maps_unknown_versions_to_a_typed_failure() -> None:
+    payload = {"version": 99}
+
+    with pytest.raises(CitationFailure) as error:
+        citation_from_json(payload)
+
+    assert type(error.value) is CitationFailure
+    assert kind_of(error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+
+@pytest.mark.parametrize(
+    "decoder",
+    [
+        TextCitationV2.from_bytes,
+        FigureCitationV1.from_bytes,
+        DerivedRef.from_bytes,
+        citation_from_bytes,
+    ],
+)
+def test_public_codecs_map_malformed_bytes_to_a_typed_failure(
+    decoder: Callable[[bytes], object],
+) -> None:
+    with pytest.raises(CitationFailure) as error:
+        decoder(b"not-json")
+
+    assert type(error.value) is CitationFailure
     assert kind_of(error) is CitationFailureKind.CORRUPT
