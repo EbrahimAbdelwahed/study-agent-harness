@@ -106,3 +106,12 @@ def test_source_revision_creation_reuses_equal_manifest_and_changes_for_new_byte
     assert changed.revision_id != first.revision_id
     assert first.to_json() == retry.to_json()
     assert SourceRevision.from_json(first.to_json()) == first
+
+
+def test_source_revision_json_rejects_a_forged_immutable_manifest() -> None:
+    revision = make_source_revision(metadata={"role": "primary"})
+    forged = dict(revision.to_json())
+    forged["metadata"] = {"role": "forged"}
+
+    with pytest.raises(ValueError, match="revision_id"):
+        SourceRevision.from_json(forged)

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
+from typing import cast
 
 from ._validation import JsonObject, freeze_object, require_aware, require_text
 from .identifiers import BlobId, ChunkId, RevisionId, SourceId, SubstrateId
 from .provenance import ContentOrigin, StructureOrigin
+from .source_identity import source_revision_id_for, verify_source_revision_id
 
 _SHA256_HEX_LENGTH = 64
 
@@ -45,21 +46,33 @@ def _canonical_metadata(value: Mapping[str, object]) -> object:
             return item
         raise ValueError("source metadata must contain only JSON values")
 
-    try:
-        return json.loads(
-            json.dumps(
-                jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            )
-        )
-    except (TypeError, ValueError) as error:
-        raise ValueError("source metadata must contain only JSON values") from error
+    return jsonable(value)
 
 
 def _encode_metadata(value: Mapping[str, object]) -> JsonObject:
     encoded = _canonical_metadata(value)
     if not isinstance(encoded, Mapping):  # pragma: no cover - checked by the caller
         raise TypeError("source metadata must be a JSON object")
-    return encoded  # type: ignore[return-value]
+    return encoded
+
+
+def _source_revision_identity_manifest(
+    *,
+    source_id: SourceId,
+    blob: BlobRef,
+    media_type: str,
+    normalization_version: str,
+    substrate_id: SubstrateId,
+    metadata: JsonObject,
+) -> JsonObject:
+    return {
+        "blob": blob.to_json(),
+        "media_type": media_type,
+        "metadata": metadata,
+        "normalization_version": normalization_version,
+        "source_id": str(source_id),
+        "substrate_id": str(substrate_id),
+    }
 
 
 class SourceKind(StrEnum):
@@ -193,19 +206,16 @@ class SourceRevision:
         bytes, substrate, or manifest metadata produce a different ID.
         """
         blob = BlobRef.from_bytes(content)
-        manifest = {
-            "blob": blob.to_json(),
-            "media_type": media_type,
-            "metadata": _canonical_metadata(metadata or {}),
-            "normalization_version": normalization_version,
-            "source_id": str(source_id),
-            "substrate_id": str(substrate_id),
-        }
-        identity_bytes = json.dumps(
-            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        digest = sha256(b"study-agent/source-revision/v1\0" + identity_bytes).hexdigest()
-        revision_id = RevisionId(f"revision:sha256:{digest}")
+        canonical_metadata = _encode_metadata({} if metadata is None else metadata)
+        manifest = _source_revision_identity_manifest(
+            source_id=source_id,
+            blob=blob,
+            media_type=media_type,
+            normalization_version=normalization_version,
+            substrate_id=substrate_id,
+            metadata=canonical_metadata,
+        )
+        revision_id = source_revision_id_for(manifest)
         return cls(
             source_id,
             revision_id,
@@ -214,13 +224,21 @@ class SourceRevision:
             created_at,
             normalization_version,
             substrate_id,
-            {} if metadata is None else metadata,  # type: ignore[arg-type]
+            canonical_metadata,
         )
 
     @classmethod
     def from_content(cls, **kwargs: object) -> SourceRevision:
         """Compatibility spelling for hosts that model ingestion as capture."""
-        return cls.create(**kwargs)  # type: ignore[arg-type]
+        return cls.create(
+            source_id=cast(SourceId, kwargs["source_id"]),
+            content=cast(bytes, kwargs["content"]),
+            media_type=cast(str, kwargs["media_type"]),
+            created_at=cast(datetime, kwargs["created_at"]),
+            normalization_version=cast(str, kwargs["normalization_version"]),
+            substrate_id=cast(SubstrateId, kwargs["substrate_id"]),
+            metadata=cast(Mapping[str, object] | None, kwargs.get("metadata")),
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_id, SourceId):
@@ -237,7 +255,19 @@ class SourceRevision:
         require_text(self.normalization_version, "normalization_version")
         require_aware(self.created_at, "created_at")
         object.__setattr__(self, "created_at", self.created_at.astimezone(UTC))
-        object.__setattr__(self, "metadata", freeze_object(_encode_metadata(self.metadata)))
+        metadata = _encode_metadata(self.metadata)
+        object.__setattr__(self, "metadata", freeze_object(metadata))
+        verify_source_revision_id(
+            self.revision_id,
+            _source_revision_identity_manifest(
+                source_id=self.source_id,
+                blob=self.blob,
+                media_type=self.media_type,
+                normalization_version=self.normalization_version,
+                substrate_id=self.substrate_id,
+                metadata=metadata,
+            ),
+        )
 
     @property
     def ref(self) -> SourceRevisionRef:
@@ -315,6 +345,12 @@ class SourceRevision:
             )
         ):
             raise ValueError("source revision scalar fields have invalid types")
+        assert isinstance(created_at, str)
+        assert isinstance(media_type, str)
+        assert isinstance(normalization_version, str)
+        assert isinstance(revision_id, str)
+        assert isinstance(source_id, str)
+        assert isinstance(substrate_id, str)
         try:
             timestamp = datetime.fromisoformat(created_at)
         except ValueError as error:
@@ -327,7 +363,7 @@ class SourceRevision:
             timestamp,
             normalization_version,
             SubstrateId(substrate_id),
-            metadata,  # type: ignore[arg-type]
+            _encode_metadata(metadata),
         )
 
 
