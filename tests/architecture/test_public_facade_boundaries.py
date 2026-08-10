@@ -125,3 +125,10 @@ def test_canonical_event_store_and_domain_upcast_surface_are_public() -> None:
     assert hasattr(ports, "EventStore")
     annotations = inspect.signature(EventUpcasterRegistry.upcast).parameters["event"].annotation
     assert "DomainEvent" not in str(annotations)
+
+
+def test_capability_facade_hides_internal_termination_observation() -> None:
+    import study_agent.api.capabilities as capabilities
+
+    assert not hasattr(capabilities, "TerminatedCapabilityOutcome")
+    assert "TerminatedCapabilityOutcome" not in capabilities.__all__

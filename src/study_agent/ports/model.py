@@ -60,9 +60,16 @@ class ModelCapabilities:
         for name in ("streaming", "structured_output", "tool_calls", "cancellation"):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(f"{name} must be boolean")
-        object.__setattr__(self, "extensions", frozenset(self.extensions))
-        if not all(isinstance(item, str) and item for item in self.extensions):
-            raise TypeError("extensions must contain non-empty strings")
+        if isinstance(self.extensions, (str, bytes, bytearray)):
+            raise TypeError("extensions must be a collection of strings")
+        extension_values = tuple(self.extensions)
+        if not all(isinstance(item, str) for item in extension_values):
+            raise TypeError("extensions must contain strings")
+        for item in extension_values:
+            require_text(item, "model capability extension")
+        if len(set(extension_values)) != len(extension_values):
+            raise ValueError("extensions must be unique")
+        object.__setattr__(self, "extensions", frozenset(extension_values))
         if self.context_window_tokens is not None:
             if type(self.context_window_tokens) is not int:
                 raise TypeError("context_window_tokens must be an integer")

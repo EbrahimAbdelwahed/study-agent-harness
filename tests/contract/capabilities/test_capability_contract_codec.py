@@ -7,9 +7,11 @@ from typing import cast
 import pytest
 
 from study_agent.capabilities import CapabilityContinuation, CapabilityManifest
-from study_agent.domain import RunId
+from study_agent.capabilities.contracts import CapabilityId, CapabilityRequest
+from study_agent.domain import PrincipalKind, RunId
 from study_agent.domain._validation import JsonObject
 from study_agent.playbooks import ReadDependency, ToolBehaviorPin, VersionPins
+from study_agent.ports.authority import HostAuthority
 from study_agent.skills import ArtifactReference, SemanticVersion
 
 V1 = SemanticVersion.parse("1.0.0")
@@ -24,13 +26,30 @@ SCHEMA: JsonObject = {
 
 def _manifest() -> CapabilityManifest:
     return CapabilityManifest(
-        "study.explain",
+        CapabilityId("study.explain"),
         V1,
         SCHEMA,
         SCHEMA,
         ("study:read",),
         True,
         IMPLEMENTATION_V1,
+    )
+
+
+def _request() -> CapabilityRequest:
+    authority = HostAuthority().issue(
+        PrincipalKind.HUMAN,
+        "caller-1",
+        grants=("study:read",),
+        correlation_id="request-1",
+    )
+    return CapabilityRequest(
+        "study.explain@1.0.0",
+        {"topic": "heart"},
+        authority,
+        "request-1",
+        0,
+        "retry-1",
     )
 
 
@@ -67,6 +86,9 @@ def _continuation() -> CapabilityContinuation:
 def test_manifest_and_continuation_round_trip_only_from_canonical_bytes() -> None:
     manifest = _manifest()
     assert CapabilityManifest.from_bytes(manifest.to_bytes()) == manifest
+
+    request = _request()
+    assert CapabilityRequest.from_bytes(request.to_bytes(), authority=request.authority) == request
 
     continuation = _continuation()
     assert CapabilityContinuation.from_bytes(continuation.to_bytes()) == continuation
@@ -105,3 +127,20 @@ def test_codecs_reject_unknown_fields_and_forged_derived_values() -> None:
             continuation.read_dependencies,
             continuation.input_fingerprint,
         )
+
+
+def test_decoders_reject_semantically_noncanonical_values() -> None:
+    manifest = CapabilityManifest(
+        CapabilityId("study.explain"),
+        V1,
+        SCHEMA,
+        SCHEMA,
+        ("study:read", "study:write"),
+        True,
+        IMPLEMENTATION_V1,
+    )
+    payload = cast(dict[str, object], json.loads(manifest.to_bytes()))
+    payload["required_authority"] = ["study:write", "study:read"]
+    noncanonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    with pytest.raises(ValueError, match="semantically canonical"):
+        CapabilityManifest.from_bytes(noncanonical)

@@ -41,9 +41,8 @@ class TutorCapabilityId(StrEnum):
     GRADE_RESPONSE = "grade_response"
 
 
-_NAMESPACED_CAPABILITY_ID = re.compile(
-    r"^[a-z][a-z0-9]*(?:[._:/-][a-z0-9]+)+$"
-)
+_NAMESPACED_CAPABILITY_ID = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$")
+_NAMESPACED_AUTHORITY = re.compile(r"^[a-z][a-z0-9]*(?:[._:/-][a-z0-9]+)+$")
 
 
 class CapabilityId(str):
@@ -52,7 +51,7 @@ class CapabilityId(str):
     def __new__(cls, value: str) -> CapabilityId:
         require_text(value, "capability id")
         if _NAMESPACED_CAPABILITY_ID.fullmatch(value) is None:
-            raise ValueError("capability id must be a lowercase namespaced name")
+            raise ValueError("capability id must use one canonical dot namespace")
         return str.__new__(cls, value)
 
     @property
@@ -141,7 +140,7 @@ class CapabilityManifest:
                 raise TypeError("required authority entries must be strings")
             require_text(grant, "required authority")
             reject_provider_selector_name(grant, "required authority")
-            if _NAMESPACED_CAPABILITY_ID.fullmatch(grant) is None:
+            if _NAMESPACED_AUTHORITY.fullmatch(grant) is None:
                 raise ValueError("required authority entries must be lowercase namespaced names")
         if len(set(authority)) != len(authority):
             raise ValueError("required authority entries must be unique")
@@ -182,7 +181,10 @@ class CapabilityManifest:
     @classmethod
     def from_bytes(cls, data: bytes) -> CapabilityManifest:
         raw = _decode_object(data, "capability manifest")
-        return cls.from_json(raw)
+        manifest = cls.from_json(raw)
+        if manifest.to_bytes() != data:
+            raise ValueError("capability manifest is not semantically canonical")
+        return manifest
 
     @classmethod
     def from_json(cls, raw: JsonObject) -> CapabilityManifest:
@@ -346,6 +348,8 @@ class CapabilityRequest:
         ):
             if _string_value(raw.get(name), name) != actual:
                 raise ValueError(f"capability request {name} is inconsistent")
+        if request.to_bytes() != data:
+            raise ValueError("capability request is not semantically canonical")
         return request
 
 
@@ -440,7 +444,10 @@ class CapabilityContinuation:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> CapabilityContinuation:
-        return cls.from_json(_decode_object(data, "capability continuation"))
+        continuation = cls.from_json(_decode_object(data, "capability continuation"))
+        if continuation.to_bytes() != data:
+            raise ValueError("capability continuation is not semantically canonical")
+        return continuation
 
     @classmethod
     def from_json(cls, raw: JsonObject) -> CapabilityContinuation:
@@ -763,7 +770,6 @@ def encode_capability_outcome(outcome: CapabilityOutcome) -> bytes:
         (
             CompletedCapabilityOutcome,
             SuspendedCapabilityOutcome,
-            TerminatedCapabilityOutcome,
             CancelledCapabilityOutcome,
             StaleCapabilityOutcome,
             FailedCapabilityOutcome,

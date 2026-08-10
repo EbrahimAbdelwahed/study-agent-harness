@@ -207,8 +207,23 @@ def test_model_capabilities_reject_non_boolean_and_non_integer_values() -> None:
     with pytest.raises(TypeError, match="streaming"):
         ModelCapabilities(streaming=1)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="context_window_tokens"):
-        ModelCapabilities(context_window_tokens=True)  # type: ignore[arg-type]
+        ModelCapabilities(context_window_tokens=True)
     with pytest.raises(TypeError, match="context_window_tokens"):
         ModelCapabilities(context_window_tokens=1.5)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="positive"):
         ModelCapabilities(context_window_tokens=0)
+
+
+def test_model_capabilities_reject_invalid_extensions_without_collapsing_duplicates() -> None:
+    with pytest.raises(TypeError, match="extensions"):
+        ModelCapabilities(extensions="streaming")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="extensions"):
+        ModelCapabilities(extensions=b"streaming")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="extension"):
+        ModelCapabilities(extensions=cast(frozenset[str], ("",)))
+    with pytest.raises(ValueError, match="extension"):
+        ModelCapabilities(extensions=cast(frozenset[str], (" streaming",)))
+    with pytest.raises(ValueError, match="unique"):
+        ModelCapabilities(
+            extensions=cast(frozenset[str], ("streaming", "streaming"))
+        )

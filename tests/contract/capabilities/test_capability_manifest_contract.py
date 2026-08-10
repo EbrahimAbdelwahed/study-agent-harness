@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 
 from study_agent.capabilities import CapabilityManifest, CapabilityOutcomeStatus
+from study_agent.capabilities.contracts import CapabilityId
 from study_agent.domain._validation import JsonObject
 from study_agent.skills import SemanticVersion
 
@@ -59,3 +60,14 @@ def test_manifest_rejects_non_namespaced_capability_ids(identifier: str) -> None
 def test_manifest_requires_semantic_implementation_version() -> None:
     with pytest.raises(TypeError, match="SemanticVersion"):
         _manifest(implementation_version="1.2.3")
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ("study:explain", "study/explain", "study_agent.explain", "study-agent.explain"),
+)
+def test_capability_id_requires_canonical_dot_grammar(identifier: str) -> None:
+    with pytest.raises(ValueError, match="canonical dot namespace"):
+        CapabilityId(identifier)
+
+    assert CapabilityId("study.explain").value == "study.explain"

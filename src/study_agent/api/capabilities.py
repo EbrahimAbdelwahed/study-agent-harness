@@ -33,7 +33,6 @@ if TYPE_CHECKING:
         FailedCapabilityOutcome,
         StaleCapabilityOutcome,
         SuspendedCapabilityOutcome,
-        TerminatedCapabilityOutcome,
         TutorCapabilityId,
         encode_capability_outcome,
     )
@@ -59,7 +58,6 @@ if TYPE_CHECKING:
         "StudyCapabilityGateway",
         "StudyCapabilityRegistry",
         "SuspendedCapabilityOutcome",
-        "TerminatedCapabilityOutcome",
         "TutorCapabilityId",
         "encode_capability_outcome",
     )
@@ -88,7 +86,6 @@ _PUBLIC = {
     "StudyCapabilityGateway": _gateway.StudyCapabilityGateway,
     "StudyCapabilityRegistry": _registry.StudyCapabilityRegistry,
     "SuspendedCapabilityOutcome": _contracts.SuspendedCapabilityOutcome,
-    "TerminatedCapabilityOutcome": _contracts.TerminatedCapabilityOutcome,
     "TutorCapabilityId": _contracts.TutorCapabilityId,
     "encode_capability_outcome": _contracts.encode_capability_outcome,
 }
