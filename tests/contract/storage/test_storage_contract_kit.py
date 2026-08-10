@@ -68,6 +68,25 @@ def _event(stream: CourseId, sequence: int, *, event_id: str | None = None) -> E
     )
 
 
+class _AliasedCourseId(CourseId):
+    def __hash__(self) -> int:
+        return hash("victim-course")
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is CourseId and other.value == "victim-course"
+
+    def __str__(self) -> str:
+        return "victim-course"
+
+
+class _HostileText(str):
+    def __hash__(self) -> int:
+        raise AssertionError("hostile hash must not be called")
+
+    def __str__(self) -> str:
+        raise AssertionError("hostile string conversion must not be called")
+
+
 def test_all_six_host_ports_are_importable_without_provider_types() -> None:
     names = ("EventStore", "BlobStore", "RunStore", "Repository", "Clock", "IdFactory")
     for name in names:
@@ -113,6 +132,33 @@ def test_course_stream_high_water_rejects_invalid_sequences(sequence: object) ->
         CourseStreamHighWater(CourseId("course-high-water"), cast(int, sequence))
 
 
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+@pytest.mark.parametrize(
+    "malformed_course",
+    (
+        _AliasedCourseId("attacker-course"),
+        CourseId(cast(str, _HostileText("victim-course"))),
+        CourseId(cast(str, b"victim-course")),
+    ),
+)
+def test_high_water_rejects_hostile_course_identity_before_lookup(
+    kind: str, malformed_course: CourseId, tmp_path: Path
+) -> None:
+    victim = CourseId("victim-course")
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    store.append(victim, 0, (_event(victim, 1),), idempotency_key="victim-command")
+    with pytest.raises(ValidationFailure):
+        store.observe_high_water(malformed_course)
+    assert store.observe_high_water(victim) == CourseStreamHighWater(victim, 1)
+    with pytest.raises(ValidationFailure):
+        CourseStreamHighWater(malformed_course, 0)
+
+
 def test_sqlite_high_water_adapter_failure_is_typed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -124,6 +170,79 @@ def test_sqlite_high_water_adapter_failure_is_typed(
     monkeypatch.setattr(store, "_connect", fail_connect)
     with pytest.raises(UnavailableDependencyFailure):
         store.observe_high_water(CourseId("course-high-water"))
+
+
+def test_sqlite_high_water_arbitrary_adapter_fault_is_sanitized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    class AdapterFault(RuntimeError):
+        pass
+
+    def fail_connect() -> sqlite3.Connection:
+        raise AdapterFault("HOSTILE_ADAPTER_SECRET")
+
+    monkeypatch.setattr(store, "_connect", fail_connect)
+    with pytest.raises(InternalFailure) as caught:
+        store.observe_high_water(CourseId("course-high-water"))
+    assert str(caught.value) == "event stream high-water observation failed"
+    assert isinstance(caught.value.__cause__, AdapterFault)
+    assert "HOSTILE_ADAPTER_SECRET" not in str(caught.value)
+
+
+@pytest.mark.parametrize("sequence", (True, -1, 1.0))
+def test_sqlite_high_water_invalid_adapter_sequence_is_internal(
+    sequence: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLiteEventStore(tmp_path / "events.sqlite3")
+
+    def malformed_sequence(_: sqlite3.Connection, __: CourseId) -> int:
+        return cast(int, sequence)
+
+    monkeypatch.setattr(store, "_current_sequence", malformed_sequence)
+    with pytest.raises(InternalFailure) as caught:
+        store.observe_high_water(CourseId("course-high-water"))
+    assert str(caught.value) == "stored event stream high-water is invalid"
+    assert isinstance(caught.value.__cause__, ValidationFailure)
+
+
+@pytest.mark.parametrize("kind", ("memory", "sqlite"))
+def test_high_water_observe_then_append_retains_final_sequence_cas(
+    kind: str, tmp_path: Path
+) -> None:
+    stream = CourseId(f"race-{kind}")
+    store: EventStore
+    if kind == "memory":
+        store = MemoryEventStore()
+    else:
+        store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    barrier = Barrier(2)
+
+    def observe_then_append(index: int) -> int | EventSequenceConflictError:
+        observed = store.observe_high_water(stream)
+        barrier.wait()
+        try:
+            return store.append(
+                stream,
+                observed.sequence,
+                (_event(stream, 1, event_id=f"race-event-{index}"),),
+                idempotency_key=f"race-command-{index}",
+            )
+        except EventSequenceConflictError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(observe_then_append, (1, 2)))
+
+    winners = tuple(result for result in results if isinstance(result, int))
+    losers = tuple(
+        result for result in results if isinstance(result, EventSequenceConflictError)
+    )
+    assert winners == (1,)
+    assert len(losers) == 1
+    assert isinstance(losers[0], StaleFailure)
+    assert store.observe_high_water(stream) == CourseStreamHighWater(stream, 1)
 
 
 @pytest.mark.parametrize("kind", ("memory", "sqlite"))

@@ -74,6 +74,16 @@ class SourceContentPort(Protocol):
 type _EventRecord = DomainEvent | EventEnvelope
 
 
+def _require_canonical_course_id(course_id: object) -> CourseId:
+    """Accept only the exact identifier shape owned by the harness."""
+    if type(course_id) is not CourseId:
+        raise ValidationFailure("course_id must be a CourseId")
+    canonical = course_id
+    if type(canonical.value) is not str:
+        raise ValidationFailure("course_id must contain plain text")
+    return canonical
+
+
 @dataclass(frozen=True, slots=True)
 class CourseStreamHighWater:
     """The authoritative sequence observed for one course event stream."""
@@ -82,8 +92,7 @@ class CourseStreamHighWater:
     sequence: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.course_id, CourseId):
-            raise ValidationFailure("course_id must be a CourseId")
+        _require_canonical_course_id(self.course_id)
         if type(self.sequence) is not int or self.sequence < 0:
             raise ValidationFailure("course stream high-water must be a non-negative integer")
 

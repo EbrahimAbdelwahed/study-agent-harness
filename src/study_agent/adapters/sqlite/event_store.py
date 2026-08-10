@@ -28,6 +28,7 @@ from study_agent.ports.storage import (
     CourseStreamHighWater,
     EventSequenceConflictError,
     IdempotencyConflictError,
+    _require_canonical_course_id,
 )
 from study_agent.state import (
     EventRegistry,
@@ -217,9 +218,7 @@ class SQLiteEventStore:
         database = self._database
         uri = False
         if self._read_only:
-            database = (
-                Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
-            )
+            database = Path(database).absolute().as_uri() + "?mode=ro"
             uri = True
         elif self._connection_identity_guard is not None:
             database = _writable_nofollow_uri(database)
@@ -465,12 +464,14 @@ class SQLiteEventStore:
 
     def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater:
         """Read the canonical stream high-water from the existing events table."""
-        if not isinstance(course_id, CourseId):
-            raise ValidationFailure("course_id must be a CourseId")
+        canonical_course_id = _require_canonical_course_id(course_id)
         try:
             with closing(self._connect()) as connection:
-                sequence = self._current_sequence(connection, course_id)
-            return CourseStreamHighWater(course_id, sequence)
+                sequence = self._current_sequence(connection, canonical_course_id)
+            try:
+                return CourseStreamHighWater(canonical_course_id, sequence)
+            except ValidationFailure as error:
+                raise InternalFailure("stored event stream high-water is invalid") from error
         except HarnessError:
             raise
         except (OSError, sqlite3.Error) as error:

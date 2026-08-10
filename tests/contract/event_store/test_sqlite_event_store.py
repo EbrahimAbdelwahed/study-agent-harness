@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
+from unittest.mock import Mock
 
 import pytest
 
@@ -103,6 +107,51 @@ def test_sqlite_high_water_uses_the_canonical_events_table(tmp_path: Path) -> No
         }
     assert "events" in tables
     assert not any("high_water" in table for table in tables)
+
+
+def test_read_only_high_water_observes_live_writer_with_normal_sqlite_locking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "events.sqlite3"
+    writer = SQLiteEventStore(database, registry())
+    course_id = CourseId("course-live-reader")
+    _append_legacy(writer, course_id, 0, (make_event(course_id, 1),))
+    reader = SQLiteEventStore(database, registry(), read_only=True)
+
+    writer_started = Barrier(2)
+    release_writer = Barrier(2)
+    original_transaction = writer._transaction
+
+    @contextmanager
+    def hold_writer_transaction() -> Iterator[sqlite3.Connection]:
+        with original_transaction() as connection:
+            writer_started.wait()
+            release_writer.wait()
+            yield connection
+
+    monkeypatch.setattr(writer, "_transaction", hold_writer_transaction)
+    connect_spy = Mock(wraps=sqlite3.connect)
+    monkeypatch.setattr(sqlite3, "connect", connect_spy)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        append_future = executor.submit(
+            _append_legacy, writer, course_id, 1, (make_event(course_id, 2),)
+        )
+        writer_started.wait()
+        assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 1)
+        release_writer.wait()
+        assert append_future.result() == 2
+
+    assert reader.observe_high_water(course_id) == CourseStreamHighWater(course_id, 2)
+    read_only_uris = tuple(
+        call.args[0]
+        for call in connect_spy.call_args_list
+        if call.args
+        and isinstance(call.args[0], str)
+        and "?mode=ro" in call.args[0]
+    )
+    assert read_only_uris
+    assert all("immutable" not in uri for uri in read_only_uris)
 
 
 def test_event_schema_cannot_be_registered_without_a_payload_decoder() -> None:
