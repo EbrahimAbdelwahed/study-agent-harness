@@ -25,6 +25,7 @@ from study_agent.domain import (
     SubstrateId,
     substrate_id_for,
 )
+from study_agent.domain.errors import ValidationFailure
 from study_agent.ingestion import (
     CHUNK_MAX_CHARACTERS,
     CHUNKER_POLICY_VERSION,
@@ -39,7 +40,6 @@ from study_agent.ingestion import (
     decode_source_revision_selected_event,
     normalize_utf8,
     register_source_revision_events,
-    source_event_id_for,
     source_revision_payload,
     source_revision_selected_event_id_for,
     source_revision_selected_payload,
@@ -54,6 +54,7 @@ from study_agent.ingestion.legacy import (
     HistoricalIdentityVariant,
     historical_ingestion_v2_revision_id,
     historical_public_manifest_revision_id,
+    historical_source_event_id_for,
     legacy_revision_id_for,
 )
 from study_agent.ingestion.projection import source_revision_payload_v1
@@ -133,7 +134,7 @@ def make_event(
     )
     event = DomainEvent(
         (
-            source_event_id_for(CourseId("course-1"), revision_id)
+            historical_source_event_id_for(CourseId("course-1"), revision_id)
             if legacy_identity
             else source_revision_ingested_event_id_for(
                 CourseId("course-1"), revision_id, occurred_at
@@ -192,7 +193,8 @@ def test_full_event_decoder_preserves_legacy_revision_identity() -> None:
     assert isinstance(raw_revision_id, str)
 
     assert str(decoded.source.revision_id) == raw_revision_id
-    assert registry.decode(event) == decoded
+    with pytest.raises(ValidationFailure, match="upcast path is incomplete"):
+        registry.decode(event)
 
 
 def test_schema_one_is_replay_only_and_schema_two_is_the_append_contract() -> None:
@@ -257,7 +259,7 @@ def test_all_historical_identity_variants_replay_through_the_v1_upcaster(
         ),
     )
     event = DomainEvent(
-        source_event_id_for(current_event.course_id, revision_id),
+        historical_source_event_id_for(current_event.course_id, revision_id),
         current_event.course_id,
         current_event.course_sequence,
         SOURCE_REVISION_INGESTED,

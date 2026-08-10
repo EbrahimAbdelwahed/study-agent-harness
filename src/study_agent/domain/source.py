@@ -39,7 +39,7 @@ def _encode_metadata(value: Mapping[str, object]) -> JsonObject:
         raise ValueError("source metadata must be a JSON object")
     try:
         return validate_json_object(value, max_bytes=MAX_METADATA_BYTES)
-    except ValueError as error:
+    except Exception as error:
         raise ValueError("source metadata is outside the bounded JSON profile") from error
 
 
@@ -229,7 +229,7 @@ class SourceRevision:
         require_aware(self.created_at, "created_at")
         object.__setattr__(self, "created_at", self.created_at.astimezone(UTC))
         metadata = _encode_metadata(self.metadata)
-        object.__setattr__(self, "metadata", freeze_object(metadata))
+        object.__setattr__(self, "metadata", metadata)
         verify_source_revision_id(
             self.revision_id,
             source_revision_manifest(

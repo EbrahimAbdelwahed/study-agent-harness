@@ -8,8 +8,7 @@ stricter numeric and resource limits than general projection state.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from types import MappingProxyType
+from collections.abc import Iterator, Mapping
 from typing import cast
 
 from ._validation import JsonObject, JsonValue
@@ -28,8 +27,35 @@ class BoundedJsonError(ValueError):
     """A value is not representable in the bounded identity JSON profile."""
 
 
+class _FrozenObject(Mapping[str, JsonValue]):
+    """Private immutable object produced by this validator.
+
+    ``MappingProxyType`` is intentionally not accepted as construction input:
+    a proxy can wrap an arbitrary user mapping and invoke its methods while it
+    is being walked.  This small private type is the trusted representation we
+    create after validating exact built-in dictionaries.
+    """
+
+    __slots__ = ("_values",)
+
+    def __init__(self, values: dict[str, JsonValue]) -> None:
+        self._values = values
+
+    def __getitem__(self, key: str) -> JsonValue:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def _items(self) -> tuple[tuple[str, JsonValue], ...]:
+        return tuple(self._values.items())
+
+
 def _is_object(value: object) -> bool:
-    return type(value) is dict or isinstance(value, MappingProxyType)
+    return type(value) is dict or type(value) is _FrozenObject
 
 
 def _is_array(value: object) -> bool:
@@ -89,7 +115,10 @@ def _validate(value: object, *, max_bytes: int | None) -> JsonValue:
             if current_id in active:
                 raise BoundedJsonError("cyclic JSON values are not supported")
             active.add(current_id)
-            items = tuple(cast(Mapping[object, object], current).items())
+            if type(current) is _FrozenObject:
+                items = cast(tuple[tuple[object, object], ...], current._items())
+            else:
+                items = tuple(cast(dict[object, object], current).items())
             if len(items) > MAX_BOUNDARY_ITEMS:
                 raise BoundedJsonError("JSON object item bound exceeded")
             child: dict[str, object] = {}
@@ -145,9 +174,7 @@ def _validate(value: object, *, max_bytes: int | None) -> JsonValue:
         # conversion cannot receive hostile depth.  It also never invokes
         # user-defined methods because the tree contains only built-ins.
         if isinstance(value_to_freeze, dict):
-            return MappingProxyType(
-                {key: freeze(item) for key, item in value_to_freeze.items()}
-            )
+            return _FrozenObject({key: freeze(item) for key, item in value_to_freeze.items()})
         if isinstance(value_to_freeze, list):
             return tuple(freeze(item) for item in value_to_freeze)
         return cast(JsonValue, value_to_freeze)
@@ -161,6 +188,8 @@ def _validate(value: object, *, max_bytes: int | None) -> JsonValue:
 
 
 def _thaw(value: JsonValue) -> object:
+    if type(value) is _FrozenObject:
+        return {key: _thaw(item) for key, item in value._items()}
     if isinstance(value, Mapping):
         return {key: _thaw(item) for key, item in value.items()}
     if isinstance(value, tuple):

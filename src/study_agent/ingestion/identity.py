@@ -6,13 +6,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 
 from study_agent.domain.bounded_json import canonical_json_bytes
-from study_agent.domain.identifiers import (
-    ChunkId,
-    CourseId,
-    EventId,
-    RevisionId,
-    SourceId,
-)
+from study_agent.domain.identifiers import ChunkId, CourseId, EventId, RevisionId, SourceId
 from study_agent.domain.source import SourceKind
 
 NORMALIZATION_POLICY_VERSION = "utf8-newlines-nfc-v1"
@@ -28,47 +22,6 @@ def source_kind_contract(kind: SourceKind) -> tuple[str, str]:
     if kind is SourceKind.TEXT:
         return TEXT_MEDIA_TYPE, TEXT_INGESTION_METHOD
     return MARKDOWN_MEDIA_TYPE, MARKDOWN_INGESTION_METHOD
-
-
-def revision_id_for(
-    *,
-    original_sha256: str,
-    source_id: SourceId,
-    kind: SourceKind,
-    title: str,
-    trust_level: int,
-    source_role: str,
-    normalization_version: str,
-    chunker_version: str,
-    max_characters: int,
-) -> RevisionId:
-    """Compatibility helper for historical ingestion-v2 fixtures only.
-
-    Current ingestion calls ``SourceRevision.create``.  This helper remains so
-    old event fixtures can still construct the historical identity that the v1
-    replay upcaster classifies.
-    """
-
-    manifest = {
-        "chunker_version": chunker_version,
-        "kind": kind.value,
-        "max_characters": max_characters,
-        "normalization_version": normalization_version,
-        "original_sha256": original_sha256,
-        "source_id": str(source_id),
-        "source_role": source_role,
-        "title": title,
-        "trust_level": trust_level,
-    }
-    # This is intentionally the old v2 compatibility domain, never a current
-    # append path.  The historical helper itself lives in ingestion.legacy;
-    # this import-compatible wrapper is retained for pre-existing fixtures.
-    return RevisionId(
-        "revision-sha256:"
-        + sha256(
-            b"study-agent-source-revision-v2\0" + canonical_json_bytes(manifest)
-        ).hexdigest()
-    )
 
 
 def chunk_id_for(
@@ -88,8 +41,11 @@ def chunk_id_for(
 
 
 def source_event_id_for(course_id: CourseId, revision_id: RevisionId) -> EventId:
-    identity = f"{course_id}\0{revision_id}".encode()
-    return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
+    """Compatibility bridge for the private historical replay recipe."""
+
+    from .legacy import historical_source_event_id_for
+
+    return historical_source_event_id_for(course_id, revision_id)
 
 
 def source_revision_ingested_event_id_for(

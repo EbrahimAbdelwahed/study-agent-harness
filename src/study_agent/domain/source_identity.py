@@ -16,6 +16,17 @@ if TYPE_CHECKING:
 
 SOURCE_REVISION_ID_NAMESPACE = b"study-agent/source-revision/v3\0"
 SOURCE_REVISION_ID_PREFIX = "revision-sha256:"
+_MANIFEST_KEYS = frozenset(
+    {
+        "blob",
+        "media_type",
+        "metadata",
+        "normalization_version",
+        "source_id",
+        "substrate_id",
+    }
+)
+_BLOB_KEYS = frozenset({"byte_length", "checksum_sha256", "id"})
 
 
 def _trimmed(value: object, name: str) -> str:
@@ -41,6 +52,8 @@ def source_revision_manifest(
 
     if not isinstance(blob, BlobRefType):
         raise TypeError("blob must be BlobRef")
+    if not blob.is_content_addressed:
+        raise ValueError("blob id must match its SHA-256 checksum")
     if not isinstance(substrate_id, SubstrateId):
         raise TypeError("substrate_id must be SubstrateId")
     _trimmed(media_type, "media_type")
@@ -56,15 +69,43 @@ def source_revision_manifest(
         "source_id": str(source_id),
         "substrate_id": str(substrate_id),
     }
-    # Validate the complete closed object before it can be hashed.  This also
-    # rejects a future caller accidentally adding an unsupported value.
-    return validate_json_object(manifest)
+    return _validate_manifest(manifest)
+
+
+def _validate_manifest(value: object) -> JsonObject:
+    """Validate the exact six-field manifest before identity derivation."""
+
+    manifest = validate_json_object(value)
+    if frozenset(manifest) != _MANIFEST_KEYS:
+        raise ValueError("source revision manifest fields mismatch")
+
+    for field in ("source_id", "media_type", "normalization_version", "substrate_id"):
+        _trimmed(manifest.get(field), f"manifest.{field}")
+
+    blob = manifest.get("blob")
+    if not isinstance(blob, Mapping) or frozenset(blob) != _BLOB_KEYS:
+        raise ValueError("source revision manifest blob fields mismatch")
+    checksum = blob.get("checksum_sha256")
+    blob_id = blob.get("id")
+    byte_length = blob.get("byte_length")
+    if (
+        not isinstance(checksum, str)
+        or len(checksum) != 64
+        or any(character not in "0123456789abcdef" for character in checksum)
+    ):
+        raise ValueError("source revision manifest blob checksum is invalid")
+    if blob_id != f"sha256:{checksum}":
+        raise ValueError("source revision manifest blob id does not match checksum")
+    if type(byte_length) is not int or byte_length < 0:
+        raise ValueError("source revision manifest blob length is invalid")
+    validate_json_object(manifest.get("metadata"), max_bytes=MAX_METADATA_BYTES)
+    return manifest
 
 
 def source_revision_id_for(manifest: JsonObject) -> RevisionId:
     """Derive the v3 revision identity from exactly one canonical manifest."""
 
-    canonical = canonical_json_bytes(validate_json_object(manifest))
+    canonical = canonical_json_bytes(_validate_manifest(manifest))
     digest = sha256(SOURCE_REVISION_ID_NAMESPACE + canonical).hexdigest()
     return RevisionId(f"{SOURCE_REVISION_ID_PREFIX}{digest}")
 

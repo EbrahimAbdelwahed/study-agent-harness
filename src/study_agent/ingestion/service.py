@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -48,6 +49,9 @@ from .identity import (
 from .normalization import InvalidUtf8Error, normalize_utf8
 from .projection import source_revision_payload
 
+MAX_HISTORY_EVENTS = 4_096
+MAX_HISTORY_BLOB_READS = 8
+
 
 class IngestionErrorCode(StrEnum):
     UNSUPPORTED_EXTENSION = "unsupported_extension"
@@ -81,6 +85,21 @@ class TextIngestionResult:
         object.__setattr__(self, "chunks", tuple(self.chunks))
 
 
+@dataclass(slots=True)
+class _BoundedBlobLoader:
+    """Charge every historical verification read against one ingest budget."""
+
+    loader: BlobLoader
+    max_reads: int
+    reads: int = 0
+
+    def __call__(self, ref: BlobRef) -> bytes:
+        if self.reads >= self.max_reads:
+            raise ValueError("source verification work budget exceeded")
+        self.reads += 1
+        return self.loader(ref)
+
+
 class TextIngestionService:
     def __init__(
         self,
@@ -90,12 +109,20 @@ class TextIngestionService:
         clock: ClockPort,
         courses: CourseViewPort,
         chunking: ChunkingConfig = DEFAULT_CHUNKING_CONFIG,
+        max_history_events: int = MAX_HISTORY_EVENTS,
+        max_history_blob_reads: int = MAX_HISTORY_BLOB_READS,
     ) -> None:
+        if type(max_history_events) is not int or max_history_events < 1:
+            raise ValueError("max_history_events must be positive")
+        if type(max_history_blob_reads) is not int or max_history_blob_reads < 1:
+            raise ValueError("max_history_blob_reads must be positive")
         self._blobs = blobs
         self._events = events
         self._clock = clock
         self._courses = courses
         self._chunking = chunking
+        self._max_history_events = max_history_events
+        self._max_history_blob_reads = max_history_blob_reads
 
     def ingest(
         self,
@@ -121,7 +148,18 @@ class TextIngestionService:
         )
         kind, media_type, method = _file_contract(filename)
         self._courses.get(context.course_id)
-        stream = _read_domain_events(self._events, context.course_id)
+        try:
+            stream = _read_domain_events(self._events, context.course_id)
+        except Exception as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be read",
+            ) from error
+        if len(stream) > self._max_history_events:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history exceeds the configured work bound",
+            )
         current_sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and current_sequence != expected_sequence:
             raise TextIngestionError(
@@ -187,7 +225,14 @@ class TextIngestionService:
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
 
-        current = _current_revision(stream, source_id, self._blobs.get)
+        history_loader = _BoundedBlobLoader(self._blobs.get, self._max_history_blob_reads)
+        try:
+            current = _current_revision(stream, source_id, history_loader)
+        except ValueError as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be verified",
+            ) from error
         if current is not None and current.source.revision_id == source.revision_id:
             if _matches_request(current, source, self._chunking):
                 if expected_sequence is not None:
@@ -210,9 +255,15 @@ class TextIngestionService:
                 IngestionErrorCode.INVALID_CONTENT,
                 "revision identity already exists with a different chunking configuration",
             )
-        historical = _find_matching_revision(
-            stream, source_id, source, self._chunking, self._blobs.get
-        )
+        try:
+            historical = _find_matching_revision(
+                stream, source_id, source, self._chunking, history_loader
+            )
+        except ValueError as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be verified",
+            ) from error
         if historical is not None:
             return self._select_historical_revision(
                 historical,
@@ -268,7 +319,22 @@ class TextIngestionService:
             )
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
-            concurrent = _current_revision(concurrent_stream, source_id, self._blobs.get)
+            if len(concurrent_stream) > self._max_history_events:
+                raise TextIngestionError(
+                    IngestionErrorCode.INVALID_CONTENT,
+                    "source history exceeds the configured work bound",
+                ) from error
+            try:
+                concurrent = _current_revision(
+                    concurrent_stream,
+                    source_id,
+                    _BoundedBlobLoader(self._blobs.get, self._max_history_blob_reads),
+                )
+            except ValueError as verify_error:
+                raise TextIngestionError(
+                    IngestionErrorCode.INVALID_CONTENT,
+                    "source history could not be verified",
+                ) from verify_error
             if (
                 expected_sequence is None
                 and concurrent is not None
@@ -331,9 +397,22 @@ class TextIngestionService:
             )
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
-            concurrent = _current_revision(
-                concurrent_stream, revision.source.source_id, self._blobs.get
-            )
+            if len(concurrent_stream) > self._max_history_events:
+                raise TextIngestionError(
+                    IngestionErrorCode.INVALID_CONTENT,
+                    "source history exceeds the configured work bound",
+                ) from error
+            try:
+                concurrent = _current_revision(
+                    concurrent_stream,
+                    revision.source.source_id,
+                    _BoundedBlobLoader(self._blobs.get, self._max_history_blob_reads),
+                )
+            except ValueError as verify_error:
+                raise TextIngestionError(
+                    IngestionErrorCode.INVALID_CONTENT,
+                    "source history could not be verified",
+                ) from verify_error
             if (
                 expected_sequence is None
                 and concurrent is not None
@@ -442,8 +521,11 @@ def _predicted_blob(content: bytes) -> BlobRef:
 def _write_expected_blob(store: BlobStore, content: bytes, expected: BlobRef) -> None:
     try:
         actual = store.put(content)
-    except (TypeError, ValueError) as error:
-        raise TextIngestionError(IngestionErrorCode.BLOB_MISMATCH, str(error)) from error
+    except Exception as error:
+        raise TextIngestionError(
+            IngestionErrorCode.BLOB_MISMATCH,
+            "blob store could not publish expected content",
+        ) from error
     if actual != expected:
         raise TextIngestionError(
             IngestionErrorCode.BLOB_MISMATCH,
@@ -461,10 +543,10 @@ def _find_matching_revision(
     for event in events:
         if event.event_type != SOURCE_REVISION_INGESTED or event.schema_version not in (1, 2):
             continue
+        if not _source_payload_matches_request(event, source_id, requested, chunking):
+            continue
         decoded = decode_source_revision_event(event, load_blob)
-        if decoded.source.source_id == source_id and _matches_request(
-            decoded, requested, chunking
-        ):
+        if _matches_request(decoded, requested, chunking):
             return decoded
     return None
 
@@ -472,14 +554,14 @@ def _find_matching_revision(
 def _current_revision(
     events: tuple[DomainEvent, ...], source_id: SourceId, load_blob: BlobLoader
 ) -> SourceRevisionIngested | None:
-    revisions: dict[RevisionId, SourceRevisionIngested] = {}
-    current_revision_id: RevisionId | None = None
+    revisions: dict[RevisionId, DomainEvent] = {}
+    current_event: DomainEvent | None = None
     for event in events:
         if event.event_type == SOURCE_REVISION_INGESTED and event.schema_version in (1, 2):
-            decoded = decode_source_revision_event(event, load_blob)
-            if decoded.source.source_id == source_id:
-                revisions[decoded.source.revision_id] = decoded
-                current_revision_id = decoded.source.revision_id
+            event_source_id, revision_id = _source_payload_identity(event)
+            if event_source_id == source_id:
+                revisions[revision_id] = event
+                current_event = event
         elif (
             event.event_type == SOURCE_REVISION_SELECTED
             and event.schema_version == SOURCE_REVISION_SELECTED_SCHEMA_VERSION
@@ -489,10 +571,61 @@ def _current_revision(
                 continue
             if selected.revision_id not in revisions:
                 raise ValueError("selected revision does not exist in source history")
-            current_revision_id = selected.revision_id
-    if current_revision_id is None:
+            current_event = revisions[selected.revision_id]
+    if current_event is None:
         return None
-    return revisions[current_revision_id]
+    return decode_source_revision_event(current_event, load_blob)
+
+
+def _source_payload_identity(event: DomainEvent) -> tuple[SourceId, RevisionId]:
+    source_value = event.payload.get("source")
+    if not isinstance(source_value, Mapping):
+        raise ValueError("source history contains an invalid source manifest")
+    source_id = source_value.get("source_id")
+    revision_id = source_value.get("revision_id")
+    if not isinstance(source_id, str) or not isinstance(revision_id, str):
+        raise ValueError("source history contains an invalid source identity")
+    try:
+        return SourceId(source_id), RevisionId(revision_id)
+    except (TypeError, ValueError) as error:
+        raise ValueError("source history contains an invalid source identity") from error
+
+
+def _source_payload_matches_request(
+    event: DomainEvent,
+    source_id: SourceId,
+    requested: SourceDocument,
+    chunking: ChunkingConfig,
+) -> bool:
+    event_source_id, _ = _source_payload_identity(event)
+    if event_source_id != source_id:
+        return False
+    source_value = event.payload["source"]
+    assert isinstance(source_value, Mapping)
+    expected_source = {
+        "source_id": str(requested.source_id),
+        "kind": requested.kind.value,
+        "title": requested.title,
+        "media_type": requested.media_type,
+        "checksum_sha256": requested.checksum_sha256,
+        "byte_length": requested.byte_length,
+        "trust_level": requested.trust_level,
+        "source_role": requested.source_role,
+        "blob": requested.blob.to_json(),
+        "normalized_blob": requested.normalized_blob.to_json(),
+        "normalization_version": requested.normalization_version,
+        "normalized_character_length": requested.normalized_character_length,
+        "structure_origin": requested.structure_origin.value,
+        "ingestion_method": requested.ingestion_method,
+        "content_origin": requested.content_origin.value,
+    }
+    if any(source_value.get(field) != expected for field, expected in expected_source.items()):
+        return False
+    chunking_value = event.payload.get("chunking")
+    return chunking_value == {
+        "version": chunking.version,
+        "max_characters": chunking.max_characters,
+    }
 
 
 def _matches_request(

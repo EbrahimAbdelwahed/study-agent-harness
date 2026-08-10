@@ -6,7 +6,7 @@ from enum import StrEnum
 from hashlib import sha256
 
 from study_agent.domain.bounded_json import canonical_json_bytes
-from study_agent.domain.identifiers import RevisionId, SourceId
+from study_agent.domain.identifiers import CourseId, EventId, RevisionId, SourceId
 from study_agent.domain.source import SourceDocument, SourceKind
 
 
@@ -17,6 +17,13 @@ class HistoricalIdentityVariant(StrEnum):
 
 
 _HISTORICAL_NAMESPACE = b"study-agent-source-revision-v2\0"
+
+
+def historical_source_event_id_for(course_id: CourseId, revision_id: RevisionId) -> EventId:
+    """Reconstruct the v0.1 source receipt identity during private replay."""
+
+    identity = f"{course_id}\0{revision_id}".encode()
+    return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
 
 
 def _historical_json_revision_id(manifest: dict[str, object]) -> RevisionId:
@@ -144,7 +151,4 @@ def classify_historical_identity(
 __all__ = [
     "HistoricalIdentityVariant",
     "classify_historical_identity",
-    "historical_ingestion_v2_revision_id",
-    "historical_public_manifest_revision_id",
-    "legacy_revision_id_for",
 ]

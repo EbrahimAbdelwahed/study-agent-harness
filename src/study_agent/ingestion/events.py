@@ -28,12 +28,15 @@ from .chunking import CHUNKER_VERSION, ChunkingConfig, chunk_text
 from .identity import (
     NORMALIZATION_POLICY_VERSION,
     chunk_id_for,
-    source_event_id_for,
     source_kind_contract,
     source_revision_ingested_event_id_for,
     source_revision_selected_event_id_for,
 )
-from .legacy import HistoricalIdentityVariant, classify_historical_identity
+from .legacy import (
+    HistoricalIdentityVariant,
+    classify_historical_identity,
+    historical_source_event_id_for,
+)
 from .normalization import normalize_utf8
 
 SOURCE_REVISION_INGESTED = "source.revision_ingested"
@@ -388,7 +391,12 @@ def _validate_current_identity(
 def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
     if str(ref.id) != f"sha256:{ref.checksum_sha256}":
         raise ValueError(f"{name} id does not match its checksum")
-    content = load_blob(ref)
+    try:
+        content = load_blob(ref)
+    except KeyError as error:
+        raise ValueError(f"{name} blob is unavailable") from error
+    except Exception as error:
+        raise ValueError(f"{name} blob loader failed") from error
     if type(content) is not bytes:
         raise ValueError(f"{name} loader must return bytes")
     if len(content) != ref.byte_length:
@@ -497,7 +505,9 @@ def upcast_source_revision_ingested_v1(
         max_characters=decoded.chunking.max_characters,
     )
     _verify_content(decoded, event, load_blob)
-    if event.event_id != source_event_id_for(event.course_id, decoded.source.revision_id):
+    if event.event_id != historical_source_event_id_for(
+        event.course_id, decoded.source.revision_id
+    ):
         raise ValueError("historical event_id does not match its preserved identity")
     if variant is HistoricalIdentityVariant.WEAK_V01:
         decoded = replace(
