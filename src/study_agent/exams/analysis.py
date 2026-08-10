@@ -9,6 +9,7 @@ from hashlib import sha256
 
 from study_agent.capabilities.bindings import CapabilityBinding, CapabilityDependencyResolver
 from study_agent.capabilities.builtin import ANALYZE_EXAM_SAMPLE_MANIFEST
+from study_agent.capabilities.contracts import TutorCapabilityId
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_object
 from study_agent.exams.contracts import (
     ExamAnalysisProposal,
@@ -167,10 +168,13 @@ class ExamAnalysisTaskFactory:
         ).hexdigest()
         inputs = request.to_json()
         binding = self._binding
+        capability_id = binding.manifest.id
+        if not isinstance(capability_id, TutorCapabilityId):
+            raise TypeError("exam analysis binding capability id must use TutorCapabilityId")
         return GenerationWorkerTask(
             f"exam-analysis-sha256:{identity}",
             GenerationWorkerTaskKind.EXAM_ANALYSIS,
-            binding.manifest.id,
+            capability_id,
             binding.manifest.version,
             binding.manifest_fingerprint,
             binding.manifest.required_authority,
