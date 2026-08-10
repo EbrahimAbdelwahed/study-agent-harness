@@ -27,7 +27,6 @@ PUBLIC_NAMES = (
     "StudyCapabilityGateway",
     "StudyCapabilityRegistry",
     "SuspendedCapabilityOutcome",
-    "TerminatedCapabilityOutcome",
     "TutorCapabilityId",
     "encode_capability_outcome",
 )
@@ -53,12 +52,11 @@ def test_facade_exports_only_provider_neutral_capability_contracts() -> None:
         "StudyCapabilityGateway": gateway.StudyCapabilityGateway,
         "StudyCapabilityRegistry": registry.StudyCapabilityRegistry,
         "SuspendedCapabilityOutcome": contracts.SuspendedCapabilityOutcome,
-        "TerminatedCapabilityOutcome": contracts.TerminatedCapabilityOutcome,
         "TutorCapabilityId": contracts.TutorCapabilityId,
         "encode_capability_outcome": contracts.encode_capability_outcome,
     }
 
-    assert facade.__all__ == ()
+    assert not facade.__all__
     assert tuple(sorted(expected)) == tuple(sorted(PUBLIC_NAMES))
     assert {name for name in dir(facade) if not name.startswith("_")} == set()
     for name, implementation in expected.items():
