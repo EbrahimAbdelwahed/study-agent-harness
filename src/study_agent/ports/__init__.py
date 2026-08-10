@@ -2,6 +2,8 @@
 
 # Public re-exports intentionally define the small package-level API.
 
+from typing import TYPE_CHECKING, Any
+
 from .artifact import (
     ArtifactViewPort,
     ServiceDecisionPolicyPort,
@@ -15,13 +17,14 @@ from .assessment import (
     VerifiedGradeOwnerStore,
     VerifiedGradePort,
 )
-from .clock import ClockPort
+from .clock import Clock, ClockPort
 from .course import CourseCatalogPort, CourseNotFoundError, CourseViewPort
 from .host_file import (
     HostFileIdentityPort,
     HostFileIngestionPort,
     HostFileSnapshotStore,
 )
+from .id_factory import IdFactory, IdFactoryPort
 from .knowledge import (
     LexicalCandidate,
     LexicalCandidateList,
@@ -91,7 +94,11 @@ from .storage import (
     BlobStore,
     EventSequenceConflictError,
     EventStore,
+    IdempotencyConflictError,
+    Repository,
+    RunNotFoundError,
     RunStore,
+    RunStoreConflictFailure,
     SourceContentPort,
 )
 from .study_context import StudyContextViewPort
@@ -109,6 +116,29 @@ from .tutor_runner import (
 )
 from .tutor_snapshot import TutorSnapshotPort
 
+if TYPE_CHECKING:
+    from .recall import RecallCommandPort, RecallViewPort
+    from .scheduling import SchedulingPolicyPort
+    from .workaround import WorkaroundApprovalAuthority, WorkaroundExecutor
+
+
+def __getattr__(name: str) -> Any:
+    """Load optional public protocols without activating their feature packages."""
+
+    if name in {"RecallCommandPort", "RecallViewPort"}:
+        from . import recall
+
+        return getattr(recall, name)
+    if name == "SchedulingPolicyPort":
+        from .scheduling import SchedulingPolicyPort
+
+        return SchedulingPolicyPort
+    if name in {"WorkaroundApprovalAuthority", "WorkaroundExecutor"}:
+        from . import workaround
+
+        return getattr(workaround, name)
+    raise AttributeError(name)
+
 __all__ = [
     "MAX_SOURCE_BYTES",
     "MAX_TOTAL_SOURCES",
@@ -119,6 +149,7 @@ __all__ = [
     "AssistantTurnViewPort",
     "BlobStore",
     "CancellationToken",
+    "Clock",
     "ClockPort",
     "CourseCatalogPort",
     "CourseNotFoundError",
@@ -130,6 +161,9 @@ __all__ = [
     "HostFileIdentityPort",
     "HostFileIngestionPort",
     "HostFileSnapshotStore",
+    "IdFactory",
+    "IdFactoryPort",
+    "IdempotencyConflictError",
     "IndexReceipt",
     "LearnerEvidenceViewPort",
     "LexicalCandidate",
@@ -153,6 +187,9 @@ __all__ = [
     "ModelStreamEvent",
     "ModelStreamEventKind",
     "ModelUsage",
+    "RecallCommandPort",
+    "RecallViewPort",
+    "Repository",
     "RetrievalEvidence",
     "RetrievalEvidenceSet",
     "RetrievalPort",
@@ -171,7 +208,10 @@ __all__ = [
     "RetrieverSkipReason",
     "RetrieverSkipReceipt",
     "RetryableTutorDecisionError",
+    "RunNotFoundError",
     "RunStore",
+    "RunStoreConflictFailure",
+    "SchedulingPolicyPort",
     "ServiceDecisionPolicyPort",
     "SessionNotFoundError",
     "SessionViewPort",
@@ -193,5 +233,7 @@ __all__ = [
     "VerifiedGeneratedBatchPort",
     "VerifiedGradeOwnerStore",
     "VerifiedGradePort",
+    "WorkaroundApprovalAuthority",
+    "WorkaroundExecutor",
     "retrieval_read_set_fingerprint",
 ]

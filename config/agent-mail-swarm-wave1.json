@@ -1,0 +1,225 @@
+{
+  "run_id": "foundation-wave1-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 8,
+  "lanes": [
+    {
+      "id": "pf05-source",
+      "agent_name": "BrightRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf05-source-contracts-veu",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "src/study_agent/domain/source.py",
+        "src/study_agent/ports/source_input.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/ingestion/**",
+        "src/study_agent/domain/citation_v2.py",
+        "src/study_agent/knowledge/**",
+        "src/study_agent/api/**",
+        "tests/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/unit/ingestion/test_source_revision_state.py tests/contract/ports/test_source_input_contract.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/domain/source.py src/study_agent/ports/source_input.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf05-ingestion",
+      "agent_name": "SilentForest",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf05-ingestion-adapter-0ev",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "src/study_agent/ingestion/**",
+        "src/study_agent/adapters/filesystem/source_input.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/domain/source.py",
+        "src/study_agent/domain/citation_v2.py",
+        "src/study_agent/knowledge/**",
+        "src/study_agent/api/**",
+        "tests/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/integration/test_text_ingestion.py tests/integration/test_source_projection_replay.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/ingestion src/study_agent/adapters/filesystem/source_input.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf05-citation",
+      "agent_name": "GentleBrook",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf05-citation-verifier-86y",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "src/study_agent/domain/citation_v2.py",
+        "src/study_agent/knowledge/citation.py",
+        "src/study_agent/knowledge/projections.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/domain/source.py",
+        "src/study_agent/ingestion/**",
+        "src/study_agent/api/**",
+        "tests/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/unit/knowledge/test_citation_v2.py tests/integration/test_source_content_resolution.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/domain/citation_v2.py src/study_agent/knowledge/citation.py src/study_agent/knowledge/projections.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf06-manifest",
+      "agent_name": "BoldPine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf06-manifest-contracts-hke",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "src/study_agent/capabilities/contracts.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/capabilities/registry.py",
+        "src/study_agent/capabilities/gateway.py",
+        "src/study_agent/capabilities/bindings.py",
+        "src/study_agent/capabilities/dispatch.py",
+        "src/study_agent/kernel/**",
+        "src/study_agent/ports/**",
+        "src/study_agent/api/**",
+        "tests/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/unit/capabilities/test_capability_contracts.py tests/unit/capabilities/test_gateway_contracts.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/capabilities/contracts.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf06-registry",
+      "agent_name": "QuietLake",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf06-registry-module-i76",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "src/study_agent/capabilities/registry.py",
+        "src/study_agent/kernel/module.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/capabilities/contracts.py",
+        "src/study_agent/capabilities/gateway.py",
+        "src/study_agent/capabilities/bindings.py",
+        "src/study_agent/capabilities/dispatch.py",
+        "src/study_agent/ports/**",
+        "src/study_agent/api/**",
+        "tests/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/capabilities/test_capability_registry_contract.py tests/contract/events/test_kernel_module.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/capabilities/registry.py src/study_agent/kernel/module.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf06-gateway",
+      "agent_name": "BlueRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf06-gateway-dispatch-hx9",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "src/study_agent/capabilities/bindings.py",
+        "src/study_agent/capabilities/gateway.py",
+        "src/study_agent/capabilities/dispatch.py",
+        "src/study_agent/ports/worker.py",
+        "src/study_agent/ports/model.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/capabilities/contracts.py",
+        "src/study_agent/capabilities/registry.py",
+        "src/study_agent/kernel/**",
+        "src/study_agent/api/**",
+        "tests/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/integration/test_capability_gateway_lifecycle.py tests/integration/test_capability_run_recovery.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/capabilities/bindings.py src/study_agent/capabilities/gateway.py src/study_agent/capabilities/dispatch.py src/study_agent/ports/worker.py src/study_agent/ports/model.py",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf05-tests",
+      "agent_name": "CalmRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf05-contract-tests-4ly",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "reserve_paths": [
+        "tests/contract/source_content/**",
+        "tests/contract/sources/**",
+        "tests/unit/knowledge/test_citation_v2.py",
+        "tests/support/pf05/**"
+      ],
+      "forbidden_paths": [
+        "src/**",
+        "tests/contract/capabilities/**",
+        "tests/architecture/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/source_content tests/contract/sources tests/unit/knowledge/test_citation_v2.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check tests/contract/source_content tests/contract/sources tests/unit/knowledge/test_citation_v2.py tests/support/pf05",
+        "git diff --check"
+      ]
+    },
+    {
+      "id": "pf06-tests",
+      "agent_name": "GreenRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "e960a2cedc4658d1f14788b25ff40fb675282748",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pf06-contract-tests-zb5",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "tests/contract/capabilities/**",
+        "tests/architecture/test_capability_gateway_boundaries.py",
+        "tests/architecture/test_tool_registry_boundaries.py",
+        "tests/support/pf06/**"
+      ],
+      "forbidden_paths": [
+        "src/**",
+        "tests/contract/source_content/**",
+        "tests/contract/sources/**",
+        "tests/unit/knowledge/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/capabilities tests/architecture/test_capability_gateway_boundaries.py tests/architecture/test_tool_registry_boundaries.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check tests/contract/capabilities tests/architecture/test_capability_gateway_boundaries.py tests/architecture/test_tool_registry_boundaries.py tests/support/pf06",
+        "git diff --check"
+      ]
+    }
+  ]
+}

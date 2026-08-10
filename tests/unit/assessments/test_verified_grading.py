@@ -38,6 +38,7 @@ from study_agent.assessments.verified_grading import (
     VerifiedGradeOwnerWriter,
 )
 from study_agent.capabilities.bindings import CapabilityBinding
+from study_agent.capabilities.contracts import TutorCapabilityId
 from study_agent.domain import (
     ArtifactRevisionId,
     AssessmentFormat,
@@ -261,6 +262,7 @@ def test_task_factory_is_stable_provider_neutral_and_child_context_is_derived() 
     other = GradeResponseTaskFactory(binding).build(_scope().attempt_id, "Italian", "key-2")
 
     assert task == retry
+    assert task.capability_id is TutorCapabilityId.GRADE_RESPONSE
     assert task.task_id != other.task_id
     assert task.payload == {"attempt_id": "attempt", "language": "Italian"}
     assert "provider" not in task.to_bytes().decode()

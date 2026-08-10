@@ -62,11 +62,39 @@ class SourceSnapshot:
 
 
 class SourceInputPort(Protocol):
-    """Capture exact source bytes beneath an adapter-owned trusted root."""
+    """Capture exact source bytes beneath an adapter-owned trusted root.
+
+    Implementations must validate each returned snapshot and apply
+    ``validate_source_snapshots`` to batch results before returning them. The
+    port receives host-owned relative names; it never discovers or traverses a
+    directory on its own.
+    """
 
     def snapshot(self, relative_path: str) -> SourceSnapshot: ...
 
     def snapshots(self, relative_paths: Sequence[str]) -> tuple[SourceSnapshot, ...]: ...
+
+
+def validate_source_snapshots(
+    snapshots: Sequence[SourceSnapshot],
+) -> tuple[SourceSnapshot, ...]:
+    """Validate a bounded, deterministic batch captured by a source adapter."""
+    if isinstance(snapshots, (str, bytes, bytearray)) or not isinstance(snapshots, Sequence):
+        raise ValueError("source snapshots must be a sequence")
+    captured = tuple(snapshots)
+    if len(captured) > MAX_TOTAL_SOURCES:
+        raise ValueError(f"source snapshot count must not exceed {MAX_TOTAL_SOURCES}")
+    if any(not isinstance(snapshot, SourceSnapshot) for snapshot in captured):
+        raise ValueError("source snapshots must contain SourceSnapshot values")
+    paths = tuple(snapshot.relative_path for snapshot in captured)
+    if len(set(paths)) != len(paths):
+        raise ValueError("source snapshot relative_path values must be unique")
+    total_bytes = sum(snapshot.byte_size for snapshot in captured)
+    if total_bytes > MAX_TOTAL_SOURCE_BYTES:
+        raise ValueError(
+            f"source snapshot total byte size must not exceed {MAX_TOTAL_SOURCE_BYTES}"
+        )
+    return captured
 
 
 def _validate_relative_source_path(value: object) -> None:
@@ -100,4 +128,5 @@ __all__ = [
     "MAX_TOTAL_SOURCE_BYTES",
     "SourceInputPort",
     "SourceSnapshot",
+    "validate_source_snapshots",
 ]

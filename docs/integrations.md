@@ -64,9 +64,11 @@ not part of the public contract.
 ## Current limits
 
 This is an alpha integration surface. The package does not promise a stable
-top-level client facade, hosted authentication, multi-tenancy, a browser shell,
-or automatic provider selection. Recall scheduling remains unavailable until a
-contemporary canonical owner is integrated and verified.
+top-level client facade, hosted authentication, multi-tenancy, or automatic
+provider selection. Recall scheduling is an optional host-owned composition;
+it is not exposed as a public agent operation and reports explicit availability
+when its policy adapter is not configured. The bundled browser shell remains a
+reference surface rather than a hosted product.
 
 Importing the core does not initialize a repository, read credentials, contact
 a provider, or require an optional model SDK.

@@ -31,6 +31,7 @@ from study_agent.artifacts.verified_batch import (
     VerifiedGeneratedOwnerResolverAdapter,
     VerifiedLessonOwnerWriterAdapter,
 )
+from study_agent.capabilities import TutorCapabilityId
 from study_agent.capabilities.hybrid_flashcards import (
     HybridFlashcardTaskBinding,
     HybridPlannedBundleWorker,
@@ -563,6 +564,8 @@ def _profile_expectation() -> ProfileTaskExpectation:
         model_adapter=ArtifactReference("scripted-adapter", SemanticVersion.parse("1.0.0")),
         state_contract=ArtifactReference("state", SemanticVersion.parse("1.0.0")),
     )
+    capability_id = binding.manifest.id
+    assert capability_id is TutorCapabilityId.PROPOSE_FLASHCARDS
     return ProfileTaskExpectation(
         ProfileSelectionReceipt(
             HYBRID_MACRO_DETAIL_V1,
@@ -571,7 +574,7 @@ def _profile_expectation() -> ProfileTaskExpectation:
             PrincipalKind.SERVICE,
             ProfileSelectionBasis(),
         ),
-        binding.manifest.id,
+        capability_id,
         binding.manifest.version,
         binding.manifest_fingerprint,
         binding.manifest.required_authority,

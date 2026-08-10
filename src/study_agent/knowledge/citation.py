@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from study_agent.domain.citation_v2 import (
+    FIGURE_CITATION_VERSION,
     TEXT_CITATION_VERSION,
     Citation,
     CitationFailure,
@@ -46,6 +47,23 @@ class ResolvedCitation:
     selection_status: SelectionStatus
     successor: RevisionRef | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.citation, (TextCitationV2, FigureCitationV1)):
+            raise TypeError("resolved citation requires a canonical citation")
+        if not isinstance(self.selection_status, SelectionStatus):
+            raise TypeError("selection_status must be SelectionStatus")
+        if self.successor is not None and not isinstance(self.successor, RevisionRef):
+            raise TypeError("successor must be RevisionRef or None")
+        if self.selection_status is SelectionStatus.CURRENT and self.successor is not None:
+            raise ValueError("a current citation cannot have a successor")
+        if isinstance(self.citation, TextCitationV2):
+            if not isinstance(self.text, str) or not self.text:
+                raise ValueError("text citations must resolve to non-empty text")
+            if self.successor == RevisionRef(self.citation.source_id, self.citation.revision_id):
+                raise ValueError("a citation cannot supersede itself")
+        elif self.text is not None:
+            raise ValueError("figure citations resolve without text")
+
     @property
     def is_superseded(self) -> bool:
         return self.successor is not None
@@ -59,8 +77,19 @@ def _fail(kind: CitationFailureKind, message: str) -> CitationFailure:
     return CitationFailure(kind, message)
 
 
+def _require_resolution_metadata(
+    selection_status: SelectionStatus, successor: RevisionRef | None
+) -> None:
+    if not isinstance(selection_status, SelectionStatus):
+        raise TypeError("selection_status must be SelectionStatus")
+    if successor is not None and not isinstance(successor, RevisionRef):
+        raise TypeError("successor must be RevisionRef or None")
+    if selection_status is SelectionStatus.CURRENT and successor is not None:
+        raise ValueError("a current citation cannot have a successor")
+
+
 def verify_text_citation(
-    citation: TextCitationV2,
+    citation: Citation | DerivedRef,
     *,
     substrate_bytes: bytes,
     unit: RetrievableUnit,
@@ -77,6 +106,9 @@ def verify_text_citation(
         )
     if citation.version != TEXT_CITATION_VERSION:
         raise _fail(CitationFailureKind.UNSUPPORTED_VERSION, "unknown citation version")
+    _require_resolution_metadata(selection_status, successor)
+    if successor == RevisionRef(citation.source_id, citation.revision_id):
+        raise _fail(CitationFailureKind.REFERENCE_MISMATCH, "a citation cannot supersede itself")
     if not isinstance(substrate_bytes, bytes) or not substrate_bytes:
         raise _fail(CitationFailureKind.MISSING, "substrate bytes were not supplied")
 
@@ -98,6 +130,8 @@ def verify_text_citation(
             CitationFailureKind.REFERENCE_MISMATCH,
             "unit and citation reference different substrates",
         )
+    if span.start > len(text) or span.end > len(text):
+        raise _fail(CitationFailureKind.CORRUPT, "unit span exceeds the substrate")
     if citation.end > len(text):
         raise _fail(CitationFailureKind.MALFORMED_SPAN, "span exceeds the substrate")
     if citation.start < span.start or citation.end > span.end:
@@ -113,7 +147,7 @@ def verify_text_citation(
 
 
 def verify_figure_citation(
-    citation: FigureCitationV1,
+    citation: Citation | DerivedRef,
     *,
     image_bytes: bytes,
     selection_status: SelectionStatus,
@@ -127,6 +161,9 @@ def verify_figure_citation(
             CitationFailureKind.UNSUPPORTED_VERSION,
             "only FigureCitationV1 resolves through this verifier",
         )
+    if citation.version != FIGURE_CITATION_VERSION:
+        raise _fail(CitationFailureKind.UNSUPPORTED_VERSION, "unknown citation version")
+    _require_resolution_metadata(selection_status, successor)
     if not isinstance(image_bytes, bytes) or not image_bytes:
         raise _fail(CitationFailureKind.MISSING, "image bytes were not supplied")
     if len(image_bytes) != citation.byte_length:
@@ -150,6 +187,8 @@ def _canonical_text(substrate_bytes: bytes) -> str:
 
 
 def _quoted_digest(value: str, reason: str) -> str:
+    if not isinstance(value, str):
+        raise _fail(CitationFailureKind.CORRUPT, reason)
     try:
         return sha256(value.encode("utf-8")).hexdigest()
     except UnicodeEncodeError as error:
@@ -177,12 +216,20 @@ def text_citation_for(
     page_hint: int | None = None,
 ) -> TextCitationV2:
     """Mint a citation from canonical bytes, never from caller-supplied text."""
+    if not isinstance(unit, RetrievableUnit):
+        raise _fail(CitationFailureKind.MISSING, "the citing unit was not supplied")
     if not isinstance(unit.canonical_ref, TextSpan):
         raise _fail(
             CitationFailureKind.REFERENCE_MISMATCH,
             "only a text unit can produce a text citation",
         )
+    if not isinstance(substrate_bytes, bytes) or not substrate_bytes:
+        raise _fail(CitationFailureKind.MISSING, "substrate bytes were not supplied")
     text = _canonical_text(substrate_bytes)
+    if substrate_id_for(substrate_bytes) != unit.canonical_ref.substrate_id:
+        raise _fail(CitationFailureKind.CORRUPT, "substrate bytes do not match the unit")
+    if type(start) is not int or type(end) is not int:
+        raise _fail(CitationFailureKind.MALFORMED_SPAN, "span offsets must be integers")
     if start < 0 or end <= start or end > len(text):
         raise _fail(CitationFailureKind.MALFORMED_SPAN, "span is outside the substrate")
     citation = TextCitationV2(
@@ -224,6 +271,8 @@ def upgrade_v1_citation(
     """
     if not isinstance(legacy, LegacyCitation):
         raise _fail(CitationFailureKind.UNSUPPORTED_VERSION, "expected a v0.1 Citation")
+    if not isinstance(unit, RetrievableUnit):
+        raise _fail(CitationFailureKind.MISSING, "the migrated unit was not supplied")
     if legacy.source_id != unit.source_id or legacy.revision_id != unit.revision_id:
         raise _fail(
             CitationFailureKind.REFERENCE_MISMATCH,

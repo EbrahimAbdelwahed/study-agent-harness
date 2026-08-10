@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -23,6 +23,8 @@ class ModelMessage:
     tool_call_id: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.role, MessageRole):
+            raise TypeError("role must use MessageRole")
         require_text(self.content, "content")
         if self.name is not None:
             require_text(self.name, "name")
@@ -55,9 +57,24 @@ class ModelCapabilities:
     extensions: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "extensions", frozenset(self.extensions))
-        if self.context_window_tokens is not None and self.context_window_tokens < 1:
-            raise ValueError("context_window_tokens must be positive")
+        for name in ("streaming", "structured_output", "tool_calls", "cancellation"):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"{name} must be boolean")
+        if isinstance(self.extensions, (str, bytes, bytearray)):
+            raise TypeError("extensions must be a collection of strings")
+        extension_values = tuple(self.extensions)
+        if not all(isinstance(item, str) for item in extension_values):
+            raise TypeError("extensions must contain strings")
+        for item in extension_values:
+            require_text(item, "model capability extension")
+        if len(set(extension_values)) != len(extension_values):
+            raise ValueError("extensions must be unique")
+        object.__setattr__(self, "extensions", frozenset(extension_values))
+        if self.context_window_tokens is not None:
+            if type(self.context_window_tokens) is not int:
+                raise TypeError("context_window_tokens must be an integer")
+            if self.context_window_tokens < 1:
+                raise ValueError("context_window_tokens must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +98,28 @@ class ModelRequest:
         object.__setattr__(self, "messages", tuple(self.messages))
         if not self.messages:
             raise ValueError("messages must not be empty")
-        if self.max_output_tokens is not None and self.max_output_tokens < 1:
-            raise ValueError("max_output_tokens must be positive")
-        if self.temperature is not None and not 0 <= self.temperature <= 2:
-            raise ValueError("temperature must be between 0 and 2")
+        if not all(isinstance(item, ModelMessage) for item in self.messages):
+            raise TypeError("messages must use ModelMessage")
+        if self.structured_output is not None and not isinstance(
+            self.structured_output, StructuredOutputConstraint
+        ):
+            raise TypeError("structured_output must use StructuredOutputConstraint")
+        if self.cancellation is not None and not isinstance(
+            self.cancellation, CancellationToken
+        ):
+            raise TypeError("cancellation must use CancellationToken")
+        if self.max_output_tokens is not None:
+            if type(self.max_output_tokens) is not int:
+                raise TypeError("max_output_tokens must be an integer")
+            if self.max_output_tokens < 1:
+                raise ValueError("max_output_tokens must be positive")
+        if self.temperature is not None:
+            if not isinstance(self.temperature, (int, float)) or isinstance(
+                self.temperature, bool
+            ):
+                raise TypeError("temperature must be a number")
+            if not 0 <= self.temperature <= 2:
+                raise ValueError("temperature must be between 0 and 2")
         object.__setattr__(self, "metadata", freeze_object(self.metadata))
 
 
@@ -136,6 +171,10 @@ class ModelError(Exception):
     """Safe portable adapter failure with no provider response details."""
 
     def __init__(self, code: ModelErrorCode, message: str, *, retryable: bool = False) -> None:
+        if not isinstance(code, ModelErrorCode):
+            raise TypeError("model error code must use ModelErrorCode")
+        if type(retryable) is not bool:
+            raise TypeError("model error retryable flag must be boolean")
         require_text(message, "model error message")
         super().__init__(message)
         self.code = code
@@ -164,7 +203,15 @@ class ModelResponse:
     structured_output: JsonObject | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.content, str):
+            raise TypeError("content must be text")
+        if self.usage is not None and not isinstance(self.usage, ModelUsage):
+            raise TypeError("usage must use ModelUsage")
+        if not isinstance(self.invocation, ModelInvocation):
+            raise TypeError("invocation must use ModelInvocation")
         object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
+        if not all(isinstance(item, ToolCall) for item in self.tool_calls):
+            raise TypeError("tool_calls must use ToolCall")
         try:
             object.__setattr__(self, "finish_reason", ModelFinishReason(self.finish_reason))
         except ValueError as error:
@@ -176,6 +223,8 @@ class ModelResponse:
         if self.tool_calls and self.finish_reason is not ModelFinishReason.TOOL_CALLS:
             raise ValueError("tool call responses require the tool_calls finish reason")
         if self.structured_output is not None:
+            if not isinstance(self.structured_output, Mapping):
+                raise TypeError("structured_output must be a JSON object")
             object.__setattr__(
                 self, "structured_output", freeze_object(self.structured_output)
             )
@@ -200,6 +249,18 @@ class ModelStreamEvent:
     error: ModelError | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, ModelStreamEventKind):
+            raise TypeError("stream event kind must use ModelStreamEventKind")
+        if self.tool_call is not None and not isinstance(self.tool_call, ToolCall):
+            raise TypeError("tool_call must use ToolCall")
+        if self.usage is not None and not isinstance(self.usage, ModelUsage):
+            raise TypeError("usage must use ModelUsage")
+        if self.finish_reason is not None and not isinstance(
+            self.finish_reason, ModelFinishReason
+        ):
+            raise TypeError("finish_reason must use ModelFinishReason")
+        if self.error is not None and not isinstance(self.error, ModelError):
+            raise TypeError("error must use ModelError")
         present = {
             "content_delta": self.content_delta is not None,
             "tool_call": self.tool_call is not None,

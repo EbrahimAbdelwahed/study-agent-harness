@@ -95,8 +95,8 @@ demonstrates the installed CLI boundary without depending on an agent SDK.
 
 This is not yet a general-purpose stable Python SDK. Repository composition is
 a reference implementation, not a promised top-level facade. Recall scheduling
-is reported honestly as unavailable until a contemporary canonical owner is
-integrated and verified.
+is available through the optional `recall` extra and reports an explicit
+availability state when its policy adapter is not configured.
 
 ### Agent-operated setup
 
@@ -187,6 +187,13 @@ external-agent example. The exact local procedure lives in the
 
 Network smoke tests are opt-in. Default tests must not require credentials, a
 provider SDK, or a hosted service.
+
+## Context and roadmap
+
+The canonical glossary and implemented invariants live in
+[`CONTEXT.md`](CONTEXT.md). [`CONTEXT-MAP.md`](CONTEXT-MAP.md) separates current
+behavior, approved target, and implementation gaps. [`ROADMAP.md`](ROADMAP.md)
+is the single public home for ordered future work and non-goals.
 
 ## Status and project policies
 

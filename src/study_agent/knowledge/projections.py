@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from math import isfinite
+from typing import cast
 
 from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.projections import (
@@ -257,6 +258,51 @@ def _mapping(value: JsonValue | None, name: str) -> Mapping[str, JsonValue]:
     return value
 
 
+def _decoded_projection_rows(
+    value: JsonValue | None,
+) -> dict[str, IndexProjection]:
+    rows = _mapping(value, PROJECTIONS_STATE_KEY)
+    decoded: dict[str, IndexProjection] = {}
+    for key, raw in rows.items():
+        if not isinstance(key, str) or not isinstance(raw, Mapping):
+            raise ValueError("projection state row is invalid")
+        projection = IndexProjection.from_json(raw)
+        expected_key = str(projection.projection_id)
+        if key != expected_key:
+            raise ValueError("projection state key does not match projection identity")
+        if key in decoded:
+            raise ValueError("projection state contains duplicate projection identities")
+        decoded[key] = projection
+    return decoded
+
+
+def _validate_projection_index(
+    value: JsonValue | None,
+    rows: Mapping[str, IndexProjection],
+) -> dict[str, tuple[str, ...]]:
+    raw_index = _mapping(value, PROJECTION_UNITS_STATE_KEY)
+    by_unit: dict[str, tuple[str, ...]] = {}
+    for unit_key, raw_keys in raw_index.items():
+        if not isinstance(unit_key, str) or not isinstance(raw_keys, tuple):
+            raise ValueError("projection unit index is invalid")
+        keys = cast(tuple[str, ...], raw_keys)
+        if any(not isinstance(key, str) for key in keys):
+            raise ValueError("projection unit index is invalid")
+        if len(set(keys)) != len(keys):
+            raise ValueError("projection unit index contains duplicate identities")
+        for key in keys:
+            projection = rows.get(key)
+            if projection is None:
+                raise ValueError("projection unit index references an unknown projection")
+            if str(projection.unit_id) != unit_key:
+                raise ValueError("projection unit index does not match projection identity")
+        by_unit[unit_key] = keys
+    indexed = {key for keys in by_unit.values() for key in keys}
+    if indexed != set(rows):
+        raise ValueError("projection unit index is incomplete")
+    return by_unit
+
+
 def reduce_projections(
     state: JsonObject,
     projections: Sequence[IndexProjection],
@@ -264,8 +310,15 @@ def reduce_projections(
     unitizer_version: str = UNITIZER_VERSION,
 ) -> Mapping[str, JsonValue]:
     canonical_units = _canonical_units(state, unitizer_version=unitizer_version)
-    rows = dict(_mapping(state.get(PROJECTIONS_STATE_KEY, {}), PROJECTIONS_STATE_KEY))
-    by_unit = dict(_mapping(state.get(PROJECTION_UNITS_STATE_KEY, {}), PROJECTION_UNITS_STATE_KEY))
+    existing_rows = _decoded_projection_rows(state.get(PROJECTIONS_STATE_KEY, {}))
+    for projection in existing_rows.values():
+        if str(projection.unit_id) not in canonical_units:
+            raise ValueError("projection references an unknown canonical unit")
+    existing_index = _validate_projection_index(
+        state.get(PROJECTION_UNITS_STATE_KEY, {}), existing_rows
+    )
+    rows = {key: projection.to_json() for key, projection in existing_rows.items()}
+    by_unit = dict(existing_index)
     for projection in projections:
         admit_projection(projection)
         if str(projection.unit_id) not in canonical_units:
@@ -276,8 +329,6 @@ def reduce_projections(
         rows[key] = encoded
         unit_key = str(projection.unit_id)
         current = by_unit.get(unit_key, ())
-        if not isinstance(current, tuple) or any(not isinstance(item, str) for item in current):
-            raise ValueError("projection unit index is invalid")
         if key not in current:
             by_unit[unit_key] = (*current, key)
     return {**state, PROJECTIONS_STATE_KEY: rows, PROJECTION_UNITS_STATE_KEY: by_unit}
@@ -308,15 +359,15 @@ def delete_projections(
 ) -> Mapping[str, JsonValue]:
     if projector_version is not None and projector_name is None:
         raise ValueError("projector_version requires projector_name")
-    rows = dict(_mapping(state.get(PROJECTIONS_STATE_KEY, {}), PROJECTIONS_STATE_KEY))
-    by_unit = dict(_mapping(state.get(PROJECTION_UNITS_STATE_KEY, {}), PROJECTION_UNITS_STATE_KEY))
     selected, units = {str(x) for x in projection_ids}, {str(x) for x in unit_ids}
     if not selected and not units and projector_name is None and projector_version is None:
         return state
-    for key, raw in tuple(rows.items()):
-        if not isinstance(raw, Mapping):
-            raise ValueError("projection state row is invalid")
-        projection = IndexProjection.from_json(raw)
+    decoded = _decoded_projection_rows(state.get(PROJECTIONS_STATE_KEY, {}))
+    by_unit = _validate_projection_index(
+        state.get(PROJECTION_UNITS_STATE_KEY, {}), decoded
+    )
+    rows = {key: projection.to_json() for key, projection in decoded.items()}
+    for key, projection in tuple(decoded.items()):
         producer_match = (
             (projector_name is None or projection.projector_name == projector_name)
             and (projector_version is None or projection.projector_version == projector_version)
@@ -326,8 +377,6 @@ def delete_projections(
         if remove:
             rows.pop(key)
     for unit_key, keys in tuple(by_unit.items()):
-        if not isinstance(keys, tuple):
-            raise ValueError("projection unit index is invalid")
         remaining = tuple(key for key in keys if key in rows)
         if remaining:
             by_unit[unit_key] = remaining

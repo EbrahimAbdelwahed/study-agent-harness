@@ -1,0 +1,49 @@
+{
+  "run_id": "foundation-pf06-rereview-fix-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 1,
+  "lanes": [
+    {
+      "id": "pf06-canonical-rereview",
+      "agent_name": "BlueRiver",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "5415729",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-59x.1",
+      "brief": "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "reserve_paths": [
+        "src/study_agent/api/capabilities.py",
+        "src/study_agent/capabilities/contracts.py",
+        "src/study_agent/ports/model.py",
+        "tests/architecture/test_public_facade_boundaries.py",
+        "tests/contract/capabilities/test_capability_contract_codec.py",
+        "tests/contract/capabilities/test_capability_manifest_contract.py",
+        "tests/unit/capabilities/test_capability_contracts.py"
+      ],
+      "forbidden_paths": [
+        "src/study_agent/capabilities/gateway.py",
+        "src/study_agent/capabilities/registry.py",
+        "src/study_agent/kernel/**",
+        "src/study_agent/hosts/**",
+        "src/study_agent/workers/**",
+        "src/study_agent/domain/source.py",
+        "src/study_agent/domain/source_identity.py",
+        "src/study_agent/ingestion/**",
+        "tests/integration/test_capability_gateway_lifecycle.py",
+        "tests/unit/hosts/**",
+        "tests/unit/workers/**",
+        "specs/**",
+        "docs/worker-briefs/**"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/contract/capabilities/test_capability_contract_codec.py tests/contract/capabilities/test_capability_manifest_contract.py tests/unit/capabilities/test_capability_contracts.py tests/architecture/test_public_facade_boundaries.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check src/study_agent/api/capabilities.py src/study_agent/capabilities/contracts.py src/study_agent/ports/model.py tests/architecture/test_public_facade_boundaries.py tests/contract/capabilities/test_capability_contract_codec.py tests/contract/capabilities/test_capability_manifest_contract.py tests/unit/capabilities/test_capability_contracts.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict src/study_agent/api/capabilities.py src/study_agent/capabilities/contracts.py src/study_agent/ports/model.py tests/architecture/test_public_facade_boundaries.py tests/contract/capabilities/test_capability_contract_codec.py tests/contract/capabilities/test_capability_manifest_contract.py tests/unit/capabilities/test_capability_contracts.py",
+        "git diff --check"
+      ]
+    }
+  ]
+}

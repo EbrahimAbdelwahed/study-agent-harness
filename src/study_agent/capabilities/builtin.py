@@ -33,6 +33,7 @@ from .bindings import CapabilityBinding, CapabilityDependencyResolver
 from .contracts import CapabilityManifest, TutorCapabilityId
 
 VERSION = EXPLAIN_CONCEPT_SKILL.version
+IMPLEMENTATION_VERSION = VERSION
 
 EXPLAIN_CONCEPT_MANIFEST = CapabilityManifest(
     TutorCapabilityId.EXPLAIN_CONCEPT,
@@ -41,6 +42,7 @@ EXPLAIN_CONCEPT_MANIFEST = CapabilityManifest(
     EXPLAIN_CONCEPT_OUTPUT_SCHEMA.value,
     ("course:read",),
     True,
+    IMPLEMENTATION_VERSION,
 )
 
 ASSESS_UNDERSTANDING_MANIFEST = CapabilityManifest(
@@ -50,6 +52,7 @@ ASSESS_UNDERSTANDING_MANIFEST = CapabilityManifest(
     ASSESS_UNDERSTANDING_OUTPUT_SCHEMA.value,
     ("course:read",),
     True,
+    IMPLEMENTATION_VERSION,
 )
 
 PROPOSE_FLASHCARDS_MANIFEST = CapabilityManifest(
@@ -59,6 +62,7 @@ PROPOSE_FLASHCARDS_MANIFEST = CapabilityManifest(
     PROPOSE_FLASHCARDS_OUTPUT_SCHEMA.value,
     ("course:read",),
     True,
+    IMPLEMENTATION_VERSION,
 )
 
 ANALYZE_EXAM_SAMPLE_MANIFEST = CapabilityManifest(
@@ -68,6 +72,7 @@ ANALYZE_EXAM_SAMPLE_MANIFEST = CapabilityManifest(
     EXAM_ANALYSIS_OUTPUT_SCHEMA.value,
     ("course:read",),
     False,
+    IMPLEMENTATION_VERSION,
 )
 
 GRADE_RESPONSE_MANIFEST = CapabilityManifest(
@@ -77,6 +82,7 @@ GRADE_RESPONSE_MANIFEST = CapabilityManifest(
     GRADE_RESPONSE_OUTPUT_SCHEMA.value,
     ("course:read",),
     False,
+    IMPLEMENTATION_VERSION,
 )
 
 

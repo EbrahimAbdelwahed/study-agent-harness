@@ -1,0 +1,43 @@
+{
+  "run_id": "foundation-pf06-stale-tests-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 1,
+  "lanes": [
+    {
+      "id": "pf06-stale-tests",
+      "agent_name": "GreenMaple",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-0wd",
+      "brief": "docs/worker-briefs/20260810-pf06-stale-tests.md",
+      "reserve_paths": [
+        "tests/architecture/test_artifact_contract_boundaries.py",
+        "tests/architecture/test_artifact_lifecycle_boundaries.py",
+        "tests/contract/events/test_kernel_module.py",
+        "tests/contract/test_public_capabilities_facade.py",
+        "tests/unit/capabilities/test_flashcard_dispatch.py"
+      ],
+      "forbidden_paths": [
+        "src/**",
+        "specs/**",
+        "docs/**",
+        "tests/contract/capabilities/**",
+        "tests/unit/capabilities/test_gateway_contracts.py",
+        "tests/integration/test_capability_gateway_lifecycle.py",
+        "tests/integration/test_builtin_capability_gateway.py",
+        "tests/integration/test_capability_run_recovery.py",
+        "tests/architecture/test_capability_gateway_boundaries.py"
+      ],
+      "verification": [
+        "uv run --frozen --offline --python 3.13 --extra dev pytest -q tests/architecture/test_artifact_contract_boundaries.py tests/architecture/test_artifact_lifecycle_boundaries.py tests/contract/events/test_kernel_module.py tests/contract/test_public_capabilities_facade.py tests/unit/capabilities/test_flashcard_dispatch.py",
+        "uv run --frozen --offline --python 3.13 --extra dev ruff check tests/architecture/test_artifact_contract_boundaries.py tests/architecture/test_artifact_lifecycle_boundaries.py tests/contract/events/test_kernel_module.py tests/contract/test_public_capabilities_facade.py tests/unit/capabilities/test_flashcard_dispatch.py",
+        "uv run --frozen --offline --python 3.13 --extra dev mypy --strict tests/architecture/test_artifact_contract_boundaries.py tests/architecture/test_artifact_lifecycle_boundaries.py tests/contract/events/test_kernel_module.py tests/contract/test_public_capabilities_facade.py tests/unit/capabilities/test_flashcard_dispatch.py",
+        "git diff --check"
+      ]
+    }
+  ]
+}

@@ -1036,7 +1036,7 @@ class PlaybookEngine:
 
     def _compare_and_set(self, run_id: RunId, expected: bytes, replacement: bytes) -> bool:
         try:
-            return self._run_store.compare_and_set(run_id, expected, replacement)
+            return self._run_store.compare_and_set(run_id, expected, replacement) is True
         except Exception as error:
             self._raise(
                 EngineErrorCode.RUN_STORE_ERROR,
