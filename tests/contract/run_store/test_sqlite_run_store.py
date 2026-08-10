@@ -61,7 +61,7 @@ def test_concurrent_creators_and_cas_writers_have_one_winner(tmp_path: Path) -> 
 
     def replace(payload: bytes) -> bool:
         cas_barrier.wait()
-        return store.compare_and_set(run_id, expected, payload)
+        return store.compare_and_set(run_id, expected, payload) is True
 
     replacements = tuple(bytes([index + 10]) for index in range(8))
     with ThreadPoolExecutor(max_workers=8) as executor:

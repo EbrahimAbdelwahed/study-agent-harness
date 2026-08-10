@@ -1,6 +1,6 @@
 # Task Bead: TUT-07 recall and scheduling
 
-Status: Refined; blocked on TUT-05
+Status: Done — TUT-07A/B/C/D and real-FSRS CI verified 2026-07-24
 Priority: P1
 Type: tracer-bullet
 Depends On: TUT-04, TUT-05

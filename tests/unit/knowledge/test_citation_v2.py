@@ -4,19 +4,20 @@ from hashlib import sha256
 
 import pytest
 
-from study_agent.domain import (
-    Citation as LegacyCitation,
-)
-from study_agent.domain import (
+from study_agent.api.sources import (
     CitationFailure,
     CitationFailureKind,
     DerivedRef,
     FigureCitationV1,
+    TextCitationV2,
+    citation_from_bytes,
+)
+from study_agent.domain import Citation as LegacyCitation
+from study_agent.domain import (
     RetrievableUnit,
     RevisionId,
     SelectionStatus,
     SourceId,
-    TextCitationV2,
     TextSpan,
     UnitKind,
     UnitMeta,
@@ -367,3 +368,24 @@ def test_a_locator_cannot_carry_a_paragraph() -> None:
             SOURCE, REVISION, unit().unit_id, SUBSTRATE, 0, 6,
             sha256(TEXT[0:6].encode()).hexdigest(), "x" * 5000,
         )
+
+
+# --- canonical citation bytes --------------------------------------------
+
+
+def test_malformed_unicode_citation_bytes_fail_as_corrupt() -> None:
+    malformed = cite().to_bytes().replace(b'"dispensa"', b'"\\ud800"')
+
+    with pytest.raises(CitationFailure) as error:
+        TextCitationV2.from_bytes(malformed)
+
+    assert kind_of(error) is CitationFailureKind.CORRUPT
+
+
+def test_noncanonical_citation_bytes_fail_as_corrupt() -> None:
+    noncanonical = cite().to_bytes().replace(b",", b", ", 1)
+
+    with pytest.raises(CitationFailure) as error:
+        citation_from_bytes(noncanonical)
+
+    assert kind_of(error) is CitationFailureKind.CORRUPT

@@ -301,6 +301,7 @@ def _manifest(*, authority: tuple[str, ...] = ("study:explain",)) -> CapabilityM
         OUTPUT_SCHEMA,
         authority,
         True,
+        V1,
     )
 
 
@@ -413,6 +414,7 @@ def _schema_gateway(
         OUTPUT_SCHEMA,
         ("study:explain",),
         True,
+        V1,
     )
     skill = replace(
         _skill(definition),
@@ -467,6 +469,7 @@ def _model_failure_gateway(
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = replace(_skill(definition), required_tools=())
     pins = VersionPins(
@@ -577,7 +580,7 @@ def test_start_rejects_authority_identity_schema_and_dependencies_before_engine_
     assert duplicate.calls == 1 and tool.calls == 0
 
 
-def test_run_identity_ignores_correlation_and_model_run_but_binds_authority_scope() -> None:
+def test_run_identity_is_one_capability_idempotency_slot() -> None:
     gateway, _, resolver = _gateway()
     first = asyncio.run(
         gateway.start(TutorCapabilityId.EXPLAIN_CONCEPT, INPUTS, _context())
@@ -610,8 +613,9 @@ def test_run_identity_ignores_correlation_and_model_run_but_binds_authority_scop
         )
         assert isinstance(outcome, SuspendedCapabilityOutcome)
         identities.append(outcome.run_id)
-    assert first.run_id not in identities
-    assert len(set(identities)) == len(identities)
+    assert identities[:5] == [first.run_id] * 5
+    assert identities[5] != first.run_id
+    assert len(set(identities)) == 2
 
     changed_manifest, _, _ = _gateway(authority=("study:explain", "study:extra"))
     changed = asyncio.run(
@@ -622,7 +626,29 @@ def test_run_identity_ignores_correlation_and_model_run_but_binds_authority_scop
         )
     )
     assert isinstance(changed, SuspendedCapabilityOutcome)
-    assert changed.run_id != first.run_id
+    assert changed.run_id == first.run_id
+
+
+def test_shared_idempotency_slot_rejects_changed_authority_without_effects() -> None:
+    store = MemoryRunStore()
+    first_gateway, _, _ = _gateway(store=store)
+    first = asyncio.run(
+        first_gateway.start(TutorCapabilityId.EXPLAIN_CONCEPT, INPUTS, _context())
+    )
+    assert isinstance(first, SuspendedCapabilityOutcome)
+
+    retry_gateway, retry_tool, _ = _gateway(store=store)
+    with pytest.raises(CapabilityGatewayError) as caught:
+        asyncio.run(
+            retry_gateway.start(
+                TutorCapabilityId.EXPLAIN_CONCEPT,
+                INPUTS,
+                _context(principal_id="different-host"),
+            )
+        )
+
+    assert caught.value.code is CapabilityGatewayErrorCode.CONFLICT
+    assert retry_tool.calls == 0
 
 
 def test_start_resume_and_cas_loser_retries_converge_without_repeating_effects() -> None:
@@ -680,7 +706,11 @@ def test_resume_token_binds_every_generation_authority_and_runtime_field() -> No
         replace(token, checkpoint_fingerprint="5" * 64),
         replace(token, dialogue_step_id="later_dialogue"),
         replace(token, next_step_index=2),
-        replace(token, inputs={"topic": "mitral valve"}),
+        replace(
+            token,
+            inputs={"topic": "mitral valve"},
+            input_fingerprint=None,
+        ),
         replace(
             token,
             pins=replace(
@@ -1071,6 +1101,7 @@ def test_real_engine_terminal_outcomes_expose_proof_only_for_termination() -> No
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = replace(
         _skill(definition),
@@ -1159,6 +1190,7 @@ def test_ambiguous_running_retry_is_retryable_in_progress_without_reexecution() 
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = _skill(definition)
     dependencies = Dependencies()

@@ -21,7 +21,7 @@ from study_agent.ingestion import (
     decode_source_revision_selected_event,
 )
 from study_agent.ports.retrieval import RetrievalDocument
-from study_agent.ports.storage import BlobStore, EventStore
+from study_agent.ports.storage import BlobStore, _LegacyEventStore, _read_domain_events
 
 from .errors import SourceContentError, SourceContentErrorCode
 
@@ -41,7 +41,7 @@ class SourceRevisionRecord:
 class CourseSourceContent:
     """Read-only canonical source adapter scoped to one course event stream."""
 
-    def __init__(self, course_id: CourseId, events: EventStore, blobs: BlobStore) -> None:
+    def __init__(self, course_id: CourseId, events: _LegacyEventStore, blobs: BlobStore) -> None:
         self._course_id = course_id
         self._events = events
         self._blobs = blobs
@@ -55,7 +55,7 @@ class CourseSourceContent:
         decoded: list[tuple[SourceRevisionIngested, str]] = []
         seen: dict[tuple[SourceId, RevisionId], SourceRevisionIngested] = {}
         current: dict[SourceId, RevisionId] = {}
-        for event in self._events.read(self._course_id):
+        for event in _read_domain_events(self._events, self._course_id):
             if (
                 event.event_type == SOURCE_REVISION_SELECTED
                 and event.schema_version == SOURCE_REVISION_SELECTED_SCHEMA_VERSION

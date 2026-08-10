@@ -309,15 +309,52 @@ def decode_source_revision_ingested(payload: JsonObject) -> SourceRevisionIngest
     if not isinstance(chunks_value, tuple):
         raise ValueError("chunks must be an array")
     chunks = tuple(_chunk(value, index) for index, value in enumerate(chunks_value))
-    return SourceRevisionIngested(
+    decoded = SourceRevisionIngested(
         source,
         chunks,
         _integer(payload.get("normalized_character_length"), "normalized_character_length"),
         _chunking(payload.get("chunking")),
     )
+    _validate_revision_identity(
+        decoded.source,
+        original_sha256=decoded.source.checksum_sha256,
+        chunking=decoded.chunking,
+    )
+    return decoded
+
+
+def _validate_revision_identity(
+    source: SourceDocument,
+    *,
+    original_sha256: str,
+    chunking: PersistedChunkingConfig,
+) -> None:
+    expected_revision = revision_id_for(
+        original_sha256=original_sha256,
+        source_id=source.source_id,
+        kind=source.kind,
+        title=source.title,
+        trust_level=source.trust_level,
+        source_role=source.source_role,
+        normalization_version=source.normalization_version,
+        chunker_version=chunking.version,
+        max_characters=chunking.max_characters,
+    )
+    legacy_revision = legacy_revision_id_for(
+        original_sha256=original_sha256,
+        source_id=source.source_id,
+        kind=source.kind,
+        normalization_version=source.normalization_version,
+        chunker_version=chunking.version,
+        max_characters=chunking.max_characters,
+    )
+    if source.revision_id not in (expected_revision, legacy_revision):
+        raise ValueError("revision_id does not match canonical immutable inputs")
 
 
 def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
+    if str(ref.id) != f"sha256:{ref.checksum_sha256}":
+        raise ValueError(f"{name} id does not match its checksum")
     content = load_blob(ref)
     if not isinstance(content, bytes):
         raise ValueError(f"{name} loader must return bytes")
@@ -367,27 +404,11 @@ def decode_source_revision_event(
         raise ValueError("ingested source structure_origin must be mechanically_extracted")
     if source.created_at != event.occurred_at:
         raise ValueError("source.created_at must equal event.occurred_at")
-    expected_revision = revision_id_for(
+    _validate_revision_identity(
+        source,
         original_sha256=sha256(original).hexdigest(),
-        source_id=source.source_id,
-        kind=source.kind,
-        title=source.title,
-        trust_level=source.trust_level,
-        source_role=source.source_role,
-        normalization_version=source.normalization_version,
-        chunker_version=decoded.chunking.version,
-        max_characters=decoded.chunking.max_characters,
+        chunking=decoded.chunking,
     )
-    legacy_revision = legacy_revision_id_for(
-        original_sha256=sha256(original).hexdigest(),
-        source_id=source.source_id,
-        kind=source.kind,
-        normalization_version=source.normalization_version,
-        chunker_version=decoded.chunking.version,
-        max_characters=decoded.chunking.max_characters,
-    )
-    if source.revision_id not in (expected_revision, legacy_revision):
-        raise ValueError("revision_id does not match canonical immutable inputs")
     if event.event_id != source_event_id_for(event.course_id, source.revision_id):
         raise ValueError("event_id does not match course and revision identity")
     for chunk in decoded.chunks:
