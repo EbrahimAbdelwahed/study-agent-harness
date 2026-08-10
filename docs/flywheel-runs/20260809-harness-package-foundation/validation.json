@@ -1,0 +1,115 @@
+{
+  "issues": [
+    {
+      "code": "open-questions",
+      "message": "Spec has open questions; confirm they do not block implementation.",
+      "path": "spec/feature-spec.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-03.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-04.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-04.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-04.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-04.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-05.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-05.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-05.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-06.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-06.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-07.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-07.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-07.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-07.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-08.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-08.md",
+      "severity": "warning"
+    },
+    {
+      "code": "broad-file-scope",
+      "message": "Task file scope may be too broad for safe worker dispatch.",
+      "path": "tasks/pf-09.md",
+      "severity": "warning"
+    }
+  ],
+  "ok": true,
+  "project": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+  "run_id": "20260809-harness-package-foundation"
+}

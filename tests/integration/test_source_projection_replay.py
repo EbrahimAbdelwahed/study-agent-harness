@@ -289,6 +289,24 @@ def test_tampering_fails_before_insert_and_corrupt_content_fails_replay(
         store.append(valid.course_id, 0, (malformed,))
     assert store.read(valid.course_id) == ()
 
+    source = valid.payload["source"]
+    assert isinstance(source, Mapping)
+    forged_source = {**source, "title": "Forged title"}
+    forged = DomainEvent(
+        valid.event_id,
+        valid.course_id,
+        valid.course_sequence,
+        valid.event_type,
+        valid.schema_version,
+        valid.actor,
+        valid.occurred_at,
+        valid.correlation_id,
+        {**valid.payload, "source": forged_source},
+    )
+    with pytest.raises(PayloadValidationError, match="revision_id"):
+        store.append(valid.course_id, 0, (forged,))
+    assert store.read(valid.course_id) == ()
+
     store.append(valid.course_id, 0, (valid,))
     before = store.projection_bytes(valid.course_id)
     source = valid.payload["source"]

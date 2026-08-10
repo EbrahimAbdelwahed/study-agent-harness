@@ -9,12 +9,10 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, NoReturn, cast
 
-from study_agent.capabilities.contracts import CapabilityContinuation, TutorCapabilityId
+from study_agent.capabilities.contracts import CapabilityContinuation
 from study_agent.domain import CorrelationId, ExecutionContext, RunId
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_json, freeze_object
-from study_agent.playbooks import ReadDependency
 from study_agent.ports.worker import GenerationWorkerStore, IsolatedCapabilityRunPort
-from study_agent.skills import SemanticVersion
 from study_agent.state import canonical_json_bytes
 
 from .contracts import (
@@ -28,7 +26,6 @@ from .contracts import (
     fingerprint_run,
     fingerprint_store_state,
     fingerprint_validations,
-    pins_from_json,
     sanitize_failure_code,
 )
 from .view import WorkerCompactView, WorkerDetailView
@@ -36,6 +33,25 @@ from .view import WorkerCompactView, WorkerDetailView
 
 class GenerationWorkerConflictError(RuntimeError):
     """The requested worker identity conflicts with durable state."""
+
+
+_LEGACY_CONTINUATION_FIELDS = frozenset(
+    {
+        "run_id",
+        "capability_id",
+        "capability_version",
+        "manifest_fingerprint",
+        "authority_fingerprint",
+        "retry_identity_fingerprint",
+        "definition_fingerprint",
+        "checkpoint_fingerprint",
+        "dialogue_step_id",
+        "next_step_index",
+        "inputs",
+        "pins",
+        "read_dependencies",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,17 +205,24 @@ class _StoredWorkerState:
         continuation_raw = value["continuation"]
         receipt_raw = value["receipt"]
         response_raw = value["response_bytes"]
+        legacy_continuation = isinstance(continuation_raw, Mapping) and set(
+            continuation_raw
+        ) == _LEGACY_CONTINUATION_FIELDS
+        try:
+            continuation = (
+                _continuation_from_json(_as_mapping(continuation_raw, "continuation"))
+                if continuation_raw is not None
+                else None
+            )
+        except ValueError as error:
+            raise ValueError("stored continuation is invalid") from error
         state = cls(
             task_bytes=_decode_base64(_string(value, "task_bytes"), "task_bytes"),
             task_fingerprint=_string(value, "task_fingerprint"),
             authority_fingerprint=_string(value, "authority_fingerprint"),
             status=GenerationWorkerStatus(_string(value, "status")),
             generation=_integer(value, "generation"),
-            continuation=(
-                _continuation_from_json(_as_mapping(continuation_raw, "continuation"))
-                if continuation_raw is not None
-                else None
-            ),
+            continuation=continuation,
             response_bytes=(
                 _decode_base64(response_raw, "response_bytes")
                 if isinstance(response_raw, str)
@@ -222,7 +245,7 @@ class _StoredWorkerState:
             prompt_fingerprint=_optional_string(value, "prompt_fingerprint"),
             verified_output=value["verified_output"],
         )
-        if state.to_bytes() != data:
+        if not legacy_continuation and state.to_bytes() != data:
             raise ValueError("worker state bytes are not canonical")
         return state
 
@@ -628,47 +651,14 @@ def generation_worker_child_context(
 
 
 def _continuation_from_json(value: Mapping[str, JsonValue]) -> CapabilityContinuation:
-    _exact(
-        value,
-        {
-            "run_id",
-            "capability_id",
-            "capability_version",
-            "manifest_fingerprint",
-            "authority_fingerprint",
-            "retry_identity_fingerprint",
-            "definition_fingerprint",
-            "checkpoint_fingerprint",
-            "dialogue_step_id",
-            "next_step_index",
-            "inputs",
-            "pins",
-            "read_dependencies",
-        },
-        "capability continuation",
-    )
-    dependencies: list[ReadDependency] = []
-    for item in _array(value, "read_dependencies"):
-        raw = _as_mapping(item, "read dependency")
-        _exact(raw, {"kind", "id", "version"}, "read dependency")
-        dependencies.append(
-            ReadDependency(_string(raw, "kind"), _string(raw, "id"), _string(raw, "version"))
+    if set(value) == _LEGACY_CONTINUATION_FIELDS:
+        upgraded = dict(value)
+        upgraded["input_fingerprint"] = _fingerprint(
+            "study-agent-capability-input-v1",
+            {"inputs": _mapping(value, "inputs")},
         )
-    return CapabilityContinuation(
-        run_id=RunId(_string(value, "run_id")),
-        capability_id=TutorCapabilityId(_string(value, "capability_id")),
-        capability_version=SemanticVersion.parse(_string(value, "capability_version")),
-        manifest_fingerprint=_string(value, "manifest_fingerprint"),
-        authority_fingerprint=_string(value, "authority_fingerprint"),
-        retry_identity_fingerprint=_string(value, "retry_identity_fingerprint"),
-        definition_fingerprint=_string(value, "definition_fingerprint"),
-        checkpoint_fingerprint=_string(value, "checkpoint_fingerprint"),
-        dialogue_step_id=_string(value, "dialogue_step_id"),
-        next_step_index=_integer(value, "next_step_index"),
-        inputs=_mapping(value, "inputs"),
-        pins=pins_from_json(_mapping(value, "pins")),
-        read_dependencies=tuple(dependencies),
-    )
+        return CapabilityContinuation.from_json(freeze_object(upgraded))
+    return CapabilityContinuation.from_json(value)
 
 
 def _json_value_bytes(value: JsonValue) -> bytes:
@@ -724,13 +714,6 @@ def _as_mapping(value: JsonValue, name: str) -> JsonObject:
 
 def _mapping(value: Mapping[str, JsonValue], key: str) -> JsonObject:
     return _as_mapping(value[key], key)
-
-
-def _array(value: Mapping[str, JsonValue], key: str) -> tuple[JsonValue, ...]:
-    raw = value.get(key)
-    if not isinstance(raw, tuple):
-        raise ValueError(f"{key} must be an array")
-    return raw
 
 
 def _string(value: Mapping[str, JsonValue], key: str) -> str:

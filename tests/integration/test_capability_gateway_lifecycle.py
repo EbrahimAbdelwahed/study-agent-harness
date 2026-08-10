@@ -301,6 +301,7 @@ def _manifest(*, authority: tuple[str, ...] = ("study:explain",)) -> CapabilityM
         OUTPUT_SCHEMA,
         authority,
         True,
+        V1,
     )
 
 
@@ -413,6 +414,7 @@ def _schema_gateway(
         OUTPUT_SCHEMA,
         ("study:explain",),
         True,
+        V1,
     )
     skill = replace(
         _skill(definition),
@@ -467,6 +469,7 @@ def _model_failure_gateway(
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = replace(_skill(definition), required_tools=())
     pins = VersionPins(
@@ -680,7 +683,11 @@ def test_resume_token_binds_every_generation_authority_and_runtime_field() -> No
         replace(token, checkpoint_fingerprint="5" * 64),
         replace(token, dialogue_step_id="later_dialogue"),
         replace(token, next_step_index=2),
-        replace(token, inputs={"topic": "mitral valve"}),
+        replace(
+            token,
+            inputs={"topic": "mitral valve"},
+            input_fingerprint=None,
+        ),
         replace(
             token,
             pins=replace(
@@ -1071,6 +1078,7 @@ def test_real_engine_terminal_outcomes_expose_proof_only_for_termination() -> No
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = replace(
         _skill(definition),
@@ -1159,6 +1167,7 @@ def test_ambiguous_running_retry_is_retryable_in_progress_without_reexecution() 
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = _skill(definition)
     dependencies = Dependencies()

@@ -1,0 +1,164 @@
+{
+  "artifacts": {
+    "context": "docs/flywheel-runs/20260809-harness-package-foundation/context-pack.md",
+    "intake": "docs/flywheel-runs/20260809-harness-package-foundation/intake.md",
+    "review": "docs/reviews/20260809-harness-package-foundation.md",
+    "review_command_results": "docs/flywheel-runs/20260809-harness-package-foundation/review-command-results.json",
+    "spec": "docs/specs/harness-package-foundation.md",
+    "task_beads": [
+      "docs/tasks/20260809-harness-package-foundation/pf-01.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-02.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-03.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-04.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-05.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-06.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-07.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-08.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-09.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-10.md",
+      "docs/tasks/20260809-harness-package-foundation/pf-11.md"
+    ],
+    "validation": "docs/flywheel-runs/20260809-harness-package-foundation/validation.md",
+    "validation_json": "docs/flywheel-runs/20260809-harness-package-foundation/validation.json",
+    "worker_briefs": [
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-01.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-02.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-03.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-04.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-07.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-08.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-09.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-10.md",
+      "docs/worker-briefs/20260809-harness-package-foundation/pf-11.md"
+    ],
+    "worker_dispatch": "docs/flywheel-runs/20260809-harness-package-foundation/dispatch/worker-dispatch.json",
+    "worker_dispatch_report": "docs/flywheel-runs/20260809-harness-package-foundation/dispatch/worker-dispatch.md",
+    "worker_reports": {
+      "pf-01": "docs/worker-reports/20260809-harness-package-foundation/pf-01.md",
+      "pf-02": "docs/worker-reports/20260809-harness-package-foundation/pf-02.md"
+    }
+  },
+  "br_beads": {
+    "pf-01": "study-agent-harness-integration-pf-01-l5z",
+    "pf-02": "study-agent-harness-integration-pf-02-17u",
+    "pf-03": "study-agent-harness-integration-pf-03-6in",
+    "pf-04": "study-agent-harness-integration-pf-04-wnl",
+    "pf-05": "study-agent-harness-integration-pf-05-qkc",
+    "pf-06": "study-agent-harness-integration-pf-06-3b1",
+    "pf-07": "study-agent-harness-integration-pf-07-lpv",
+    "pf-08": "study-agent-harness-integration-pf-08-we4",
+    "pf-09": "study-agent-harness-integration-pf-09-9a6",
+    "pf-10": "study-agent-harness-integration-pf-10-jrk",
+    "pf-11": "study-agent-harness-integration-pf-11-3f3"
+  },
+  "created_at": "2026-08-09T17:48:24+00:00",
+  "feature": {
+    "raw": "# Harness Package Foundation\n\nStatus: Approved \u2014 specification materialized; implementation not started\n\nLast updated: 2026-08-09\n\n## Next Agent Prompt\n\nStart with PF-01 and implement the public facade as a small, typed seam. Read\n`CONTEXT.md`, `CONTEXT-MAP.md`, this README, and the selected slice before\nediting. Implement one slice at a time, keep the public contracts below\nfrozen, run the slice verification, and update this section before ending your\npass.\n\nCurrent pickup: PF-01 \u2014 Public manifest.\n\nActive warnings:\n\n- This specification owns package stabilization only. Job orchestration,\n  workers, web evidence, sealed verification, and Decision Trace are later\n  runtime work and must not enter these slices.\n- The package base must remain standard-library-only. Provider, FSRS,\n  filesystem, telemetry, and specialist integrations stay behind optional\n  adapters or extras.\n- Cardine is a downstream consumer. Harness code and this specification must\n  not import or name Cardine product modules, auth, UI, or deployment code.\n\nImplementation checklist:\n\n- [ ] [PF-01 \u2014 Public manifest](slices/PF-01-public-manifest.md)\n- [ ] [PF-02 \u2014 Failures and authority](slices/PF-02-failures-authority.md)\n- [ ] [PF-03 \u2014 Events, upcasting, and module](slices/PF-03-events-upcasting-module.md)\n- [ ] [PF-04 \u2014 Storage contract kit](slices/PF-04-storage-contract-kit.md)\n- [ ] [PF-05 \u2014 Sources and citations](slices/PF-05-sources-citations.md)\n- [ ] [PF-06 \u2014 Capabilities](slices/PF-06-capabilities.md)\n- [ ] [PF-07 \u2014 Artifacts, assessments, and recall](slices/PF-07-artifacts-assessments-recall.md)\n- [ ] [PF-08 \u2014 Async-first runtime](slices/PF-08-runtime.md)\n- [ ] [PF-09 \u2014 Distribution](slices/PF-09-distribution.md)\n- [ ] [PF-10 \u2014 Release](slices/PF-10-release.md)\n- [ ] [PF-11 \u2014 Stable facade promotion](slices/PF-11-stable-facade-promotion.md)\n\nBefore ending each implementation pass, update the status, current pickup,\nwarnings, and checklist above with the observed verification result. Do not\ncreate beads from this folder; the implementation orchestrator will create\nthem only after this contract is accepted.\n\n## Goal\n\nPublish a versioned `study-agent-harness` Python package with one curated,\nprovider-neutral `study_agent.api` facade. The foundation makes existing\nevent, source, capability, artifact, assessment, and recall behavior safe for\ndownstream use without introducing the future job kernel or product policy.\nThe first adoption artifact is a clean package boundary that Cardine can pin,\ninstall, and consume through an anti-corruption adapter.\n\n## Scope\n\nIn scope:\n\n- a machine-readable public import manifest and root version/facade surface;\n- a closed public failure taxonomy and host-supplied authority context;\n- versioned event envelopes, deterministic upcasters, and immutable module\n  registration;\n- narrow storage, clock, ID, repository, blob, and replay ports plus a\n  reusable offline contract kit;\n- immutable source/revision/blob identity and citation resolution;\n- explicit, namespaced, manifested, permissioned capability registration;\n- generic artifact proposal/revision/decision lifecycle, assessment ledger\n  contracts, and recall/scheduling ports;\n- dependency-injected async runtime services with a sync convenience facade;\n- package namespace, entry-point, optional-extra, and wheel/sdist boundaries;\n- release evidence and semver gates for the first Cardine adoption pin.\n\nOut of scope:\n\n- durable Job/lease/retry/queue orchestration or a generic workflow engine;\n- workers for hierarchical flashcards, web evidence, or sealed verification;\n- Decision Trace or remote telemetry; these belong to the future runtime spec;\n- Cardine curriculum, authority/currency/integrity policy, learner model,\n  readiness, planning, UI, auth, deployment, or product commands;\n- a hosted service, organizations, billing, sharing, or cross-user approvals;\n- a Pi/runtime dependency, vendored agent framework, provider-specific core,\n  arbitrary network fetch, or mandatory third-party dependency;\n- a permanent compatibility bridge for copied Cardine `study_agent` modules.\n\n## Ownership and invariants\n\n- Harness owns portable mechanisms, schemas, transitions, validation, replay,\n  and trust boundaries. Cardine owns academic meaning and product policy.\n- The append-only per-course event stream is canonical. Projections,\n  snapshots, indexes, caches, runs, and diagnostics are rebuildable or\n  operational and never independent authorities.\n- Models and providers supply transport or proposals only. They cannot mint\n  identity, grants, scopes, policy, parentage, approvals, or canonical\n  outcomes.\n- Only a Host creates principals, grants, and scopes. `HUMAN` represents an\n  authenticated owner, `SERVICE` represents authorized injected policy, and\n  `MODEL` is untrusted and cannot approve or commit durable effects.\n- Unknown, malformed, stale, unauthorized, conflicting, or ungrounded input\n  fails closed. Adapter exceptions are translated at the facade.\n- Durable commands carry idempotency keys. Equal key plus equal canonical\n  input converges on the prior result; equal key plus different input is a\n  conflict. Cancellation is cooperative before commit and never rolls back a\n  committed event.\n- Sources are immutable and content-addressed. A source revision, normalized\n  substrate, citation, and derived projection have separate identities.\n- Generated artifacts remain proposals until an explicit authorized decision.\n  Generic lifecycle contracts never infer Cardine artifact kinds or policy.\n- Public service surfaces are async-first where execution may suspend. A sync\n  facade calls the same async implementation and is not a second runtime.\n- Harness never imports Cardine. The public facade exposes opaque host IDs for\n  curriculum, objective, profile, and other product-owned references.\n\n## Public package contract\n\nThe package distribution is `study-agent-harness`; the sole regular runtime\nnamespace is `study_agent`. The curated public boundary is:\n\n```text\nstudy_agent\n  \u251c\u2500\u2500 __version__\n  \u2514\u2500\u2500 api\n      \u251c\u2500\u2500 runtime\n      \u251c\u2500\u2500 authority\n      \u251c\u2500\u2500 storage\n      \u251c\u2500\u2500 sources\n      \u251c\u2500\u2500 capabilities\n      \u251c\u2500\u2500 artifacts\n      \u251c\u2500\u2500 assessments\n      \u2514\u2500\u2500 recall\n```\n\n`study_agent.api` publishes an immutable `PublicManifest` with facade version,\npackage version, subfacade names, exported symbols, schema versions, and\nsupported Python versions. Importing the root package must not import model,\nprovider, UI, CLI, filesystem, FSRS, or optional-extra modules. Internal\nmodules remain implementation details without a semver guarantee.\n\nComposition is explicit. A host supplies a principal, repository, storage\nports, clock, ID factory, model adapter, and policy through one immutable\ndependency bundle. No global locator, singleton, import-time registration, or\nenvironment-driven auto-configuration is part of the foundation.\n\nThe base install has no mandatory dependencies beyond Python 3.12/3.13\nstandard library. SQLite is a built-in adapter. OpenAI, FSRS, PDF, telemetry,\nand other integrations are optional extras or host-owned adapters.\n\n## Slice graph\n\n| Slice | Seam | Depends on | Independently observable result |\n| --- | --- | --- | --- |\n| PF-01 | `study_agent.api` manifest and root facade | \u2014 | Import manifest test passes without implementation imports |\n| PF-02 | failure taxonomy and `AuthorityContext` | PF-01 | Safe typed failures and actor/grant checks |\n| PF-03 | event envelope, upcasters, `KernelModule` | PF-01, PF-02 | Versioned append/replay and immutable module registration |\n| PF-04 | storage/blob/replay ports and contract kit | PF-01..PF-03 | SQLite/filesystem/memory adapters pass shared contracts |\n| PF-05 | source/revision/citation ports | PF-03, PF-04 | Content-addressed source and citation round trips |\n| PF-06 | capability manifests and registry | PF-01..PF-04 | Explicit trusted registration and fail-closed dispatch |\n| PF-07 | artifact, assessment, and recall facades | PF-03..PF-06 | Proposal/ledger/due-view replay contracts remain portable |\n| PF-08 | async runtime and sync wrapper | PF-01..PF-07 | Same runtime serves async and sync host calls |\n| PF-09 | package/namespace/entry-point boundary | PF-01, PF-06, PF-08 | Harness co-installs with a positive synthetic downstream fixture; the copied pre-adoption Cardine artifact is rejected by the negative fixture; actual Cardine co-install remains CA-04/CA-10-only |\n| PF-10 | adoption release evidence and semver gates | PF-01..PF-09 | Clean artifacts, offline gates, and an exact `0.3.0` adoption pin |\n| PF-11 | stable facade promotion | PF-10 + signed/hashed CA-08 installed-parity evidence | An executable evidence-only gate promotes the curated facade to `1.0.0`; it has no Cardine import or test dependency |\n\nPF-01 through PF-04 establish the kernel boundary. PF-05 through PF-07\nstabilize existing domain families. PF-08 composes them without adding\nautonomous planning. PF-09 and PF-10 are distribution/release gates, not new\ndomain behavior. PF-11 is a post-adoption compatibility-evidence gate and\ndoes not add runtime behavior.\n\n## Review map\n\nHuman review is required at these non-blocking checkpoints during implementation:\n\n- PF-01: inspect the import manifest for accidental private exports or eager\n  optional imports.\n- PF-02/PF-03: inspect authority and event ownership for model write paths,\n  unsafe adapter errors, and duplicate canonical facts.\n- PF-04/PF-05: inspect replay, blob immutability, citation binding, and path\n  ownership; verify no derived text can act as primary evidence.\n- PF-06/PF-07: inspect plugin registration, proposal approval boundaries,\n  opaque Cardine references, and recall policy ownership.\n- PF-08: inspect dependency injection and prove sync calls delegate to the\n  async implementation.\n- PF-09/PF-10: inspect wheel/sdist contents, entry points, dependency metadata,\n  Python matrix, and the positive/negative side-by-side installation cycle.\n- PF-11: inspect the signed/hashed CA-08 installed-parity evidence, exact\n  `1.0.0` promotion record, and the absence of Cardine imports/tests in the\n  Harness gate.\n\nEach checkpoint is non-blocking for implementation progress. The implementing\nagent records the evidence and rationale in the slice log; silence is not a\nreason to hold an otherwise verified slice.\n\n## Cross-slice verification\n\nThe narrow checks in each slice are mandatory. The final foundation gate is:\n\n```text\ngit diff --check\nuv run --python 3.12 --extra dev ruff check src tests\nuv run --python 3.13 --extra dev ruff check src tests\nuv run --python 3.12 --extra dev mypy\nuv run --python 3.13 --extra dev mypy\nuv run --python 3.12 --extra dev pytest -q\nuv run --python 3.13 --extra dev pytest -q\nuv build --out-dir /tmp/study-agent-harness-package-foundation\n```\n\nThe package must also pass a clean-wheel/sdist install smoke on Python 3.12\nand 3.13, a base dependency-free install smoke, a public import-manifest\ntest, the reusable event/blob/replay/capability contract kit, and the PF-09\npositive/negative co-install cycle. The positive fixture owns only `cardine`;\nthe copied pre-adoption Cardine artifact is a deliberate red fixture until\nCA-04/CA-10 removes its `study_agent` package and legacy commands. Foundation\ndetects that collision rather than claiming to repair it. Actual Cardine\nco-install/parity is CA-04/CA-10-only. CI installs the built artifact and\nnever a sibling checkout or `PYTHONPATH` injection.\n\nPF-11 runs only after CA-08 has produced an installed-parity report. The\npromotion command accepts a detached signature and SHA-256 commitments for\nthe report and the tested artifacts, verifies them against the declared trust\ninput, and writes a `1.0.0` facade-promotion record. It consumes no Cardine\nmodule, source tree, or Cardine test; orchestration records the evidence\noutside the Harness package.\n\n## Resolved implementation notes\n\nThe following details are intentionally left to the owning slice because they\ndo not alter the approved public contract: exact private module factoring,\nfixture directory names under `tests/contract`, whether a synchronous adapter\nuses a worker thread internally, and the text of release notes. A slice may\nsettle these details locally while preserving its exact types, failure\nsemantics, ownership, and verification commands. Any new cross-package\nboundary, dependency, schema, or public export requires returning to the\nspecification before implementation continues.",
+    "slug": "harness-package-foundation",
+    "title": "Harness Package Foundation"
+  },
+  "phases": {
+    "beads": {
+      "br_created": {},
+      "count": 11,
+      "paths": [
+        "docs/tasks/20260809-harness-package-foundation/pf-01.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-02.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-03.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-04.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-05.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-06.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-07.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-08.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-09.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-10.md",
+        "docs/tasks/20260809-harness-package-foundation/pf-11.md"
+      ],
+      "status": "complete",
+      "updated_at": "2026-08-09T18:17:41+00:00"
+    },
+    "briefs": {
+      "count": 11,
+      "paths": [
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-01.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-02.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-03.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-04.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-05.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-06.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-07.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-08.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-09.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-10.md",
+        "docs/worker-briefs/20260809-harness-package-foundation/pf-11.md"
+      ],
+      "status": "complete",
+      "updated_at": "2026-08-09T18:17:42+00:00"
+    },
+    "context": {
+      "files_count": 9,
+      "path": "docs/flywheel-runs/20260809-harness-package-foundation/context-pack.md",
+      "status": "complete",
+      "updated_at": "2026-08-09T17:48:37+00:00"
+    },
+    "dispatch": {
+      "packets": 1,
+      "path": "docs/flywheel-runs/20260809-harness-package-foundation/dispatch/worker-dispatch.json",
+      "status": "prepared",
+      "updated_at": "2026-08-09T18:50:55+00:00"
+    },
+    "intake": {
+      "path": "docs/flywheel-runs/20260809-harness-package-foundation/intake.md",
+      "status": "complete",
+      "updated_at": "2026-08-09T17:48:24+00:00"
+    },
+    "profiles": {
+      "count": 0,
+      "paths": {},
+      "skipped_tasks": [
+        "pf-01",
+        "pf-02",
+        "pf-03",
+        "pf-04",
+        "pf-05",
+        "pf-06",
+        "pf-07",
+        "pf-08",
+        "pf-09",
+        "pf-10",
+        "pf-11"
+      ],
+      "status": "complete",
+      "updated_at": "2026-08-09T18:16:49+00:00"
+    },
+    "review": {
+      "commands": 5,
+      "path": "docs/reviews/20260809-harness-package-foundation.md",
+      "status": "prepared",
+      "updated_at": "2026-08-09T18:49:06+00:00"
+    },
+    "spec": {
+      "path": "docs/specs/harness-package-foundation.md",
+      "status": "draft",
+      "updated_at": "2026-08-09T17:48:56+00:00"
+    },
+    "validate": {
+      "issues": 18,
+      "path": "docs/flywheel-runs/20260809-harness-package-foundation/validation.md",
+      "status": "passed",
+      "updated_at": "2026-08-09T18:17:43+00:00"
+    },
+    "worker_report": {
+      "path": "docs/worker-reports/20260809-harness-package-foundation/pf-02.md",
+      "status": "complete",
+      "task": "pf-02",
+      "updated_at": "2026-08-09T19:10:40+00:00"
+    }
+  },
+  "project": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+  "run_id": "20260809-harness-package-foundation",
+  "schema_version": 1,
+  "updated_at": "2026-08-09T19:10:40+00:00"
+}

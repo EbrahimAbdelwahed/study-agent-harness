@@ -1,0 +1,113 @@
+{
+  "run_id": "architecture-deepening-scans-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 8,
+  "lanes": [
+    {
+      "id": "arch-playbooks",
+      "agent_name": "QuietMaple",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-pio",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-playbooks-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-playbooks-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-workers-flashcards",
+      "agent_name": "SilverField",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-duw",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-workers-flashcards-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-workers-flashcards-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-cli-composition",
+      "agent_name": "CedarDawn",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-c86",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-cli-composition-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-cli-composition-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-host-session",
+      "agent_name": "ClearHarbor",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-9ni",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-host-session-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-host-session-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-artifact-assessment-recall",
+      "agent_name": "NorthStar",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-fze",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-artifact-assessment-recall-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-artifact-assessment-recall-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-knowledge-retrieval",
+      "agent_name": "SoftMeadow",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-z7k",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-knowledge-retrieval-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-knowledge-retrieval-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-event-kernel",
+      "agent_name": "BrightCove",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-9hl",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-event-kernel-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-event-kernel-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "arch-package-facade",
+      "agent_name": "OakTrail",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "ab339dd",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-32d",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-review-package-facade-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-review-package-facade-20260810.html", "git diff --check"]
+    }
+  ]
+}

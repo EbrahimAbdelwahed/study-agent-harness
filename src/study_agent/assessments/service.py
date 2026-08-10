@@ -36,11 +36,11 @@ from study_agent.ports import (
     AssessmentViewPort,
     ClockPort,
     EventSequenceConflictError,
-    EventStore,
     SessionViewPort,
     VerifiedGradePort,
 )
 from study_agent.ports.assessment import DeterministicClosedGradingPolicyPort
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 from study_agent.state import canonical_json_bytes
 
 from .contracts import (
@@ -87,7 +87,7 @@ class RetryableAssessmentConflictError(RuntimeError):
 class AssessmentService:
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         view: AssessmentViewPort,
         artifacts: ArtifactViewPort,
@@ -427,7 +427,7 @@ class AssessmentService:
     def _event(self, event_id: EventId, context: ExecutionContext) -> DomainEvent | None:
         matches = tuple(
             item
-            for item in self._events.read(context.course_id)
+            for item in _read_domain_events(self._events, context.course_id)
             if item.event_id == event_id
         )
         if len(matches) > 1:
@@ -479,7 +479,7 @@ class AssessmentService:
                 "course stream advanced before the assessment command"
             )
         try:
-            self._events.append(context.course_id, expected_sequence, (event,))
+            _append_legacy(self._events, context.course_id, expected_sequence, (event,))
         except EventSequenceConflictError as error:
             if self._exact_retry(event.event_id, context, command_fingerprint):
                 return result()
@@ -496,8 +496,8 @@ def _contest(contests: tuple[GradeContestRecord, ...], grade_id: GradeId) -> Gra
     return matches[0]
 
 
-def _current_sequence(events: EventStore, course_id: CourseId) -> int:
-    stream = events.read(course_id)
+def _current_sequence(events: _LegacyEventStore, course_id: CourseId) -> int:
+    stream = _read_domain_events(events, course_id)
     return stream[-1].course_sequence if stream else 0
 
 

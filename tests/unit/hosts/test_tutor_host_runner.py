@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
+from hashlib import sha256
 
 import pytest
 
@@ -32,6 +34,7 @@ from study_agent.hosts import (
 from study_agent.hosts.contracts import AdvertisedCapability, PendingContinuationDescriptor
 from study_agent.playbooks import ToolBehaviorPin, VersionPins
 from study_agent.skills import ArtifactReference, SemanticVersion
+from study_agent.state import canonical_json_bytes
 
 SHA_A = "a" * 64
 
@@ -148,7 +151,7 @@ def test_limits_and_result_matrix_are_strict() -> None:
 def test_result_matrix_rejects_cross_status_fields() -> None:
     receipt = HostRetryReceipt("turn-1", SHA_A, SHA_A, SHA_A, 1, 1)
     pending = PendingContinuationDescriptor(
-        SHA_A, "explain_concept@1", "confirm", "Confirm?", {"type": "boolean"}
+        SHA_A, "explain_concept@1.0.0", "confirm", "Confirm?", {"type": "boolean"}
     )
     invalid: tuple[tuple[TutorHostRunStatus, dict[str, object]], ...] = (
         (TutorHostRunStatus.COMPLETED, {"retry_receipt": receipt}),
@@ -219,7 +222,7 @@ def test_continuation_record_codec_is_canonical_and_reconstructs_authority() -> 
     )
     descriptor = PendingContinuationDescriptor(
         continuation.fingerprint,
-        "explain_concept@1",
+        "explain_concept@1.0.0",
         "confirm",
         "Confirm?",
         {"type": "boolean"},
@@ -237,15 +240,12 @@ def test_continuation_record_codec_is_canonical_and_reconstructs_authority() -> 
     assert TutorContinuationRecord.from_bytes(record.to_bytes()) == record
     with pytest.raises(ValueError, match="canonical"):
         TutorContinuationRecord.from_bytes(record.to_bytes() + b" ")
-    import json
-
     raw = json.loads(record.to_bytes())
     raw["extra"] = True
     with pytest.raises(ValueError, match="invalid field set"):
         TutorContinuationRecord.from_bytes(
             json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
         )
-
     raw = json.loads(record.to_bytes())
     raw["execution_context"]["requested_capabilities"] = ["z", "a"]
     with pytest.raises(ValueError, match="canonically ordered"):
@@ -258,6 +258,72 @@ def test_continuation_record_codec_is_canonical_and_reconstructs_authority() -> 
             json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
         )
 
+
+def test_continuation_record_reads_and_preserves_the_legacy_nested_shape() -> None:
+    version = SemanticVersion.parse("1.0.0")
+    pins = VersionPins(
+        ArtifactReference("skill", version),
+        ArtifactReference("playbook", version),
+        ArtifactReference("prompt", version),
+        (ToolBehaviorPin("tool", version),),
+        ArtifactReference("model", version),
+        ArtifactReference("state", version),
+    )
+    continuation = CapabilityContinuation(
+        RunId("run-legacy"),
+        TutorCapabilityId.EXPLAIN_CONCEPT,
+        version,
+        SHA_A,
+        "b" * 64,
+        "c" * 64,
+        "d" * 64,
+        "e" * 64,
+        "confirm",
+        1,
+        {"topic": "valves"},
+        pins,
+        (),
+    )
+    context = ExecutionContext(
+        PrincipalKind.SERVICE,
+        "host",
+        CourseId("course"),
+        CorrelationId("corr"),
+        frozenset({"study:explain"}),
+        SessionId("session"),
+        idempotency_key="action",
+    )
+    current = TutorContinuationRecord(
+        continuation,
+        context,
+        PendingContinuationDescriptor(
+            continuation.fingerprint,
+            "explain_concept@1.0.0",
+            "confirm",
+            "Confirm?",
+            {"type": "boolean"},
+        ),
+    )
+    raw = json.loads(current.to_bytes())
+    legacy_continuation = raw["continuation"]
+    legacy_continuation.pop("input_fingerprint")
+    legacy_fingerprint = sha256(
+        b"study-agent-capability-continuation-v1\0"
+        + canonical_json_bytes(legacy_continuation)
+    ).hexdigest()
+    raw["descriptor"]["fingerprint"] = legacy_fingerprint
+    raw["descriptor"]["capability_identity"] = "explain_concept@1"
+    legacy = canonical_json_bytes(raw)
+
+    with pytest.raises(ValueError, match="unexpected shape"):
+        CapabilityContinuation.from_bytes(canonical_json_bytes(legacy_continuation))
+
+    loaded = TutorContinuationRecord.from_bytes(legacy)
+
+    assert loaded.continuation.input_fingerprint is not None
+    assert loaded.descriptor.fingerprint == legacy_fingerprint
+    assert loaded.descriptor.capability_identity == "explain_concept@1"
+    assert loaded.to_bytes() == legacy
 
 def test_retry_receipt_wrong_turn_is_rejected_before_identity() -> None:
     class CountingIdentity:

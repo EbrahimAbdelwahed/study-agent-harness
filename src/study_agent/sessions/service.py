@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import datetime
 from hashlib import sha256
 
@@ -43,11 +42,11 @@ from study_agent.ports import (
     ClockPort,
     CourseViewPort,
     EventSequenceConflictError,
-    EventStore,
     SessionNotFoundError,
     SessionViewPort,
     SourceContentPort,
 )
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 from study_agent.skills import StateWritePolicy
 from study_agent.state import canonical_json_bytes
 
@@ -98,7 +97,7 @@ class SessionService:
 
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         view: SessionViewPort,
         courses: CourseViewPort,
@@ -124,7 +123,7 @@ class SessionService:
             _command_event_id(context, SESSION_STARTED),
         )
         try:
-            self._events.append(context.course_id, sequence, (event,))
+            _append_legacy(self._events, context.course_id, sequence, (event,))
         except EventSequenceConflictError:
             try:
                 return self._view.get_session(context.course_id, session_id)
@@ -173,7 +172,8 @@ class SessionService:
             causation_id=note_event.event_id,
         )
         try:
-            self._events.append(
+            _append_legacy(
+                self._events,
                 context.course_id, sequence, (note_event, summary_event)
             )
         except EventSequenceConflictError as error:
@@ -246,7 +246,7 @@ class SessionService:
             sequence + 1,
             _command_event_id(context, event_type),
         )
-        self._events.append(context.course_id, sequence, (event,))
+        _append_legacy(self._events, context.course_id, sequence, (event,))
         return self._view.get_session(context.course_id, _context_session(context))
 
     def _owned(self, context: ExecutionContext) -> StudySessionRecord:
@@ -294,7 +294,7 @@ class GroundedSessionFinalizer:
 
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         view: SessionViewPort,
         content: SourceContentPort,
@@ -403,7 +403,7 @@ class GroundedSessionFinalizer:
             )
         )
         try:
-            self._events.append(context.course_id, sequence, events)
+            _append_legacy(self._events, context.course_id, sequence, events)
         except EventSequenceConflictError as error:
             raced = self._existing(
                 context.course_id, session_id, run.run_id, idempotency_key
@@ -509,8 +509,8 @@ def _trusted_context(context: ExecutionContext) -> None:
         raise SessionCommandError("session commands require a trusted principal")
 
 
-def _current_sequence(events: EventStore, course_id: CourseId) -> int:
-    stream: Sequence[DomainEvent] = events.read(course_id)
+def _current_sequence(events: _LegacyEventStore, course_id: CourseId) -> int:
+    stream = _read_domain_events(events, course_id)
     if not stream:
         return 0
     expected = tuple(range(1, len(stream) + 1))

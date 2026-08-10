@@ -38,7 +38,7 @@ from study_agent.domain import (
 from study_agent.domain._validation import JsonValue
 from study_agent.domain.study_context import StudyStatementValue
 from study_agent.ingestion import decode_source_revision_ingested
-from study_agent.ports import EventStore
+from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
 from study_agent.sessions import (
     SESSION_ANSWER_RECORDED,
     SESSION_ASSISTANT_TURN_RECORDED,
@@ -56,12 +56,12 @@ from study_agent.study_context import ProjectionStudyContextView
 class TutorSnapshotReader:
     """Compose a policy-free snapshot from exactly one immutable event capture."""
 
-    def __init__(self, events: EventStore, registry: EventRegistry) -> None:
+    def __init__(self, events: _LegacyEventStore, registry: EventRegistry) -> None:
         self._events = events
         self._registry = registry
 
     def get(self, course_id: CourseId, session_id: SessionId) -> TutorSnapshotV1:
-        captured = tuple(self._events.read(course_id))
+        captured = _read_domain_events(self._events, course_id)
         projection = replay(course_id, captured, self._registry)
         load = _captured_loader(course_id, projection)
 

@@ -131,6 +131,8 @@ class FlashcardCapabilityDispatcher:
     ) -> CapabilityOutcome:
         if not isinstance(continuation, CapabilityContinuation):
             raise TypeError("continuation must be CapabilityContinuation")
+        if continuation.capability_id is not PROPOSE_FLASHCARDS_MANIFEST.id:
+            _conflict("continuation does not identify the flashcard capability")
         self._gateway._authorize(self._bindings[0], context)
         owner = self._locate_owner(continuation.run_id)
         if owner is None:

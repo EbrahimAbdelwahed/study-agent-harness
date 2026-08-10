@@ -208,8 +208,8 @@ class CountingBlobStore:
         self.inner = inner
         self.get_counts: dict[str, int] = {}
 
-    def put(self, content: bytes) -> BlobRef:
-        return self.inner.put(content)
+    def put(self, content: bytes, ref: BlobRef | None = None) -> BlobRef:
+        return self.inner.put(content, ref)
 
     def get(self, ref: BlobRef) -> bytes:
         key = str(ref.id)

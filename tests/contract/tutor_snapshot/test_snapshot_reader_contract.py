@@ -65,7 +65,11 @@ class CountingEventStore:
         self, course_id: CourseId, after_sequence: int = 0
     ) -> Sequence[DomainEvent]:
         self.read_count += 1
-        captured = self.inner.read(course_id, after_sequence)
+        captured = tuple(
+            item
+            for item in self.inner._read_records(course_id, after_sequence)
+            if isinstance(item, DomainEvent)
+        )
         if self.read_count == 1:
             self.after_first_capture()
         return captured

@@ -48,6 +48,7 @@ from study_agent.skills import (
 
 V1 = SemanticVersion.parse("1.0.0")
 V2 = SemanticVersion.parse("2.0.0")
+IMPLEMENTATION_V1 = SemanticVersion.parse("1.2.3")
 INPUT_SCHEMA: JsonObject = {
     "type": "object",
     "required": ("topic",),
@@ -70,6 +71,7 @@ def _manifest(*, suspension: bool = False) -> CapabilityManifest:
         OUTPUT_SCHEMA,
         ("study:explain",),
         suspension,
+        IMPLEMENTATION_V1,
     )
 
 

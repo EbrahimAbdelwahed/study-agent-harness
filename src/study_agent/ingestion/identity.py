@@ -1,4 +1,4 @@
-"""Canonical v0.1 ingestion policy and deterministic identity helpers."""
+"""Canonical ingestion policy and deterministic identity helpers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,10 @@ from hashlib import sha256
 
 from study_agent.domain.identifiers import ChunkId, CourseId, EventId, RevisionId, SourceId
 from study_agent.domain.source import SourceKind
+from study_agent.domain.source_identity import (
+    INGESTION_REVISION_ID_NAMESPACE,
+    source_revision_id_for,
+)
 from study_agent.state import canonical_json_bytes
 
 NORMALIZATION_POLICY_VERSION = "utf8-newlines-nfc-v1"
@@ -37,7 +41,7 @@ def revision_id_for(
 ) -> RevisionId:
     """Identify immutable content, metadata, and processing configuration (v2)."""
 
-    identity = b"study-agent-source-revision-v2\0" + canonical_json_bytes(
+    return source_revision_id_for(
         {
             "chunker_version": chunker_version,
             "kind": kind.value,
@@ -48,9 +52,10 @@ def revision_id_for(
             "source_role": source_role,
             "title": title,
             "trust_level": trust_level,
-        }
+        },
+        namespace=INGESTION_REVISION_ID_NAMESPACE,
+        identifier_prefix="revision-sha256:",
     )
-    return RevisionId(f"revision-sha256:{sha256(identity).hexdigest()}")
 
 
 def legacy_revision_id_for(
