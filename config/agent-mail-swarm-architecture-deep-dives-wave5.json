@@ -1,0 +1,100 @@
+{
+  "run_id": "architecture-deep-dives-wave5-20260810",
+  "orchestrator_agent": "SwiftCedar",
+  "worktree_root": "/private/tmp/agent-mail-swarm",
+  "state_dir": "/private/tmp/agent-mail-swarm-state",
+  "max_workers": 7,
+  "lanes": [
+    {
+      "id": "deep-repository-storage",
+      "agent_name": "QuietMaple",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-p8c",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-repository-storage-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-repository-storage-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "deep-substrate-production",
+      "agent_name": "AzureLynx",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-dr3",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-substrate-production-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-substrate-production-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "deep-optional-availability",
+      "agent_name": "CopperBirch",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-14m",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-optional-availability-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-optional-availability-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "deep-operational-diagnostics",
+      "agent_name": "BoldLynx",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-b67",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-operational-diagnostics-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-operational-diagnostics-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "deep-operator-registry",
+      "agent_name": "MistyPine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-6sa",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-operator-registry-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-operator-registry-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "deep-typed-sha256",
+      "agent_name": "MistyBirch",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-qub",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-typed-sha256-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-typed-sha256-20260810.html", "git diff --check"]
+    },
+    {
+      "id": "deep-host-test-composition",
+      "agent_name": "AzurePine",
+      "repo": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "project_key": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+      "base_ref": "HEAD",
+      "beads_db": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration/.beads/beads.db",
+      "bead_id": "study-agent-harness-integration-sws",
+      "brief": "docs/worker-briefs/architecture-scan.md",
+      "reserve_paths": ["/private/tmp/architecture-deep-dive-host-test-composition-20260810.html"],
+      "forbidden_paths": ["src/**", "tests/**", "docs/**", "specs/**", "dev/**", "pyproject.toml", "uv.lock"],
+      "verification": ["test -s /private/tmp/architecture-deep-dive-host-test-composition-20260810.html", "git diff --check"]
+    }
+  ]
+}
