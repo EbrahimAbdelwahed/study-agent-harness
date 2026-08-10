@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from study_agent.api.sources import SourceRevision
 from study_agent.domain import (
     BlobRef,
     CorrelationId,
@@ -14,10 +15,7 @@ from study_agent.domain import (
     SourceKind,
     substrate_id_for,
 )
-from study_agent.domain.source import SourceRevision
 from study_agent.ingestion import (
-    CHUNK_MAX_CHARACTERS,
-    CHUNKER_POLICY_VERSION,
     NORMALIZATION_POLICY_VERSION,
     TextIngestionService,
     normalize_utf8,
@@ -77,9 +75,7 @@ def test_facade_and_ingestion_mint_one_revision_identity_for_one_manifest() -> N
     source_role = "primary"
     created_at = _FixedClock().now()
     metadata = {
-        "chunker_version": CHUNKER_POLICY_VERSION,
         "kind": SourceKind.MARKDOWN.value,
-        "max_characters": CHUNK_MAX_CHARACTERS,
         "source_role": source_role,
         "title": title,
         "trust_level": trust_level,

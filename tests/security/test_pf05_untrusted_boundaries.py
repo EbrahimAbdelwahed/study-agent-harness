@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
+import study_agent.api.sources as sources_api
+import study_agent.application.errors as application_errors
 from study_agent.api.authority import HarnessError, ValidationFailure
-from study_agent.api.sources import (
-    CitationFailure,
-    CitationFailureKind,
-    SourceRevision,
-    citation_from_bytes,
-)
-from study_agent.application.errors import translate_exception
+from study_agent.api.sources import SourceRevision, citation_from_bytes
 from study_agent.domain import ChunkId, Citation
-from study_agent.domain.citation_v2 import citation_from_bytes as decode_citation_bytes
+from study_agent.domain.citation_v2 import CitationFailure, CitationFailureKind
 from study_agent.ingestion import decode_source_revision_event
-from study_agent.knowledge.citation import upgrade_v1_citation
-from tests.support.pf05.fixtures import BYTES, make_source_revision, make_unit
+from tests.support.pf05.fixtures import make_source_revision, make_unit
 from tests.unit.ingestion.test_source_revision_state import _replace_source, make_event
 
 
-def test_legacy_source_event_rejects_unbound_title_trust_and_role_forgery() -> None:
+class _MissingLegacyBinding:
+    def resolve(self, source_id: object, revision_id: object, chunk_id: object) -> None:
+        del source_id, revision_id, chunk_id
+        return None
+
+
+def test_legacy_source_event_upcasts_unbound_title_trust_and_role_forgery() -> None:
     event, load_blob = make_event(legacy_identity=True)
     forged = _replace_source(
         event,
@@ -30,8 +33,11 @@ def test_legacy_source_event_rejects_unbound_title_trust_and_role_forgery() -> N
         source_role="authoritative-primary",
     )
 
-    with pytest.raises(ValueError, match=r"revision_id|legacy|metadata"):
-        decode_source_revision_event(forged, load_blob)
+    decoded = decode_source_revision_event(forged, load_blob)
+
+    assert decoded.source.title == "Legacy source"
+    assert decoded.source.trust_level == 0
+    assert decoded.source.source_role == "legacy-unverified"
 
 
 def test_v01_upgrade_rejects_a_legacy_chunk_without_a_trusted_mapping() -> None:
@@ -46,19 +52,30 @@ def test_v01_upgrade_rejects_a_legacy_chunk_without_a_trusted_mapping() -> None:
         None,
     )
 
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(forged, unit=unit, substrate_bytes=BYTES)
+    upgrade = getattr(sources_api, "upgrade_legacy_citation", None)
+    assert callable(upgrade)
+    with pytest.raises(HarnessError) as error:
+        cast(Callable[..., object], upgrade)(
+            forged,
+            bindings=_MissingLegacyBinding(),
+        )
 
-    assert error.value.kind is CitationFailureKind.REFERENCE_MISMATCH
+    assert isinstance(error.value, ValidationFailure)
+    details = error.value.to_json()["details"]
+    assert isinstance(details, dict)
+    assert details["reason_kind"] == "reference_mismatch"
 
 
 def test_citation_decoder_bounds_deep_json_as_a_typed_corruption() -> None:
     nested = b'{"version":2,"nested":' + b"[" * 20_000 + b"0" + b"]" * 20_000 + b"}"
 
-    with pytest.raises(CitationFailure) as error:
-        decode_citation_bytes(nested)
+    with pytest.raises(HarnessError) as error:
+        citation_from_bytes(nested)
 
-    assert error.value.kind is CitationFailureKind.CORRUPT
+    assert isinstance(error.value, ValidationFailure)
+    details = error.value.to_json()["details"]
+    assert isinstance(details, dict)
+    assert details["reason_kind"] == "corrupt"
 
 
 def test_source_metadata_bounds_reject_deep_values_without_recursion_escape() -> None:
@@ -75,12 +92,10 @@ def test_source_metadata_bounds_reject_oversized_strings() -> None:
         make_source_revision(metadata={"payload": "x" * 20_000})
 
 
-def test_equal_metadata_values_converge_on_one_revision_identity_for_negative_zero() -> None:
-    positive_zero = make_source_revision(metadata={"weight": 0.0})
-    negative_zero = make_source_revision(metadata={"weight": -0.0})
-
-    assert positive_zero.metadata == negative_zero.metadata
-    assert positive_zero.revision_id == negative_zero.revision_id
+@pytest.mark.parametrize("value", [0.0, -0.0, float("nan"), float("inf"), -float("inf")])
+def test_source_metadata_rejects_float_and_non_finite_values(value: float) -> None:
+    with pytest.raises(ValueError):
+        make_source_revision(metadata={"weight": value})
 
 
 def test_revision_decoder_rejects_created_at_provenance_forgery() -> None:
@@ -90,12 +105,18 @@ def test_revision_decoder_rejects_created_at_provenance_forgery() -> None:
         timespec="microseconds"
     )
 
+    decode = cast(Callable[..., SourceRevision], SourceRevision.from_json)
     with pytest.raises(ValueError, match=r"created_at|provenance"):
-        SourceRevision.from_json(forged)
+        decode(forged, receipt_created_at=original.created_at)
 
 
-@pytest.mark.parametrize("payload", [b"not-json", b'{"version":99}'])
-def test_public_citation_failures_are_closed_harness_errors(payload: bytes) -> None:
+@pytest.mark.parametrize(
+    ("payload", "reason_kind"),
+    [(b"not-json", "corrupt"), (b'{"version":99}', "unsupported_version")],
+)
+def test_public_citation_failures_are_closed_harness_errors(
+    payload: bytes, reason_kind: str
+) -> None:
     with pytest.raises(HarnessError) as caught:
         citation_from_bytes(payload)
 
@@ -103,16 +124,35 @@ def test_public_citation_failures_are_closed_harness_errors(payload: bytes) -> N
     encoded = caught.value.serialize()
     assert len(encoded) <= 16 * 1024
     assert payload.decode() not in encoded.decode()
+    details = caught.value.to_json()["details"]
+    assert isinstance(details, dict)
+    assert details["reason_kind"] == reason_kind
 
 
 @pytest.mark.parametrize("kind", tuple(CitationFailureKind))
-def test_every_citation_failure_kind_survives_as_bounded_safe_detail(
+def test_private_citation_failure_mapping_is_exhaustive_and_safe(
     kind: CitationFailureKind,
 ) -> None:
-    translated = translate_exception(CitationFailure(kind, "Bearer sk-test-secret"))
+    error = CitationFailure(kind, "Bearer sk-test-secret")
+    mapper = getattr(application_errors, "citation_failure_to_harness_error", None)
+    assert callable(mapper)
+    translated = cast(Callable[..., HarnessError], mapper)(
+        error,
+        correlation_id="citation-correlation",
+    )
 
-    assert isinstance(translated, HarnessError)
-    details = translated.to_json()["details"]
+    assert type(translated) is ValidationFailure
+    payload = translated.to_json()
+    assert payload["message"] == "citation failed validation"
+    assert payload["retryable"] is False
+    assert payload["correlation_id"] == "citation-correlation"
+    details = payload["details"]
     assert isinstance(details, dict)
-    assert details["citation_kind"] == kind.value
-    assert "sk-test-secret" not in json.dumps(translated.to_json())
+    assert details["reason_kind"] == kind.value
+    assert "sk-test-secret" not in json.dumps(payload)
+    assert translated.__cause__ is error
+
+
+def test_public_sources_facade_does_not_export_private_citation_failures() -> None:
+    assert "CitationFailure" not in sources_api.__all__
+    assert "CitationFailureKind" not in sources_api.__all__
