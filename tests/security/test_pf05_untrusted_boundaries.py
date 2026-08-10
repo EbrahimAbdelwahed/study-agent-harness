@@ -156,3 +156,5 @@ def test_private_citation_failure_mapping_is_exhaustive_and_safe(
 def test_public_sources_facade_does_not_export_private_citation_failures() -> None:
     assert "CitationFailure" not in sources_api.__all__
     assert "CitationFailureKind" not in sources_api.__all__
+    assert not hasattr(sources_api, "CitationFailure")
+    assert not hasattr(sources_api, "CitationFailureKind")
