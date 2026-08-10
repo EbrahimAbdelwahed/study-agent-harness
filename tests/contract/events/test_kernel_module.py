@@ -141,13 +141,9 @@ def test_kernel_module_rejects_noncanonical_capability_registration_name(
     "identifier",
     ("study:read", "study/read", "study_agent.read", "study-agent.read"),
 )
-def test_kernel_module_rejects_noncanonical_typed_capability_id(identifier: str) -> None:
-    with pytest.raises(ValidationFailure, match="canonical dot namespace"):
-        KernelModule(
-            module_id="study",
-            version="1",
-            capabilities=(("study.read", capability(identifier)),),
-        )
+def test_capability_id_rejects_noncanonical_typed_capability_id(identifier: str) -> None:
+    with pytest.raises(ValueError, match="canonical dot namespace"):
+        CapabilityId(identifier)
 
 
 def test_kernel_module_registry_rejects_duplicate_typed_capability_manifest_identity() -> None:

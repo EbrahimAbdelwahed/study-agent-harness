@@ -60,12 +60,12 @@ CAPABILITY_SNAPSHOT = (
     (
         "assess_understanding",
         "1.0.0",
-        "d49d55b2efa04f642fbd08e84204b50f471422335d01dc283bfa26da4753b1d9",
+        "5a0926ba3370f98e779bd8893dc4c0e74b7d2f0d8736f5ceb2629f7f22cef00f",
     ),
     (
         "explain_concept",
         "1.0.0",
-        "6e563b5a2750f8077f3a516ea50a7e938552824afbde7bbebed04563783465c3",
+        "6152fa654f94e1e09c513aa153e873230b51815da749c377ad1d2caeab2ea1c4",
     ),
 )
 
