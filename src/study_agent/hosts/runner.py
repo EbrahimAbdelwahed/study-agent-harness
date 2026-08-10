@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from study_agent.capabilities import (
@@ -32,11 +33,9 @@ from study_agent.domain import (
     ExecutionContext,
     ModelRunId,
     PrincipalKind,
-    RunId,
     SessionId,
 )
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_json, freeze_object
-from study_agent.playbooks import ReadDependency, ToolBehaviorPin, VersionPins
 from study_agent.ports.tutor_host import (
     RetryableTutorDecisionError,
     TutorDecisionPort,
@@ -48,7 +47,6 @@ from study_agent.ports.tutor_runner import (
     TutorHostActionIdentityPort,
     TutorHostAuthorityPort,
 )
-from study_agent.skills import ArtifactReference, SemanticVersion
 
 from .context import TutorHostContextAssembler
 from .contracts import (
@@ -74,6 +72,23 @@ if TYPE_CHECKING:
 
 MAX_HOST_RETRY_ATTEMPTS = 1_024
 MAX_HOST_TEXT = 4_000
+_LEGACY_CONTINUATION_FIELDS = frozenset(
+    {
+        "run_id",
+        "capability_id",
+        "capability_version",
+        "manifest_fingerprint",
+        "authority_fingerprint",
+        "retry_identity_fingerprint",
+        "definition_fingerprint",
+        "checkpoint_fingerprint",
+        "dialogue_step_id",
+        "next_step_index",
+        "inputs",
+        "pins",
+        "read_dependencies",
+    }
+)
 
 
 class TutorHostRunStatus(StrEnum):
@@ -190,6 +205,7 @@ class TutorContinuationRecord:
     continuation: CapabilityContinuation
     execution_context: ExecutionContext
     descriptor: PendingContinuationDescriptor
+    _legacy_bytes: bytes | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.continuation, CapabilityContinuation):
@@ -198,19 +214,32 @@ class TutorContinuationRecord:
             raise TypeError("continuation record execution context is invalid")
         if not isinstance(self.descriptor, PendingContinuationDescriptor):
             raise TypeError("continuation record descriptor is invalid")
-        if self.descriptor.fingerprint != self.continuation.fingerprint:
-            raise ValueError("continuation descriptor does not bind exact continuation")
         expected_identity = (
-            f"{self.continuation.capability_id.value}@"
-            f"{self.continuation.capability_version.major}"
+            f"{self.continuation.capability_id.value}@{self.continuation.capability_version}"
         )
+        legacy_fingerprint = None
+        if self._legacy_bytes is not None:
+            legacy_fingerprint, _ = _legacy_record_binding(self._legacy_bytes)
         if self.descriptor.capability_identity != expected_identity:
-            raise ValueError("continuation descriptor capability identity differs")
+            legacy_identity = (
+                f"{self.continuation.capability_id.value}@"
+                f"{self.continuation.capability_version.major}"
+            )
+            if self._legacy_bytes is None or self.descriptor.capability_identity != legacy_identity:
+                raise ValueError("continuation descriptor capability identity differs")
+        if (
+            self.descriptor.fingerprint != self.continuation.fingerprint
+            and self.descriptor.fingerprint != legacy_fingerprint
+        ):
+            raise ValueError("continuation descriptor fingerprint differs")
         if self.execution_context.session_id is None:
             raise ValueError("continuation record requires a session authority")
 
     def to_bytes(self) -> bytes:
         """Encode one strict operational record at the continuation boundary."""
+
+        if self._legacy_bytes is not None:
+            return self._legacy_bytes
 
         payload: JsonObject = {
             "schema_version": 1,
@@ -245,9 +274,9 @@ class TutorContinuationRecord:
         )
         if _integer(raw, "schema_version") != 1:
             raise ValueError("unsupported tutor continuation record schema version")
-        continuation = _continuation_from_json(
-            _object(raw["continuation"], "continuation")
-        )
+        continuation_raw = _object(raw["continuation"], "continuation")
+        legacy = set(continuation_raw) == _LEGACY_CONTINUATION_FIELDS
+        continuation = _continuation_from_json(continuation_raw)
         context_raw = _object(raw["execution_context"], "execution_context")
         _exact(
             context_raw,
@@ -290,7 +319,12 @@ class TutorContinuationRecord:
             idempotency,
         )
         descriptor = _descriptor_from_json(_object(raw["descriptor"], "descriptor"))
-        record = cls(continuation, context, descriptor)
+        record = cls(
+            continuation,
+            context,
+            descriptor,
+            _legacy_bytes=data if legacy else None,
+        )
         if record.to_bytes() != data:
             raise ValueError("tutor continuation record is not semantically canonical")
         return record
@@ -805,84 +839,25 @@ class TutorHostRunner:
 
 
 def _continuation_from_json(raw: JsonObject) -> CapabilityContinuation:
-    _exact(
-        raw,
-        {
-            "run_id",
-            "capability_id",
-            "capability_version",
-            "manifest_fingerprint",
-            "authority_fingerprint",
-            "retry_identity_fingerprint",
-            "definition_fingerprint",
-            "checkpoint_fingerprint",
-            "dialogue_step_id",
-            "next_step_index",
-            "inputs",
-            "pins",
-            "read_dependencies",
-        },
-        "continuation",
-    )
-    return CapabilityContinuation(
-        RunId(_string(raw, "run_id")),
-        TutorCapabilityId(_string(raw, "capability_id")),
-        SemanticVersion.parse(_string(raw, "capability_version")),
-        _string(raw, "manifest_fingerprint"),
-        _string(raw, "authority_fingerprint"),
-        _string(raw, "retry_identity_fingerprint"),
-        _string(raw, "definition_fingerprint"),
-        _string(raw, "checkpoint_fingerprint"),
-        _string(raw, "dialogue_step_id"),
-        _integer(raw, "next_step_index"),
-        _object(raw["inputs"], "continuation inputs"),
-        _pins_from_json(_object(raw["pins"], "continuation pins")),
-        tuple(
-            _dependency_from_json(item)
-            for item in _array(raw["read_dependencies"], "read_dependencies")
-        ),
-    )
-
-
-def _pins_from_json(raw: JsonObject) -> VersionPins:
-    _exact(
-        raw,
-        {"skill", "playbook", "prompt", "tool_behaviors", "model_adapter", "state_contract"},
-        "version pins",
-    )
-
-    def reference(value: JsonValue, name: str) -> ArtifactReference:
-        item = _object(value, name)
-        _exact(item, {"id", "version"}, name)
-        return ArtifactReference(
-            _string(item, "id"), SemanticVersion.parse(_string(item, "version"))
+    if set(raw) == _LEGACY_CONTINUATION_FIELDS:
+        upgraded = dict(raw)
+        inputs = _object(raw["inputs"], "continuation inputs")
+        upgraded["input_fingerprint"] = _fingerprint(
+            "study-agent-capability-input-v1", {"inputs": inputs}
         )
-
-    behaviors = []
-    for item in _array(raw["tool_behaviors"], "tool_behaviors"):
-        behavior = _object(item, "tool behavior")
-        _exact(behavior, {"name", "version"}, "tool behavior")
-        behaviors.append(
-            ToolBehaviorPin(
-                _string(behavior, "name"),
-                SemanticVersion.parse(_string(behavior, "version")),
-            )
-        )
-    return VersionPins(
-        reference(raw["skill"], "skill"),
-        reference(raw["playbook"], "playbook"),
-        reference(raw["prompt"], "prompt"),
-        tuple(behaviors),
-        reference(raw["model_adapter"], "model_adapter"),
-        reference(raw["state_contract"], "state_contract"),
-    )
+        return CapabilityContinuation.from_json(freeze_object(upgraded))
+    return CapabilityContinuation.from_json(raw)
 
 
-def _dependency_from_json(value: JsonValue) -> ReadDependency:
-    raw = _object(value, "read dependency")
-    _exact(raw, {"kind", "id", "version"}, "read dependency")
-    return ReadDependency(
-        _string(raw, "kind"), _string(raw, "id"), _string(raw, "version")
+def _legacy_record_binding(data: bytes) -> tuple[str, str]:
+    raw = _canonical_object(data, "legacy tutor continuation record")
+    continuation = _object(raw["continuation"], "continuation")
+    if set(continuation) != _LEGACY_CONTINUATION_FIELDS:
+        raise ValueError("legacy tutor continuation record has a current continuation shape")
+    descriptor = _object(raw["descriptor"], "descriptor")
+    return (
+        _fingerprint("study-agent-capability-continuation-v1", continuation),
+        _string(descriptor, "capability_identity"),
     )
 
 
@@ -911,6 +886,10 @@ def _canonical_bytes(value: JsonObject) -> bytes:
     return json.dumps(
         _plain(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode("utf-8")
+
+
+def _fingerprint(domain: str, value: JsonObject) -> str:
+    return sha256(domain.encode("utf-8") + b"\0" + _canonical_bytes(value)).hexdigest()
 
 
 def _canonical_object(data: bytes, name: str) -> JsonObject:

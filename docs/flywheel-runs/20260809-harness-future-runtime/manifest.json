@@ -1,0 +1,144 @@
+{
+  "artifacts": {
+    "context": "docs/flywheel-runs/20260809-harness-future-runtime/context-pack.md",
+    "intake": "docs/flywheel-runs/20260809-harness-future-runtime/intake.md",
+    "spec": "docs/specs/harness-future-runtime-features.md",
+    "task_beads": [
+      "docs/tasks/20260809-harness-future-runtime/hr-01-contract-firewall.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-02-job-store.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-03-executor-recovery.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-04-decision-trace.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-05-lifecycle-convergence.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-06-flashcard-planning.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-07-flashcard-jobs.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-08-web-evidence-core.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-09-web-admission.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-10-sealed-contracts.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-11-sealed-workflow.md",
+      "docs/tasks/20260809-harness-future-runtime/hr-12-eval-release.md"
+    ],
+    "validation": "docs/flywheel-runs/20260809-harness-future-runtime/validation.md",
+    "validation_json": "docs/flywheel-runs/20260809-harness-future-runtime/validation.json",
+    "worker_briefs": [
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-01-contract-firewall.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-02-job-store.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-03-executor-recovery.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-04-decision-trace.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-05-lifecycle-convergence.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-06-flashcard-planning.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-07-flashcard-jobs.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-08-web-evidence-core.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-09-web-admission.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-10-sealed-contracts.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-11-sealed-workflow.md",
+      "docs/worker-briefs/20260809-harness-future-runtime/hr-12-eval-release.md"
+    ]
+  },
+  "br_beads": {
+    "hr-01-contract-firewall": "study-agent-harness-integration-hr-01-contract-firewall-op5",
+    "hr-02-job-store": "study-agent-harness-integration-hr-02-job-store-q8m",
+    "hr-03-executor-recovery": "study-agent-harness-integration-hr-03-executor-recovery-1td",
+    "hr-04-decision-trace": "study-agent-harness-integration-hr-04-decision-trace-2ej",
+    "hr-05-lifecycle-convergence": "study-agent-harness-integration-hr-05-lifecycle-convergence-w5d",
+    "hr-06-flashcard-planning": "study-agent-harness-integration-hr-06-flashcard-planning-mld",
+    "hr-07-flashcard-jobs": "study-agent-harness-integration-hr-07-flashcard-jobs-5dr",
+    "hr-08-web-evidence-core": "study-agent-harness-integration-hr-08-web-evidence-core-wsp",
+    "hr-09-web-admission": "study-agent-harness-integration-hr-09-web-admission-sf2",
+    "hr-10-sealed-contracts": "study-agent-harness-integration-hr-10-sealed-contracts-0n2",
+    "hr-11-sealed-workflow": "study-agent-harness-integration-hr-11-sealed-workflow-pa0",
+    "hr-12-eval-release": "study-agent-harness-integration-hr-12-eval-release-jry"
+  },
+  "created_at": "2026-08-09T17:48:24+00:00",
+  "feature": {
+    "raw": "# Harness Future Runtime Features\n\nStatus: ready for implementation planning\n\nDate: 2026-08-09\n\nOwning repository: Study Agent Harness\n\n## Outcome\n\nAdd the provider-neutral runtime waves approved in the Cardine/Harness handoff:\none durable Job lifecycle, a separate minimal Decision Trace, hierarchical\nflashcard Jobs, quarantined web evidence, and sealed Synthetic Verification.\nThe package remains local-first, offline-verifiable, and independent of\nCardine. Cardine receives only released portable contracts and presentation\nreceipts; it owns academic authority, attempts, grades, contests, curriculum,\nlearner estimates, and planning.\n\n## Scope firewall\n\nHarness owns Job/lease/attempt/retry mechanics, executor checkpoints,\nprovider-neutral evidence transport and quarantine, portable exam-generation\nschemas, validation, replay, and trust boundaries. Harness does not own\ncurriculum meaning, mastery, readiness, study planning, exam authenticity,\ngrades, contests, UI, auth, or deployment. All host academic references are\nopaque typed IDs. A model is an untrusted provider and can never approve,\nadmit evidence, release content, or commit a canonical product fact.\n\nThe sole outer lifecycle is:\n\n```text\nQUEUED -> RUNNING -> SUSPENDED | SUCCEEDED | FAILED | CANCELLED | STALE\n```\n\nLease and heartbeat are RUNNING metadata. Retries create monotonic attempts\nunder the same Job. Existing playbook and lesson-worker checkpoints are\nsubordinate proofs, not a second lifecycle owner.\n\n## Slice graph\n\n```text\nHR-01 -> HR-02 -> HR-03 -> HR-04 -> HR-05\n                       |\n                       +-> HR-06 -> HR-07\n                       +-> HR-08 -> HR-09\n                       +-> HR-10 -> HR-11\nHR-05 -> shared RuntimeReleaseGate -> publishes 1.1\nHR-07 -> shared RuntimeReleaseGate -> publishes 1.2\nHR-09 -> shared RuntimeReleaseGate -> publishes 1.3\nHR-11 -> HR-12 -> shared RuntimeReleaseGate -> publishes 1.4/final aggregate\n```\n\nRisk-first order is intentional: HR-01 installs the policy firewall and\nadversarial leak oracles before runtime implementations; HR-05 proves lifecycle\nconvergence before old stores are removed; HR-10 proves sealed-content\nnon-disclosure before generation exists.\n\n## Release waves\n\n| Release | Slice and gate producer | Shipped contract |\n| --- | --- | --- |\n| 1.1 | HR-01\u2013HR-05, published by HR-05 through `RuntimeReleaseGate` | JobStore, executor recovery, and minimal Decision Trace |\n| 1.2 | HR-06\u2013HR-07, published by HR-07 through the same `RuntimeReleaseGate` | Hierarchical flashcard Jobs and proposal-only assembly |\n| 1.3 | HR-08\u2013HR-09, published by HR-09 through the same `RuntimeReleaseGate` | Quarantined WebEvidencePort and explicit admission |\n| 1.4 | HR-10\u2013HR-12, final aggregate published only by HR-12 through `RuntimeReleaseGate` | Sealed Synthetic Verification, offline evals, and package release |\n\nThe base package remains dependency-free. The scripted web connector is in\nthe base runtime. OpenAI Responses `web_search` and OpenTelemetry are optional\nadapters. No live network call is part of the default verification path.\n\n## Program orchestration gate\n\nRuntime implementation may start only after PF-11 has promoted the stable\nfacade and CA-10 has supplied its copied-core-removal/co-install evidence.\nThis is a program-level ordering gate recorded by the orchestrator; it is not\na Harness source, import, package, schema, or test dependency. HR slices must\ncontinue to name only released Harness contracts and generic ports.\n\n## Shared contracts and invariants\n\n- Every durable command carries an idempotency key. Same key and canonical\n  input converge; same key and different bytes return conflict.\n- Job identity is derived from capability/version, authority scope,\n  idempotency key, and input fingerprints. Child identity also includes parent,\n  position, and task fingerprint. Same identity with different bytes conflicts.\n- Defaults are fixed: 60-second lease, 20-second heartbeat, fencing on expiry,\n  global and per-workflow concurrency 8, depth 1, maximum 64 children, FIFO\n  deterministic claims, at-least-once execution, and owner-idempotent exactly\n  once canonical commit.\n- Retry defaults are maximum three attempts, 1/2/4 second exponential\n  backoff, +/-20% jitter, and 30-second cap. Only timeout, rate limit,\n  provider-5xx, or declared transient failures retry.\n- Cancellation completes at a safe point. A committed event is never rolled\n  back. Suspended Jobs hold no lease; resume tokens bind Job, attempt,\n  checkpoint, authority, input, and dependency fingerprints.\n- Decision Trace is separate append-only audit evidence. It records observable\n  IDs, transitions, validators, safe errors, fingerprints, and timestamps; it\n  never stores prompts, excerpts, outputs, secrets, raw personal identity, or\n  chain-of-thought. Redacted diagnostics expire after 14 days; optional\n  telemetry loss cannot change execution.\n- Web candidates are quarantined and untrusted. The broker cannot admit.\n  Admission of an exact snapshot by HUMAN or trusted SERVICE creates an\n  immutable Source Revision with hash, URL, time, connector, query,\n  provenance, policy, and decision.\n- Sealed means application authority, not encryption. Lists, search, export,\n  traces, errors, and pre-attempt presentation contain no sealed questions or\n  answers.\n- Synthetic Verification requires approved profile and accepted plan,\n  independent coverage review, deterministic release, complete required\n  coverage, and no unsupported claims. Generator output never self-reviews or\n  self-releases.\n- No Job, trace, diagnostic, cache, checkpoint, or operational run record is\n  learner truth or enters a product projection/export.\n\n## Review map\n\nCurrent implementation seams to preserve are `src/study_agent/lifecycle/`,\n`src/study_agent/workers/`, `src/study_agent/flashcards/`,\n`src/study_agent/capabilities/`, `src/study_agent/artifacts/`,\n`src/study_agent/adapters/sqlite/`, and `src/study_agent/ports/`. New seams are\nthe JobStore/Executor ports, TraceStore, WebEvidencePort, sealed verification\ncontracts, and their SQLite/scripted adapters. Each slice names its exact\nreview files and tests.\n\n## Global verification\n\nRun the narrow slice command first, then from the Harness root:\n\n```bash\n.venv/bin/python -m pytest\n.venv/bin/python -m ruff check .\n.venv/bin/python -m mypy\ngit diff --check\n```\n\nFor each release wave, build and test the artifact in a clean Python 3.12 and\n3.13 environment. The wheel must contain no Cardine references, no required\nprovider dependency, and no hidden entry point. Offline tests must run without\ncredentials or network. Live connector and model comparisons are opt-in.\n\n## Transition removals\n\nHR-05 removes only the generic lifecycle, playbook, and GenerationWorker outer\ntransitions after parity proves Job recovery, suspension, continuation, and\ngateway outcomes. HR-07 removes only the flashcard LessonWorker transitions\nafter hierarchical flashcard parity. No temporary adapter survives the named\nlast consumer. Diagnostic payloads never become Trace; Trace never becomes a\ndomain event. Candidate web content never becomes a Source Revision without\nadmission. Sealed content never enters generic views.\n\n## Residual risks\n\nLease races, duplicate delivery, and exactly-once canonical commit remain\npossible failure modes and require the adversarial fixtures in HR-02/03.\nTrace redaction can regress as fields evolve; HR-04 owns schema deny-lists and\nscanners. Web connectors can return prompt-injection or false evidence; HR-08/09\nkeep output untrusted and quarantined. Novelty thresholds can over-regenerate;\nHR-10/11 suspend after two failed regenerations and expose no content. SQLite\nis local single-writer; distributed queue behavior is not part of these waves.\n\n## Next Agent Prompt\n\nYou are implementing the Harness Future Runtime Features spec. Start with\n`slices/HR-01-contract-firewall.md`; add only the contract and adversarial\nfixtures named there, then run its exact verification command and the global\noffline checks. Do not add Cardine policy, a second lifecycle owner, live\nnetwork defaults, or sealed-content serialization. Continue slices in graph\norder, recording any changed evidence in this README before ending your pass.\nUpdate the status, next pickup point, and checklist here before handing off.\n\nGlobal checklist:\n\n- [ ] HR-01\u2013HR-05 and shared release gate publishes 1.1\n- [ ] HR-06\u2013HR-07 and shared release gate publishes 1.2\n- [ ] HR-08\u2013HR-09 and shared release gate publishes 1.3\n- [ ] HR-10\u2013HR-12 and HR-12-only final aggregate publishes 1.4\n- [ ] Program gate records PF-11 and CA-10 evidence before runtime start\n- [ ] Remove every temporary lifecycle seam at its named removal slice\n- [ ] Re-run full offline suite on Python 3.12 and 3.13",
+    "slug": "harness-future-runtime-features",
+    "title": "Harness Future Runtime Features"
+  },
+  "phases": {
+    "beads": {
+      "br_created": {},
+      "count": 12,
+      "paths": [
+        "docs/tasks/20260809-harness-future-runtime/hr-01-contract-firewall.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-02-job-store.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-03-executor-recovery.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-04-decision-trace.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-05-lifecycle-convergence.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-06-flashcard-planning.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-07-flashcard-jobs.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-08-web-evidence-core.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-09-web-admission.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-10-sealed-contracts.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-11-sealed-workflow.md",
+        "docs/tasks/20260809-harness-future-runtime/hr-12-eval-release.md"
+      ],
+      "status": "complete",
+      "updated_at": "2026-08-09T18:15:32+00:00"
+    },
+    "briefs": {
+      "count": 12,
+      "paths": [
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-01-contract-firewall.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-02-job-store.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-03-executor-recovery.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-04-decision-trace.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-05-lifecycle-convergence.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-06-flashcard-planning.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-07-flashcard-jobs.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-08-web-evidence-core.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-09-web-admission.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-10-sealed-contracts.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-11-sealed-workflow.md",
+        "docs/worker-briefs/20260809-harness-future-runtime/hr-12-eval-release.md"
+      ],
+      "status": "complete",
+      "updated_at": "2026-08-09T18:15:33+00:00"
+    },
+    "context": {
+      "files_count": 9,
+      "path": "docs/flywheel-runs/20260809-harness-future-runtime/context-pack.md",
+      "status": "complete",
+      "updated_at": "2026-08-09T17:48:37+00:00"
+    },
+    "intake": {
+      "path": "docs/flywheel-runs/20260809-harness-future-runtime/intake.md",
+      "status": "complete",
+      "updated_at": "2026-08-09T17:48:24+00:00"
+    },
+    "profiles": {
+      "count": 0,
+      "paths": {},
+      "skipped_tasks": [
+        "hr-01-contract-firewall",
+        "hr-02-job-store",
+        "hr-03-executor-recovery",
+        "hr-04-decision-trace",
+        "hr-05-lifecycle-convergence",
+        "hr-06-flashcard-planning",
+        "hr-07-flashcard-jobs",
+        "hr-08-web-evidence-core",
+        "hr-09-web-admission",
+        "hr-10-sealed-contracts",
+        "hr-11-sealed-workflow",
+        "hr-12-eval-release"
+      ],
+      "status": "complete",
+      "updated_at": "2026-08-09T18:13:57+00:00"
+    },
+    "spec": {
+      "path": "docs/specs/harness-future-runtime-features.md",
+      "status": "draft",
+      "updated_at": "2026-08-09T17:48:57+00:00"
+    },
+    "validate": {
+      "issues": 11,
+      "path": "docs/flywheel-runs/20260809-harness-future-runtime/validation.md",
+      "status": "passed",
+      "updated_at": "2026-08-09T18:15:33+00:00"
+    }
+  },
+  "project": "/Users/ebrahimabdelwahed/Desktop/Med/Lezioni/Audio_to_Sbobina/.worktrees/study-agent-harness-integration",
+  "run_id": "20260809-harness-future-runtime",
+  "schema_version": 1,
+  "updated_at": "2026-08-09T18:15:33+00:00"
+}

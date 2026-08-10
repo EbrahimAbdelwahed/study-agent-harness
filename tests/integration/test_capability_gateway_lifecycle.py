@@ -20,9 +20,9 @@ from study_agent.capabilities import (
     StaleCapabilityOutcome,
     StudyCapabilityGateway,
     SuspendedCapabilityOutcome,
-    TerminatedCapabilityOutcome,
     TutorCapabilityId,
 )
+from study_agent.capabilities.contracts import CapabilityId, CapabilityRequest
 from study_agent.domain import (
     CorrelationId,
     CourseId,
@@ -41,7 +41,6 @@ from study_agent.playbooks import (
     ModelStep,
     PlaybookDefinition,
     PlaybookEngine,
-    PlaybookRunStatus,
     ReadDependency,
     RuntimeRegistries,
     ToolBehaviorPin,
@@ -62,6 +61,7 @@ from study_agent.ports import (
     ModelResponse,
     ModelStreamEvent,
 )
+from study_agent.ports.authority import HostAuthority
 from study_agent.skills import (
     ArtifactReference,
     GroundingPolicy,
@@ -301,6 +301,7 @@ def _manifest(*, authority: tuple[str, ...] = ("study:explain",)) -> CapabilityM
         OUTPUT_SCHEMA,
         authority,
         True,
+        V1,
     )
 
 
@@ -342,10 +343,13 @@ def _gateway(
     dependencies: Dependencies | None = None,
     authority: tuple[str, ...] = ("study:explain",),
     store: MemoryRunStore | None = None,
+    capability_id: TutorCapabilityId | CapabilityId = TutorCapabilityId.EXPLAIN_CONCEPT,
 ) -> tuple[StudyCapabilityGateway, AnswerTool, Dependencies]:
     definition = _definition()
-    manifest = _manifest(authority=authority)
+    manifest = replace(_manifest(authority=authority), id=capability_id)
     skill = _skill(definition)
+    if capability_id is not TutorCapabilityId.EXPLAIN_CONCEPT:
+        skill = replace(skill, id=capability_id.value)
     resolver = dependencies or Dependencies()
     binding = CapabilityBinding(
         manifest,
@@ -413,6 +417,7 @@ def _schema_gateway(
         OUTPUT_SCHEMA,
         ("study:explain",),
         True,
+        V1,
     )
     skill = replace(
         _skill(definition),
@@ -467,6 +472,7 @@ def _model_failure_gateway(
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = replace(_skill(definition), required_tools=())
     pins = VersionPins(
@@ -520,6 +526,33 @@ def _context(
         session_id,
         None if model_run is None else ModelRunId(model_run),
         key,
+    )
+
+
+def _request(
+    *,
+    inputs: JsonObject = INPUTS,
+    expected_high_water: int = 1,
+    key: str = "request-1",
+    principal_id: str = "tutor-host",
+) -> tuple[CapabilityRequest, ExecutionContext]:
+    authority = HostAuthority().issue(
+        PrincipalKind.SERVICE,
+        principal_id,
+        grants=("study:explain",),
+        correlation_id="correlation-1",
+        session_id=str(SESSION),
+    )
+    return (
+        CapabilityRequest(
+            "explain_concept@1.0.0",
+            inputs,
+            authority,
+            "correlation-1",
+            expected_high_water,
+            key,
+        ),
+        _context(key=key, principal_id=principal_id),
     )
 
 
@@ -625,6 +658,174 @@ def test_run_identity_ignores_correlation_and_model_run_but_binds_authority_scop
     assert changed.run_id != first.run_id
 
 
+def test_namespaced_opaque_capability_id_executes_without_tutor_enum_dispatch() -> None:
+    capability_id = CapabilityId("study.explain")
+    gateway, _, _ = _gateway(capability_id=capability_id)
+    outcome = asyncio.run(gateway.start(capability_id, INPUTS, _context()))
+    assert isinstance(outcome, SuspendedCapabilityOutcome)
+    assert outcome.continuation.capability_id == capability_id
+
+
+def test_capability_request_enforces_authority_and_stream_high_water_before_effects() -> None:
+    unauthorized_gateway, unauthorized_tool, unauthorized_dependencies = _gateway()
+    unauthorized_request, _ = _request(key="request-unauthorized")
+    with pytest.raises(CapabilityGatewayError) as unauthorized:
+        asyncio.run(
+            unauthorized_gateway.start(
+                unauthorized_request,
+                _context(key="request-unauthorized", principal_id="other-host"),
+            )
+        )
+    assert unauthorized.value.code is CapabilityGatewayErrorCode.UNAUTHORIZED
+    assert unauthorized_dependencies.calls == 0
+    assert unauthorized_tool.calls == 0
+
+    gateway, tool, dependencies = _gateway()
+    request, request_context = _request()
+    suspended = asyncio.run(gateway.start(request, request_context))
+    assert isinstance(suspended, SuspendedCapabilityOutcome)
+    assert dependencies.calls == 1
+    assert tool.calls == 0
+
+    mismatched_request, mismatched_context = _request(
+        principal_id="different-host", key="request-1"
+    )
+    with pytest.raises(CapabilityGatewayError) as authority_error:
+        asyncio.run(gateway.start(mismatched_request, mismatched_context))
+    assert authority_error.value.code is CapabilityGatewayErrorCode.CONFLICT
+    assert dependencies.calls == 1
+    assert tool.calls == 0
+
+    stale_gateway, stale_tool, stale_dependencies = _gateway()
+    stale_request, stale_context = _request(expected_high_water=2, key="request-stale")
+    stale = asyncio.run(stale_gateway.start(stale_request, stale_context))
+    assert isinstance(stale, StaleCapabilityOutcome)
+    assert stale_dependencies.calls == 1
+    assert stale_tool.calls == 0
+
+
+def test_capability_request_continuation_reuses_the_idempotency_slot() -> None:
+    gateway, tool, dependencies = _gateway()
+    request, request_context = _request(key="request-resume")
+    suspended = asyncio.run(gateway.start(request, request_context))
+    assert isinstance(suspended, SuspendedCapabilityOutcome)
+
+    completed = asyncio.run(
+        gateway.resume(
+            suspended.continuation,
+            {"text": "focus on cusps"},
+            request_context,
+        )
+    )
+    assert isinstance(completed, CompletedCapabilityOutcome)
+    retried = asyncio.run(gateway.start(request, request_context))
+    assert isinstance(retried, CompletedCapabilityOutcome)
+    assert retried.run == completed.run
+    assert dependencies.calls == 2
+    assert tool.calls == 1
+
+
+def test_capability_request_idempotency_slot_rejects_changed_input_without_reexecution() -> None:
+    gateway, tool, dependencies = _gateway()
+    request, request_context = _request(key="request-input")
+    first = asyncio.run(gateway.start(request, request_context))
+    assert isinstance(first, SuspendedCapabilityOutcome)
+
+    changed_inputs = dict(INPUTS)
+    changed_inputs["topic"] = "mitral valve"
+    changed_request, changed_context = _request(
+        inputs=changed_inputs, key="request-input"
+    )
+    with pytest.raises(CapabilityGatewayError) as conflict:
+        asyncio.run(gateway.start(changed_request, changed_context))
+    assert conflict.value.code is CapabilityGatewayErrorCode.CONFLICT
+    assert dependencies.calls == 1
+    assert tool.calls == 0
+
+
+def test_capability_request_receipt_survives_fresh_gateway_recreation() -> None:
+    store = MemoryRunStore()
+    gateway, _, _ = _gateway(store=store)
+    request, request_context = _request(key="request-fresh-gateway")
+    first = asyncio.run(gateway.start(request, request_context))
+    assert isinstance(first, SuspendedCapabilityOutcome)
+
+    fresh_gateway, fresh_tool, fresh_dependencies = _gateway(store=store)
+    changed_request, changed_context = _request(
+        principal_id="different-host", key="request-fresh-gateway"
+    )
+    with pytest.raises(CapabilityGatewayError) as conflict:
+        asyncio.run(fresh_gateway.start(changed_request, changed_context))
+    assert conflict.value.code is CapabilityGatewayErrorCode.CONFLICT
+    assert fresh_dependencies.calls == 0
+    assert fresh_tool.calls == 0
+
+
+def test_host_cancellation_before_engine_commit_has_no_dependency_or_tool_effect() -> None:
+    gateway, tool, dependencies = _gateway()
+    cancelled = asyncio.run(
+        gateway.start(
+            TutorCapabilityId.EXPLAIN_CONCEPT,
+            INPUTS,
+            _context(),
+            cancellation=lambda: True,
+        )
+    )
+    assert isinstance(cancelled, CancelledCapabilityOutcome)
+    assert dependencies.calls == 0
+    assert tool.calls == 0
+
+
+def test_host_cancellation_cannot_mask_an_existing_committed_observation() -> None:
+    gateway, tool, dependencies = _gateway()
+    first = asyncio.run(
+        gateway.start(TutorCapabilityId.EXPLAIN_CONCEPT, INPUTS, _context())
+    )
+    assert isinstance(first, SuspendedCapabilityOutcome)
+    retry = asyncio.run(
+        gateway.start(
+            TutorCapabilityId.EXPLAIN_CONCEPT,
+            INPUTS,
+            _context(),
+            cancellation=lambda: True,
+        )
+    )
+    assert isinstance(retry, SuspendedCapabilityOutcome)
+    assert retry.run_id == first.run_id
+    assert dependencies.calls == 1
+    assert tool.calls == 0
+
+
+def test_host_cancellation_before_resume_commit_leaves_suspension_retryable() -> None:
+    gateway, tool, dependencies = _gateway()
+    suspended = asyncio.run(
+        gateway.start(TutorCapabilityId.EXPLAIN_CONCEPT, INPUTS, _context())
+    )
+    assert isinstance(suspended, SuspendedCapabilityOutcome)
+    cancelled = asyncio.run(
+        gateway.resume(
+            suspended.continuation,
+            {"text": "focus on cusps"},
+            _context(),
+            cancellation=lambda: True,
+        )
+    )
+    assert isinstance(cancelled, CancelledCapabilityOutcome)
+    assert dependencies.calls == 1
+    assert tool.calls == 0
+
+    completed = asyncio.run(
+        gateway.resume(
+            suspended.continuation,
+            {"text": "focus on cusps"},
+            _context(),
+        )
+    )
+    assert isinstance(completed, CompletedCapabilityOutcome)
+    assert dependencies.calls == 2
+    assert tool.calls == 1
+
+
 def test_start_resume_and_cas_loser_retries_converge_without_repeating_effects() -> None:
     gateway, tool, resolver = _gateway()
     suspended = asyncio.run(
@@ -680,7 +881,11 @@ def test_resume_token_binds_every_generation_authority_and_runtime_field() -> No
         replace(token, checkpoint_fingerprint="5" * 64),
         replace(token, dialogue_step_id="later_dialogue"),
         replace(token, next_step_index=2),
-        replace(token, inputs={"topic": "mitral valve"}),
+        replace(
+            token,
+            inputs={"topic": "mitral valve"},
+            input_fingerprint=None,
+        ),
         replace(
             token,
             pins=replace(
@@ -1043,7 +1248,7 @@ def test_raw_string_principal_kind_is_rejected_before_effects() -> None:
     assert resolver.calls == 0 and tool.calls == 0
 
 
-def test_real_engine_terminal_outcomes_expose_proof_only_for_termination() -> None:
+def test_real_engine_termination_fails_closed_without_a_public_result() -> None:
     definition = PlaybookDefinition(
         "explain_concept_flow",
         V1,
@@ -1071,6 +1276,7 @@ def test_real_engine_terminal_outcomes_expose_proof_only_for_termination() -> No
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = replace(
         _skill(definition),
@@ -1101,9 +1307,8 @@ def test_real_engine_terminal_outcomes_expose_proof_only_for_termination() -> No
     terminated = asyncio.run(
         gateway.start(TutorCapabilityId.EXPLAIN_CONCEPT, INPUTS, _context())
     )
-    assert isinstance(terminated, TerminatedCapabilityOutcome)
-    assert terminated.run.status is PlaybookRunStatus.TERMINATED
-    assert not hasattr(terminated, "output")
+    assert isinstance(terminated, FailedCapabilityOutcome)
+    assert "terminated" in terminated.message
     assert tool.calls == 1 and validator.calls == 1 and resolver.calls == 1
 
     cancelled_gateway, cancelled_model, cancelled_dependencies = (
@@ -1159,6 +1364,7 @@ def test_ambiguous_running_retry_is_retryable_in_progress_without_reexecution() 
         OUTPUT_SCHEMA,
         ("study:explain",),
         False,
+        V1,
     )
     skill = _skill(definition)
     dependencies = Dependencies()

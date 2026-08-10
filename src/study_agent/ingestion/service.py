@@ -13,8 +13,13 @@ from study_agent.domain.events import Actor, DomainEvent
 from study_agent.domain.identifiers import BlobId, RevisionId, SourceId
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
 from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, SourceKind
-from study_agent.ports import BlobStore, ClockPort, CourseViewPort, EventStore
-from study_agent.ports.storage import EventSequenceConflictError
+from study_agent.ports import BlobStore, ClockPort, CourseViewPort
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    _append_legacy,
+    _LegacyEventStore,
+    _read_domain_events,
+)
 
 from .chunking import CHUNKER_VERSION, DEFAULT_CHUNKING_CONFIG, ChunkingConfig, chunk_text
 from .events import (
@@ -74,7 +79,7 @@ class TextIngestionService:
         self,
         *,
         blobs: BlobStore,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         courses: CourseViewPort,
         chunking: ChunkingConfig = DEFAULT_CHUNKING_CONFIG,
@@ -97,8 +102,19 @@ class TextIngestionService:
         context: ExecutionContext,
         expected_sequence: int | None = None,
     ) -> TextIngestionResult:
+        _validate_ingestion_request(
+            filename=filename,
+            content=content,
+            source_id=source_id,
+            title=title,
+            trust_level=trust_level,
+            source_role=source_role,
+            context=context,
+            expected_sequence=expected_sequence,
+        )
+        kind, media_type, method = _file_contract(filename)
         self._courses.get(context.course_id)
-        stream = tuple(self._events.read(context.course_id))
+        stream = _read_domain_events(self._events, context.course_id)
         current_sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and current_sequence != expected_sequence:
             raise TextIngestionError(
@@ -112,7 +128,6 @@ class TextIngestionService:
                 IngestionErrorCode.UNSUPPORTED_CONFIGURATION,
                 f"unsupported chunker version: {self._chunking.version}",
             )
-        kind, media_type, method = _file_contract(filename)
         try:
             normalized = normalize_utf8(content)
         except InvalidUtf8Error as error:
@@ -165,7 +180,7 @@ class TextIngestionService:
         current = _current_revision(stream, source_id)
         if current is not None and _matches_request(current, source, self._chunking):
             if expected_sequence is not None:
-                latest = tuple(self._events.read(context.course_id))
+                latest = _read_domain_events(self._events, context.course_id)
                 latest_sequence = latest[-1].course_sequence if latest else 0
                 if latest_sequence != expected_sequence:
                     raise TextIngestionError(
@@ -229,9 +244,11 @@ class TextIngestionService:
         if current is None or current.source.normalized_blob != normalized_blob:
             _write_expected_blob(self._blobs, normalized.content, normalized_blob)
         try:
-            committed = self._events.append(context.course_id, current_sequence, (event,))
+            committed = _append_legacy(
+                self._events, context.course_id, current_sequence, (event,)
+            )
         except EventSequenceConflictError as error:
-            concurrent_stream = tuple(self._events.read(context.course_id))
+            concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(concurrent_stream, source_id)
             if (
                 expected_sequence is None
@@ -290,9 +307,11 @@ class TextIngestionService:
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
         try:
-            committed = self._events.append(context.course_id, current_sequence, (event,))
+            committed = _append_legacy(
+                self._events, context.course_id, current_sequence, (event,)
+            )
         except EventSequenceConflictError as error:
-            concurrent_stream = tuple(self._events.read(context.course_id))
+            concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(
                 concurrent_stream, revision.source.source_id
             )
@@ -321,6 +340,11 @@ class TextIngestionService:
 
 
 def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
+    if not isinstance(filename, str) or not filename or filename != filename.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "filename must be non-empty text without surrounding whitespace",
+        )
     suffix = PurePath(filename).suffix.lower()
     if suffix == ".txt":
         media_type, method = source_kind_contract(SourceKind.TEXT)
@@ -332,6 +356,63 @@ def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
         IngestionErrorCode.UNSUPPORTED_EXTENSION,
         "only .txt and .md files are supported",
     )
+
+
+def _validate_ingestion_request(
+    *,
+    filename: object,
+    content: object,
+    source_id: object,
+    title: object,
+    trust_level: object,
+    source_role: object,
+    context: object,
+    expected_sequence: object,
+) -> None:
+    """Reject malformed host input before reading or publishing any state."""
+
+    if not isinstance(filename, str) or not filename or filename != filename.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "filename must be non-empty text without surrounding whitespace",
+        )
+    if type(content) is not bytes:
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "content must be bytes",
+        )
+    if not isinstance(source_id, SourceId):
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "source_id must be SourceId",
+        )
+    if not isinstance(title, str) or not title or title != title.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "title must be non-empty text without surrounding whitespace",
+        )
+    if not isinstance(source_role, str) or not source_role or source_role != source_role.strip():
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "source_role must be non-empty text without surrounding whitespace",
+        )
+    if type(trust_level) is not int or not 0 <= trust_level <= 100:
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "trust_level must be an integer between 0 and 100",
+        )
+    if not isinstance(context, ExecutionContext):
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "context must be ExecutionContext",
+        )
+    if expected_sequence is not None and (
+        type(expected_sequence) is not int or expected_sequence < 0
+    ):
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "expected_sequence must be a non-negative integer or None",
+        )
 
 
 def _predicted_blob(content: bytes) -> BlobRef:

@@ -9,8 +9,6 @@ from typing import Any, cast
 import pytest
 
 import study_agent.tools.registry as registry_module
-from study_agent.adapters.filesystem import FilesystemBlobStore
-from study_agent.application import GroundingAskService
 from study_agent.domain import CorrelationId, CourseId, ExecutionContext, PrincipalKind
 from study_agent.domain._validation import JsonObject
 from study_agent.tools import (
@@ -21,8 +19,7 @@ from study_agent.tools import (
     ToolManifest,
     ToolResult,
 )
-from study_agent.tools.builtin import builtin_tools
-from tests.integration.test_grounding_ask_service import COURSE, SESSION, composition
+from tests.support.host_composition import COURSE, SESSION, build_host
 
 _MANIFEST_SNAPSHOT = {
     "citation.resolve": (
@@ -105,44 +102,31 @@ def _context(
     )
 
 
-def _registry(
-    tmp_path: Path,
-) -> tuple[StudyToolRegistry, GroundingAskService, FilesystemBlobStore]:
-    service, _, _, _, _, blobs = composition(tmp_path)
-    registry = StudyToolRegistry(
-        courses=service._courses,
-        catalog=service._catalog,
-        retrieval=service._retrieval,
-        content=service._content,
-        sessions=service._session_service,
-        grounding=service,
-    )
-    return registry, service, blobs
-
-
 def test_exact_manifest_snapshot_and_declarations_are_immutable(tmp_path: Path) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    manifests = registry.manifests
+    host = build_host(tmp_path)
+    try:
+        manifests = host.registry.manifests
 
-    assert tuple(item.name for item in manifests) == tuple(sorted(_MANIFEST_SNAPSHOT))
-    assert len({item.identity for item in manifests}) == 7
-    assert len({item.fingerprint for item in manifests}) == 7
-    for manifest in manifests:
-        expected = _MANIFEST_SNAPSHOT[manifest.name]
-        assert (
-            manifest.version,
-            manifest.fingerprint,
-            manifest.effect,
-            manifest.required_capabilities,
-            manifest.idempotency,
-            manifest.emitted_event_kinds,
-        ) == expected
-        assert manifest.error_codes == tuple(ToolErrorCode)
-        assert manifest.input_schema["additionalProperties"] is False
-        assert manifest.output_schema["additionalProperties"] is False
-        with pytest.raises(TypeError):
-            manifest.input_schema["type"] = "string"  # type: ignore[index]
-    blobs.close()
+        assert tuple(item.name for item in manifests) == tuple(sorted(_MANIFEST_SNAPSHOT))
+        assert len({item.identity for item in manifests}) == 7
+        assert len({item.fingerprint for item in manifests}) == 7
+        for manifest in manifests:
+            expected = _MANIFEST_SNAPSHOT[manifest.name]
+            assert (
+                manifest.version,
+                manifest.fingerprint,
+                manifest.effect,
+                manifest.required_capabilities,
+                manifest.idempotency,
+                manifest.emitted_event_kinds,
+            ) == expected
+            assert manifest.error_codes == tuple(ToolErrorCode)
+            assert manifest.input_schema["additionalProperties"] is False
+            assert manifest.output_schema["additionalProperties"] is False
+            with pytest.raises(TypeError):
+                manifest.input_schema["type"] = "string"  # type: ignore[index]
+    finally:
+        host.close()
 
 
 @pytest.mark.parametrize(
@@ -165,173 +149,191 @@ def test_exact_manifest_snapshot_and_declarations_are_immutable(tmp_path: Path) 
 def test_authority_and_runtime_selectors_are_forbidden_before_effect(
     tmp_path: Path, authority: str
 ) -> None:
-    registry, service, blobs = _registry(tmp_path)
-    retrieval = cast(Any, service._retrieval)
-    result = asyncio.run(
-        registry.invoke(
-            "source.search",
-            {"query": "aortic valve", authority: "spoofed"},
-            _context("study:read"),
+    host = build_host(tmp_path)
+    try:
+        result = asyncio.run(
+            host.registry.invoke(
+                "source.search",
+                {"query": "aortic valve", authority: "spoofed"},
+                _context("study:read"),
+            )
         )
-    )
-    assert result.error is not None
-    assert result.error.code is ToolErrorCode.INVALID_ARGUMENTS
-    assert retrieval.search_calls == 0
-    blobs.close()
+        assert result.error is not None
+        assert result.error.code is ToolErrorCode.INVALID_ARGUMENTS
+        assert host.retrieval.search_calls == 0
+    finally:
+        host.close()
 
 
 def test_unknown_tool_and_model_capabilities_fail_closed(tmp_path: Path) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    unknown = asyncio.run(registry.invoke("source.injected", {}, _context("study:read")))
-    denied = asyncio.run(
-        registry.invoke("course.get", {}, _context(principal=PrincipalKind.MODEL))
-    )
-    granted = asyncio.run(
-        registry.invoke(
-            "course.get", {}, _context("study:read", principal=PrincipalKind.MODEL)
+    host = build_host(tmp_path)
+    try:
+        unknown = asyncio.run(
+            host.registry.invoke("source.injected", {}, _context("study:read"))
         )
-    )
-    spoofed = asyncio.run(
-        registry.invoke(
-            "course.get",
-            {"requested_capabilities": ("study:read",)},
-            _context(principal=PrincipalKind.MODEL),
+        denied = asyncio.run(
+            host.registry.invoke("course.get", {}, _context(principal=PrincipalKind.MODEL))
         )
-    )
+        granted = asyncio.run(
+            host.registry.invoke(
+                "course.get", {}, _context("study:read", principal=PrincipalKind.MODEL)
+            )
+        )
+        spoofed = asyncio.run(
+            host.registry.invoke(
+                "course.get",
+                {"requested_capabilities": ("study:read",)},
+                _context(principal=PrincipalKind.MODEL),
+            )
+        )
 
-    assert unknown.error is not None and unknown.error.code is ToolErrorCode.INVALID_ARGUMENTS
-    assert denied.error is not None and denied.error.code is ToolErrorCode.UNAUTHORIZED
-    assert granted.error is None
-    assert spoofed.error is not None and spoofed.error.code is ToolErrorCode.INVALID_ARGUMENTS
-    blobs.close()
+        assert unknown.error is not None and unknown.error.code is ToolErrorCode.INVALID_ARGUMENTS
+        assert denied.error is not None and denied.error.code is ToolErrorCode.UNAUTHORIZED
+        assert granted.error is None
+        assert spoofed.error is not None and spoofed.error.code is ToolErrorCode.INVALID_ARGUMENTS
+    finally:
+        host.close()
 
 
 def test_all_read_tools_are_scoped_and_source_list_never_discloses_content(
     tmp_path: Path,
 ) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    context = _context("study:read")
-    course = asyncio.run(registry.invoke("course.get", {}, context))
-    listed = asyncio.run(registry.invoke("source.list", {}, context))
-    found = asyncio.run(
-        registry.invoke(
-            "source.search",
-            {
-                "query": "aortic valve",
-                "limit": 1,
-                "minimum_trust_level": 90,
-                "source_roles": ("primary",),
-                "include_superseded": False,
-            },
-            context,
-        )
-    )
-    empty = asyncio.run(
-        registry.invoke(
-            "source.search",
-            {"query": "aortic valve", "minimum_trust_level": 100},
-            context,
-        )
-    )
-    session = asyncio.run(registry.invoke("session.get_context", {}, context))
-
-    for result in (course, listed, found, empty, session):
-        assert result.error is None
-    assert listed.value is not None
-    source = cast(tuple[Mapping[str, object], ...], listed.value["sources"])[0]
-    assert set(source) == {
-        "source_id",
-        "revision_id",
-        "title",
-        "kind",
-        "source_role",
-        "trust_level",
-        "is_current_revision",
-    }
-    assert not ({"content", "text", "blob", "blob_ref", "path", "uri"} & set(source))
-    assert found.value is not None and found.value["status"] == "sufficient"
-    evidence = cast(tuple[Mapping[str, object], ...], found.value["evidence"])
-    full_citation = cast(Mapping[str, object], evidence[0]["citation"])
-    citation = cast(
-        JsonObject,
-        {
-            name: full_citation[name]
-            for name in (
-                "source_id",
-                "revision_id",
-                "chunk_id",
-                "start_offset",
-                "end_offset",
+    host = build_host(tmp_path)
+    try:
+        execution_context = _context("study:read")
+        course = asyncio.run(host.registry.invoke("course.get", {}, execution_context))
+        listed = asyncio.run(host.registry.invoke("source.list", {}, execution_context))
+        found = asyncio.run(
+            host.registry.invoke(
+                "source.search",
+                {
+                    "query": "aortic valve",
+                    "limit": 1,
+                    "minimum_trust_level": 90,
+                    "source_roles": ("primary",),
+                    "include_superseded": False,
+                },
+                execution_context,
             )
-        },
-    )
-    resolved = asyncio.run(registry.invoke("citation.resolve", {"citation": citation}, context))
-    assert resolved.error is None and resolved.value is not None
-    assert resolved.value["text"] == "The aortic valve has three cusps."
-    canonical = cast(Mapping[str, object], resolved.value["citation"])
-    assert canonical["quoted_snippet"] == resolved.value["text"]
-    assert empty.value is not None
-    assert empty.value["status"] == "insufficient"
-    assert empty.value["evidence"] == ()
-    blobs.close()
+        )
+        empty = asyncio.run(
+            host.registry.invoke(
+                "source.search",
+                {"query": "aortic valve", "minimum_trust_level": 100},
+                execution_context,
+            )
+        )
+        session = asyncio.run(
+            host.registry.invoke("session.get_context", {}, execution_context)
+        )
+
+        for result in (course, listed, found, empty, session):
+            assert result.error is None
+        assert listed.value is not None
+        source = cast(tuple[Mapping[str, object], ...], listed.value["sources"])[0]
+        assert set(source) == {
+            "source_id",
+            "revision_id",
+            "title",
+            "kind",
+            "source_role",
+            "trust_level",
+            "is_current_revision",
+        }
+        assert not ({"content", "text", "blob", "blob_ref", "path", "uri"} & set(source))
+        assert found.value is not None and found.value["status"] == "sufficient"
+        evidence = cast(tuple[Mapping[str, object], ...], found.value["evidence"])
+        full_citation = cast(Mapping[str, object], evidence[0]["citation"])
+        citation = cast(
+            JsonObject,
+            {
+                name: full_citation[name]
+                for name in (
+                    "source_id",
+                    "revision_id",
+                    "chunk_id",
+                    "start_offset",
+                    "end_offset",
+                )
+            },
+        )
+        resolved = asyncio.run(
+            host.registry.invoke("citation.resolve", {"citation": citation}, execution_context)
+        )
+        assert resolved.error is None and resolved.value is not None
+        assert resolved.value["text"] == "The aortic valve has three cusps."
+        canonical = cast(Mapping[str, object], resolved.value["citation"])
+        assert canonical["quoted_snippet"] == resolved.value["text"]
+        assert empty.value is not None
+        assert empty.value["status"] == "insufficient"
+        assert empty.value["evidence"] == ()
+    finally:
+        host.close()
 
 
 def test_note_write_requires_key_is_idempotent_and_conflicts_on_changed_content(
     tmp_path: Path,
 ) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    missing = asyncio.run(
-        registry.invoke("session.record_note", {"content": "A note"}, _context("study:write"))
-    )
-    context = _context("study:write", key="note-key")
-    first = asyncio.run(registry.invoke("session.record_note", {"content": "A note"}, context))
-    retry = asyncio.run(registry.invoke("session.record_note", {"content": "A note"}, context))
-    conflict = asyncio.run(
-        registry.invoke("session.record_note", {"content": "Changed"}, context)
-    )
-    assert missing.error is not None and missing.error.code is ToolErrorCode.INVALID_ARGUMENTS
-    assert first == retry
-    assert first.error is None
-    assert conflict.error is not None and conflict.error.code is ToolErrorCode.CONFLICT
-    blobs.close()
+    host = build_host(tmp_path)
+    try:
+        missing = asyncio.run(
+            host.registry.invoke(
+                "session.record_note", {"content": "A note"}, _context("study:write")
+            )
+        )
+        execution_context = _context("study:write", key="note-key")
+        first = asyncio.run(
+            host.registry.invoke("session.record_note", {"content": "A note"}, execution_context)
+        )
+        retry = asyncio.run(
+            host.registry.invoke("session.record_note", {"content": "A note"}, execution_context)
+        )
+        conflict = asyncio.run(
+            host.registry.invoke("session.record_note", {"content": "Changed"}, execution_context)
+        )
+        assert missing.error is not None and missing.error.code is ToolErrorCode.INVALID_ARGUMENTS
+        assert first == retry
+        assert first.error is None
+        assert conflict.error is not None and conflict.error.code is ToolErrorCode.CONFLICT
+    finally:
+        host.close()
 
 
 def test_returned_json_graphs_are_deeply_immutable(tmp_path: Path) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    result = asyncio.run(registry.invoke("source.list", {}, _context("study:read")))
-    assert result.value is not None
-    with pytest.raises(TypeError):
-        result.value["sources"] = ()  # type: ignore[index]
-    source = cast(tuple[JsonObject, ...], result.value["sources"])[0]
-    with pytest.raises(TypeError):
-        source["title"] = "tampered"  # type: ignore[index]
-    blobs.close()
+    host = build_host(tmp_path)
+    try:
+        result = asyncio.run(
+            host.registry.invoke("source.list", {}, _context("study:read"))
+        )
+        assert result.value is not None
+        with pytest.raises(TypeError):
+            result.value["sources"] = ()  # type: ignore[index]
+        source = cast(tuple[JsonObject, ...], result.value["sources"])[0]
+        with pytest.raises(TypeError):
+            source["title"] = "tampered"  # type: ignore[index]
+    finally:
+        host.close()
 
 
 def test_duplicate_tool_names_are_rejected_at_composition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _, service, blobs = _registry(tmp_path)
-    tools = builtin_tools(
-        courses=service._courses,
-        catalog=service._catalog,
-        retrieval=service._retrieval,
-        content=service._content,
-        sessions=service._session_service,
-        grounding=service,
-    )
-    duplicated = (*tools[:-1], tools[0])
-    monkeypatch.setattr(registry_module, "builtin_tools", lambda **_: duplicated)
-    with pytest.raises(RuntimeError, match="exactly seven unique"):
-        StudyToolRegistry(
-            courses=service._courses,
-            catalog=service._catalog,
-            retrieval=service._retrieval,
-            content=service._content,
-            sessions=service._session_service,
-            grounding=service,
-        )
-    blobs.close()
+    host = build_host(tmp_path)
+    try:
+        tools = tuple(cast(dict[str, Any], host.registry._tools).values())
+        duplicated = (*tools[:-1], tools[0])
+        monkeypatch.setattr(registry_module, "builtin_tools", lambda **_: duplicated)
+        with pytest.raises(RuntimeError, match="exactly seven unique"):
+            StudyToolRegistry(
+                courses=cast(Any, None),
+                catalog=cast(Any, None),
+                retrieval=cast(Any, None),
+                content=cast(Any, None),
+                sessions=cast(Any, None),
+                grounding=host.grounding,
+            )
+    finally:
+        host.close()
 
 
 @dataclass(frozen=True)
@@ -346,56 +348,62 @@ class _InvalidOutputTool:
 
 
 def test_invalid_tool_output_fails_closed_without_leaking_value(tmp_path: Path) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    manifest = next(item for item in registry.manifests if item.name == "course.get")
-    tools = cast(dict[str, Any], registry._tools)
-    tools["course.get"] = _InvalidOutputTool(manifest)
+    host = build_host(tmp_path)
+    try:
+        manifest = next(item for item in host.registry.manifests if item.name == "course.get")
+        tools = cast(dict[str, Any], host.registry._tools)
+        tools["course.get"] = _InvalidOutputTool(manifest)
 
-    result = asyncio.run(registry.invoke("course.get", {}, _context("study:read")))
+        result = asyncio.run(
+            host.registry.invoke("course.get", {}, _context("study:read"))
+        )
 
-    assert result.value is None
-    assert result.error is not None
-    assert result.error.code is ToolErrorCode.INCOMPATIBLE_RUNTIME
-    assert "provider-secret" not in str(result.to_json())
-    blobs.close()
+        assert result.value is None
+        assert result.error is not None
+        assert result.error.code is ToolErrorCode.INCOMPATIBLE_RUNTIME
+        assert "provider-secret" not in str(result.to_json())
+    finally:
+        host.close()
 
 
 def test_citation_resolution_rejects_a_context_for_another_course(tmp_path: Path) -> None:
-    registry, _, blobs = _registry(tmp_path)
-    local = _context("study:read")
-    found = asyncio.run(
-        registry.invoke("source.search", {"query": "aortic valve"}, local)
-    )
-    assert found.value is not None
-    evidence = cast(tuple[Mapping[str, object], ...], found.value["evidence"])
-    full = cast(Mapping[str, object], evidence[0]["citation"])
-    citation = cast(
-        JsonObject,
-        {
-            key: full[key]
-            for key in (
-                "source_id",
-                "revision_id",
-                "chunk_id",
-                "start_offset",
-                "end_offset",
-            )
-        },
-    )
-    foreign = ExecutionContext(
-        PrincipalKind.SERVICE,
-        "foreign-course-host",
-        CourseId("course-foreign"),
-        CorrelationId("foreign-correlation"),
-        frozenset({"study:read"}),
-        SESSION,
-    )
+    host = build_host(tmp_path)
+    try:
+        local = _context("study:read")
+        found = asyncio.run(
+            host.registry.invoke("source.search", {"query": "aortic valve"}, local)
+        )
+        assert found.value is not None
+        evidence = cast(tuple[Mapping[str, object], ...], found.value["evidence"])
+        full = cast(Mapping[str, object], evidence[0]["citation"])
+        citation = cast(
+            JsonObject,
+            {
+                key: full[key]
+                for key in (
+                    "source_id",
+                    "revision_id",
+                    "chunk_id",
+                    "start_offset",
+                    "end_offset",
+                )
+            },
+        )
+        foreign = ExecutionContext(
+            PrincipalKind.SERVICE,
+            "foreign-course-host",
+            CourseId("course-foreign"),
+            CorrelationId("foreign-correlation"),
+            frozenset({"study:read"}),
+            SESSION,
+        )
 
-    resolved = asyncio.run(
-        registry.invoke("citation.resolve", {"citation": citation}, foreign)
-    )
+        resolved = asyncio.run(
+            host.registry.invoke("citation.resolve", {"citation": citation}, foreign)
+        )
 
-    assert resolved.value is None
-    assert resolved.error is not None
-    assert resolved.error.code in {ToolErrorCode.NOT_FOUND, ToolErrorCode.UNAUTHORIZED}
-    blobs.close()
+        assert resolved.value is None
+        assert resolved.error is not None
+        assert resolved.error.code in {ToolErrorCode.NOT_FOUND, ToolErrorCode.UNAUTHORIZED}
+    finally:
+        host.close()

@@ -8,7 +8,11 @@ from typing import Protocol
 
 from study_agent.domain import ExecutionContext
 from study_agent.domain._validation import JsonObject, freeze_object, require_text
-from study_agent.pedagogy import PedagogicalProfileRef, ProfileSelectionReceipt
+from study_agent.pedagogy import (
+    PEDAGOGICAL_PROFILE_CATALOG,
+    PedagogicalProfileRef,
+    ProfileSelectionReceipt,
+)
 from study_agent.playbooks import (
     DataSourceKind,
     DialogueStep,
@@ -150,6 +154,10 @@ class ProfiledCapabilityBinding:
             raise ValueError("profiled binding manifest fingerprint is stale")
         if not isinstance(self.profile, PedagogicalProfileRef):
             raise TypeError("profiled binding profile must use PedagogicalProfileRef")
+        try:
+            PEDAGOGICAL_PROFILE_CATALOG.resolve(self.profile)
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("profiled binding profile is not in the closed catalog") from error
         if not isinstance(self.skill, SkillPackage):
             raise TypeError("profiled binding skill must be SkillPackage")
         if not isinstance(self.playbook, PlaybookDefinition):

@@ -308,7 +308,7 @@ def _artifact_history(
     tmp_path: Path,
 ) -> tuple[FilesystemBlobStore, tuple[DomainEvent, ...]]:
     blobs, stored, _, _ = _stack(tmp_path)
-    base = list(stored.read(COURSE))
+    base = list(stored._read_records(COURSE))
     source = decode_source_revision_ingested(base[1].payload)
     chunk = source.chunks[0]
     commitment = SourceCommitment(
@@ -571,7 +571,7 @@ def test_v1_artifact_guard_matches_only_exact_artifact_event_types(
     tmp_path: Path,
 ) -> None:
     blobs, stored, _, _ = _stack(tmp_path)
-    stream = tuple(stored.read(COURSE))
+    stream = tuple(stored._read_records(COURSE))
     similarly_prefixed_unknown = DomainEvent(
         EventId("event-similarly-prefixed-unknown"),
         COURSE,

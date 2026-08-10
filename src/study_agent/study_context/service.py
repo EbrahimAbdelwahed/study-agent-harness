@@ -25,9 +25,9 @@ from study_agent.ports import (
     ClockPort,
     CourseViewPort,
     EventSequenceConflictError,
-    EventStore,
     SessionViewPort,
 )
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 from study_agent.ports.study_context import StudyContextViewPort
 
 from .events import (
@@ -59,7 +59,7 @@ class RetryableStudyContextConflictError(RuntimeError):
 class StudyContextService:
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         view: StudyContextViewPort,
         courses: CourseViewPort,
@@ -233,7 +233,7 @@ class StudyContextService:
         fingerprint: str,
     ) -> StudyContextSnapshot:
         try:
-            self._events.append(context.course_id, expected_sequence, (event,))
+            _append_legacy(self._events, context.course_id, expected_sequence, (event,))
         except EventSequenceConflictError as error:
             existing = self._existing(context, event.event_id, fingerprint)
             if existing is not None:
@@ -265,8 +265,8 @@ class StudyContextService:
         )
 
 
-def _current_sequence(events: EventStore, course_id: CourseId) -> int:
-    stream = events.read(course_id)
+def _current_sequence(events: _LegacyEventStore, course_id: CourseId) -> int:
+    stream = _read_domain_events(events, course_id)
     return stream[-1].course_sequence if stream else 0
 
 

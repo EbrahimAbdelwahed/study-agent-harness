@@ -7,6 +7,7 @@ import pytest
 
 from study_agent.adapters.filesystem import FilesystemBlobStore
 from study_agent.adapters.sqlite import SQLiteEventStore
+from study_agent.api.sources import CitationFailure, CitationFailureKind, citation_from_bytes
 from study_agent.courses import register_course_events
 from study_agent.domain import (
     Citation,
@@ -80,3 +81,11 @@ def test_real_ingestion_resolves_canonical_unicode_and_detects_blob_corruption(
         content.get_text(result.source.revision_id)
     assert corrupted.value.code is SourceContentErrorCode.INTEGRITY_ERROR
     blobs.close()
+
+
+def test_public_citation_decode_failure_stays_typed_alongside_source_resolution() -> None:
+    with pytest.raises(CitationFailure) as unsupported:
+        citation_from_bytes(b'{"version":99}')
+
+    assert type(unsupported.value) is CitationFailure
+    assert unsupported.value.kind is CitationFailureKind.UNSUPPORTED_VERSION

@@ -18,6 +18,7 @@ from study_agent.capabilities.bindings import (
     ProfiledCapabilityBinding,
 )
 from study_agent.capabilities.builtin import PROPOSE_FLASHCARDS_MANIFEST
+from study_agent.capabilities.contracts import TutorCapabilityId
 from study_agent.capabilities.worker_adapter import ProfiledWorkerExecutionDescriptor
 from study_agent.domain import ExecutionContext, RetrievalForm
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_object
@@ -265,9 +266,14 @@ class HybridFlashcardTaskBinding:
             raise ValueError("lesson request profile differs from hybrid binding")
         self._request = request
         self._binding = binding
+        capability_id = binding.manifest.id
+        if not isinstance(capability_id, TutorCapabilityId):
+            raise ValueError("hybrid binding must use a tutor capability id")
+        if capability_id is not TutorCapabilityId.PROPOSE_FLASHCARDS:
+            raise ValueError("hybrid binding must use propose_flashcards")
         expected = ProfileTaskExpectation(
             request.profile_expectation.profile_selection_receipt,
-            binding.manifest.id,
+            capability_id,
             binding.manifest.version,
             binding.manifest_fingerprint,
             binding.manifest.required_authority,

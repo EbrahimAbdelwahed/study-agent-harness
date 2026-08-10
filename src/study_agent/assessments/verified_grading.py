@@ -11,6 +11,7 @@ from typing import Protocol
 
 from study_agent.capabilities.bindings import CapabilityBinding
 from study_agent.capabilities.builtin import GRADE_RESPONSE_MANIFEST
+from study_agent.capabilities.contracts import TutorCapabilityId
 from study_agent.domain import (
     ArtifactRevisionId,
     AttemptId,
@@ -238,10 +239,13 @@ class GradeResponseTaskFactory:
         ).hexdigest()
         schema = GRADE_RESPONSE_OUTPUT_SCHEMA.value
         validate_schema_definition(schema)
+        capability_id = binding.manifest.id
+        if not isinstance(capability_id, TutorCapabilityId):
+            raise TypeError("grade response binding capability id must use TutorCapabilityId")
         return GenerationWorkerTask(
             f"grade-response-sha256:{identity}",
             GenerationWorkerTaskKind.GRADE_RESPONSE,
-            binding.manifest.id,
+            capability_id,
             binding.manifest.version,
             binding.manifest_fingerprint,
             binding.manifest.required_authority,

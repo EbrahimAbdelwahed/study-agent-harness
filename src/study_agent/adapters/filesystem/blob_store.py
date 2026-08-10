@@ -11,19 +11,26 @@ import weakref
 from contextlib import suppress
 from pathlib import Path
 
+from study_agent.domain.errors import (
+    InternalFailure,
+    NotFoundFailure,
+    UnauthorizedFailure,
+    UnavailableDependencyFailure,
+    ValidationFailure,
+)
 from study_agent.domain.identifiers import BlobId
 from study_agent.domain.source import BlobRef
 
 
-class BlobNotFoundError(LookupError):
+class BlobNotFoundError(NotFoundFailure, LookupError):
     """The referenced immutable content object does not exist."""
 
 
-class BlobIntegrityError(OSError):
+class BlobIntegrityError(InternalFailure, OSError):
     """Stored bytes do not match their immutable content reference."""
 
 
-class UnsafeBlobPathError(ValueError):
+class UnsafeBlobPathError(ValidationFailure, ValueError):
     """A reference, platform, or filesystem entry violates safe-storage rules."""
 
 
@@ -207,46 +214,65 @@ class FilesystemBlobStore:
         while written < len(view):
             written += os.write(descriptor, view[written:])
 
-    def put(self, content: bytes) -> BlobRef:
+    def put(self, content: bytes, ref: BlobRef | None = None) -> BlobRef:
         if self._read_only:
-            raise PermissionError("read-only blob store cannot publish content")
-        if not isinstance(content, bytes):
-            raise TypeError("content must be bytes")
+            raise UnauthorizedFailure("read-only blob store cannot publish content")
+        if type(content) is not bytes:
+            raise ValidationFailure("content must be bytes")
         digest = self._digest(content)
+        expected_ref = ref
         ref = BlobRef(BlobId(f"sha256:{digest}"), digest, len(content))
-        shard_fd = self._open_shard(digest, create=True)
+        if expected_ref is not None:
+            self._validate_ref(expected_ref)
+            if expected_ref.checksum_sha256 != digest or expected_ref.byte_length != len(content):
+                raise ValidationFailure("blob reference does not match content")
         try:
-            descriptor, temporary_name = self._create_temporary(shard_fd)
+            shard_fd = self._open_shard(digest, create=True)
             try:
+                descriptor, temporary_name = self._create_temporary(shard_fd)
                 try:
-                    self._write_all(descriptor, content)
-                    os.fsync(descriptor)
-                    os.fchmod(descriptor, 0o444)
+                    try:
+                        self._write_all(descriptor, content)
+                        os.fsync(descriptor)
+                        os.fchmod(descriptor, 0o444)
+                    finally:
+                        os.close(descriptor)
+                    try:
+                        os.link(
+                            temporary_name,
+                            digest,
+                            src_dir_fd=shard_fd,
+                            dst_dir_fd=shard_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileExistsError:
+                        self._verified_content(shard_fd, digest, ref)
+                    else:
+                        os.fsync(shard_fd)
+                    return ref
                 finally:
-                    os.close(descriptor)
-                try:
-                    os.link(
-                        temporary_name,
-                        digest,
-                        src_dir_fd=shard_fd,
-                        dst_dir_fd=shard_fd,
-                        follow_symlinks=False,
-                    )
-                except FileExistsError:
-                    self._verified_content(shard_fd, digest, ref)
-                else:
-                    os.fsync(shard_fd)
-                return ref
+                    with suppress(FileNotFoundError):
+                        os.unlink(temporary_name, dir_fd=shard_fd)
             finally:
-                with suppress(FileNotFoundError):
-                    os.unlink(temporary_name, dir_fd=shard_fd)
-        finally:
-            os.close(shard_fd)
+                os.close(shard_fd)
+        except (ValidationFailure, NotFoundFailure, InternalFailure, UnauthorizedFailure):
+            raise
+        except OSError as error:
+            raise UnavailableDependencyFailure(
+                "filesystem storage is unavailable", retryable=True
+            ) from error
 
     def get(self, ref: BlobRef) -> bytes:
-        digest = self._validate_ref(ref)
-        shard_fd = self._open_shard(digest, create=False)
         try:
-            return self._verified_content(shard_fd, digest, ref)
-        finally:
-            os.close(shard_fd)
+            digest = self._validate_ref(ref)
+            shard_fd = self._open_shard(digest, create=False)
+            try:
+                return self._verified_content(shard_fd, digest, ref)
+            finally:
+                os.close(shard_fd)
+        except (ValidationFailure, NotFoundFailure, InternalFailure, UnauthorizedFailure):
+            raise
+        except OSError as error:
+            raise UnavailableDependencyFailure(
+                "filesystem storage is unavailable", retryable=True
+            ) from error

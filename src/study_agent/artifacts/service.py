@@ -23,12 +23,12 @@ from study_agent.ports import (
     ArtifactViewPort,
     ClockPort,
     EventSequenceConflictError,
-    EventStore,
     ServiceDecisionPolicyPort,
     SessionViewPort,
     SourceCommitmentLookupPort,
     VerifiedGeneratedBatchPort,
 )
+from study_agent.ports.storage import _append_legacy, _LegacyEventStore, _read_domain_events
 
 from .content import HybridFlashcardContent, MorphologyFlashcardContent, StudyArtifactEnvelope
 from .contracts import (
@@ -76,7 +76,7 @@ class RetryableArtifactConflictError(RuntimeError):
 class ArtifactService:
     def __init__(
         self,
-        events: EventStore,
+        events: _LegacyEventStore,
         clock: ClockPort,
         view: ArtifactViewPort,
         sessions: SessionViewPort,
@@ -422,7 +422,7 @@ class ArtifactService:
         return self._view.get(context.course_id)
 
     def _expect_sequence(self, context: ExecutionContext, expected: int) -> None:
-        actual = len(self._events.read(context.course_id))
+        actual = len(_read_domain_events(self._events, context.course_id))
         if actual != expected:
             raise RetryableArtifactConflictError(
                 f"course stream advanced: expected {expected}, actual {actual}"
@@ -432,7 +432,7 @@ class ArtifactService:
         self, context: ExecutionContext, expected: int, event: DomainEvent, fingerprint: str
     ) -> ArtifactSnapshot:
         try:
-            self._events.append(context.course_id, expected, (event,))
+            _append_legacy(self._events, context.course_id, expected, (event,))
         except EventSequenceConflictError as error:
             existing = self._view.command_fingerprint(context.course_id, event.event_id)
             if existing is not None:

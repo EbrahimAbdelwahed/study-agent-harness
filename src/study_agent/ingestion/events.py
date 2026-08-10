@@ -12,7 +12,14 @@ from study_agent.domain._validation import JsonObject, JsonValue
 from study_agent.domain.events import DomainEvent
 from study_agent.domain.identifiers import BlobId, ChunkId, RevisionId, SourceId
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
-from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, SourceKind
+from study_agent.domain.source import (
+    BlobRef,
+    SourceChunk,
+    SourceDocument,
+    SourceKind,
+    source_revision_identity_manifest,
+)
+from study_agent.domain.source_identity import source_revision_id_for
 
 from .chunking import CHUNKER_VERSION, ChunkingConfig, chunk_text
 from .identity import (
@@ -309,15 +316,78 @@ def decode_source_revision_ingested(payload: JsonObject) -> SourceRevisionIngest
     if not isinstance(chunks_value, tuple):
         raise ValueError("chunks must be an array")
     chunks = tuple(_chunk(value, index) for index, value in enumerate(chunks_value))
-    return SourceRevisionIngested(
+    decoded = SourceRevisionIngested(
         source,
         chunks,
         _integer(payload.get("normalized_character_length"), "normalized_character_length"),
         _chunking(payload.get("chunking")),
     )
+    _validate_revision_identity(
+        decoded.source,
+        original_sha256=decoded.source.checksum_sha256,
+        chunking=decoded.chunking,
+    )
+    return decoded
+
+
+def _validate_revision_identity(
+    source: SourceDocument,
+    *,
+    original_sha256: str,
+    chunking: PersistedChunkingConfig,
+) -> None:
+    # The ingestion adapter's established manifest remains readable, but the
+    # facade manifest is also a first-class event identity.  Both identities
+    # use the same source_identity codec, namespace, and digest format; only
+    # the manifest projection differs because SourceDocument carries
+    # ingestion-only fields.
+    expected_revision = revision_id_for(
+        original_sha256=original_sha256,
+        source_id=source.source_id,
+        kind=source.kind,
+        title=source.title,
+        trust_level=source.trust_level,
+        source_role=source.source_role,
+        normalization_version=source.normalization_version,
+        chunker_version=chunking.version,
+        max_characters=chunking.max_characters,
+    )
+    expected_facade_revision = source_revision_id_for(
+        source_revision_identity_manifest(
+            source_id=source.source_id,
+            blob=source.blob,
+            media_type=source.media_type,
+            normalization_version=source.normalization_version,
+            substrate_id=source.substrate_id,
+            metadata={
+                "chunker_version": chunking.version,
+                "kind": source.kind.value,
+                "max_characters": chunking.max_characters,
+                "source_role": source.source_role,
+                "title": source.title,
+                "trust_level": source.trust_level,
+            },
+        )
+    )
+    legacy_revision = legacy_revision_id_for(
+        original_sha256=original_sha256,
+        source_id=source.source_id,
+        kind=source.kind,
+        normalization_version=source.normalization_version,
+        chunker_version=chunking.version,
+        max_characters=chunking.max_characters,
+    )
+    if source.revision_id not in (
+        expected_revision,
+        expected_facade_revision,
+        legacy_revision,
+    ):
+        raise ValueError("revision_id does not match canonical immutable inputs")
 
 
 def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
+    if str(ref.id) != f"sha256:{ref.checksum_sha256}":
+        raise ValueError(f"{name} id does not match its checksum")
     content = load_blob(ref)
     if not isinstance(content, bytes):
         raise ValueError(f"{name} loader must return bytes")
@@ -367,27 +437,11 @@ def decode_source_revision_event(
         raise ValueError("ingested source structure_origin must be mechanically_extracted")
     if source.created_at != event.occurred_at:
         raise ValueError("source.created_at must equal event.occurred_at")
-    expected_revision = revision_id_for(
+    _validate_revision_identity(
+        source,
         original_sha256=sha256(original).hexdigest(),
-        source_id=source.source_id,
-        kind=source.kind,
-        title=source.title,
-        trust_level=source.trust_level,
-        source_role=source.source_role,
-        normalization_version=source.normalization_version,
-        chunker_version=decoded.chunking.version,
-        max_characters=decoded.chunking.max_characters,
+        chunking=decoded.chunking,
     )
-    legacy_revision = legacy_revision_id_for(
-        original_sha256=sha256(original).hexdigest(),
-        source_id=source.source_id,
-        kind=source.kind,
-        normalization_version=source.normalization_version,
-        chunker_version=decoded.chunking.version,
-        max_characters=decoded.chunking.max_characters,
-    )
-    if source.revision_id not in (expected_revision, legacy_revision):
-        raise ValueError("revision_id does not match canonical immutable inputs")
     if event.event_id != source_event_id_for(event.course_id, source.revision_id):
         raise ValueError("event_id does not match course and revision identity")
     for chunk in decoded.chunks:

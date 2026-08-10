@@ -20,8 +20,13 @@ from study_agent.domain.identifiers import (
 from study_agent.domain.source import BlobRef
 from study_agent.domain.substrate import PageMapEntry, Substrate, SubstrateProduction
 from study_agent.ingestion.normalization import InvalidUtf8Error, normalize_utf8
-from study_agent.ports import BlobStore, ClockPort, EventStore
-from study_agent.ports.storage import EventSequenceConflictError
+from study_agent.ports import BlobStore, ClockPort
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    _append_legacy,
+    _LegacyEventStore,
+    _read_domain_events,
+)
 
 from .substrate_events import (
     SOURCE_SUBSTRATE_PRODUCED,
@@ -125,7 +130,7 @@ class SubstrateProductionError(ValueError):
 class SubstrateProductionService:
     """Publish and replay source substrate productions without providers."""
 
-    def __init__(self, *, blobs: BlobStore, events: EventStore, clock: ClockPort) -> None:
+    def __init__(self, *, blobs: BlobStore, events: _LegacyEventStore, clock: ClockPort) -> None:
         self._blobs = blobs
         self._events = events
         self._clock = clock
@@ -156,7 +161,7 @@ class SubstrateProductionService:
             )
         if context.principal_kind is not PrincipalKind.SERVICE:
             raise SubstrateProductionError("substrate production requires a service context")
-        stream = tuple(self._events.read(context.course_id))
+        stream = _read_domain_events(self._events, context.course_id)
         current_sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and current_sequence != expected_sequence:
             raise SubstrateProductionError(
@@ -225,7 +230,7 @@ class SubstrateProductionService:
             raise SubstrateProductionError(str(error)) from error
 
         if expected_sequence is not None:
-            latest_stream = tuple(self._events.read(context.course_id))
+            latest_stream = _read_domain_events(self._events, context.course_id)
             latest_sequence = latest_stream[-1].course_sequence if latest_stream else 0
             if latest_sequence != expected_sequence:
                 raise SubstrateProductionError(
@@ -254,9 +259,11 @@ class SubstrateProductionService:
             session_id=context.session_id,
         )
         try:
-            committed = self._events.append(context.course_id, current_sequence, (event,))
+            committed = _append_legacy(
+                self._events, context.course_id, current_sequence, (event,)
+            )
         except EventSequenceConflictError as error:
-            concurrent_stream = tuple(self._events.read(context.course_id))
+            concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = (
                 _find_production(
                     concurrent_stream, self._blobs, receipt.substrate_production_id

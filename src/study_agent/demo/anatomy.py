@@ -465,7 +465,7 @@ def run_reference_demo(
 
     recorded_client = _RecordedResponses(decisions)
     recorded = OpenAIResponsesTutorDecisionPort(
-        OpenAIResponsesTutorConfig("gpt-5.6", "OPENAI_API_KEY"),
+        OpenAIResponsesTutorConfig("gpt-5.6-luna", "OPENAI_API_KEY"),
         client=_RecordedClient(recorded_client),
     )
     recorded_results, recorded_gateway = _run_trace(

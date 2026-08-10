@@ -1,6 +1,6 @@
 # Task Bead: GAP-02 agent-facing host report tool
 
-Status: Essential tracer implemented — full bead remains open
+Status: Done — host tool and bounded nonblocking dispatch verified 2026-07-24
 Priority: P0
 Type: expand
 Depends On: GAP-01
