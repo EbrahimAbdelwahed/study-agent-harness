@@ -20,7 +20,9 @@ from study_agent.domain import (
     SourceId,
     SourceKind,
     StructureOrigin,
+    substrate_id_for,
 )
+from study_agent.domain.source import SourceRevision
 from study_agent.ingestion import (
     CHUNK_MAX_CHARACTERS,
     CHUNKER_POLICY_VERSION,
@@ -33,12 +35,11 @@ from study_agent.ingestion import (
     chunk_text,
     normalize_utf8,
     register_source_revision_events,
-    revision_id_for,
-    source_event_id_for,
     source_revision_payload,
     source_revision_selected_event_id_for,
     source_revision_selected_payload,
 )
+from study_agent.ingestion.identity import source_revision_ingested_event_id_for
 from study_agent.state import EventRegistry, PayloadValidationError
 
 
@@ -53,18 +54,21 @@ def make_event(
     original_blob = blobs.put(original)
     normalized_blob = blobs.put(normalized.content)
     source_id = SourceId("source-1")
-    revision_id = revision_id_for(
-        original_sha256=original_blob.checksum_sha256,
-        source_id=source_id,
-        kind=SourceKind.TEXT,
-        title="Physiology notes",
-        trust_level=80,
-        source_role="primary",
-        normalization_version=NORMALIZATION_POLICY_VERSION,
-        chunker_version=CHUNKER_POLICY_VERSION,
-        max_characters=max_characters,
-    )
     occurred_at = datetime(2026, 7, 11, 9, sequence, tzinfo=UTC)
+    revision_id = SourceRevision.create(
+        source_id=source_id,
+        content=original,
+        media_type="text/plain",
+        created_at=occurred_at,
+        normalization_version=NORMALIZATION_POLICY_VERSION,
+        substrate_id=substrate_id_for(normalized.content),
+        metadata={
+            "kind": SourceKind.TEXT.value,
+            "source_role": "primary",
+            "title": "Physiology notes",
+            "trust_level": 80,
+        },
+    ).revision_id
     document = SourceDocument(
         source_id,
         revision_id,
@@ -95,7 +99,7 @@ def make_event(
     )
     course_id = CourseId("course-1")
     return DomainEvent(
-        source_event_id_for(course_id, revision_id),
+        source_revision_ingested_event_id_for(course_id, revision_id, occurred_at),
         course_id,
         sequence,
         SOURCE_REVISION_INGESTED,
@@ -189,7 +193,7 @@ def test_selection_replay_tracks_current_without_reordering_immutable_history(
     blobs.close()
 
 
-def test_positive_max_characters_changes_revision_and_trailing_length_is_exact(
+def test_positive_max_characters_is_derived_policy_not_revision_identity(
     tmp_path: Path,
 ) -> None:
     blobs = FilesystemBlobStore(tmp_path / "blobs")
@@ -201,19 +205,11 @@ def test_positive_max_characters_changes_revision_and_trailing_length_is_exact(
     first = make_event(blobs, original, 1, max_characters=5)
     second = make_event(blobs, original, 2, max_characters=9)
 
-    assert first.payload["source"] != second.payload["source"]
-    store.append(course_id, 0, (first, second))
-    assert store.verify_projection(course_id)
-    sources = store.projection(course_id).state["sources"]
-    assert isinstance(sources, Mapping)
-    source_state = sources["source-1"]
-    assert isinstance(source_state, Mapping)
-    revisions = source_state["revisions"]
-    assert isinstance(revisions, Mapping)
-    assert len(revisions) == 2
-    for manifest in revisions.values():
-        assert isinstance(manifest, Mapping)
-        assert manifest["normalized_character_length"] == len("alpha beta gamma   \n")
+    assert first.payload["source"] == second.payload["source"]
+    assert first.payload["chunking"] != second.payload["chunking"]
+    with pytest.raises((PayloadValidationError, ValueError)):
+        store.append(course_id, 0, (first, second))
+    assert store.read(course_id) == ()
     blobs.close()
 
 

@@ -10,9 +10,15 @@ from pathlib import PurePath
 
 from study_agent.domain.context import ExecutionContext
 from study_agent.domain.events import Actor, DomainEvent
-from study_agent.domain.identifiers import BlobId, RevisionId, SourceId
+from study_agent.domain.identifiers import BlobId, RevisionId, SourceId, substrate_id_for
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
-from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, SourceKind
+from study_agent.domain.source import (
+    BlobRef,
+    SourceChunk,
+    SourceDocument,
+    SourceKind,
+    SourceRevision,
+)
 from study_agent.ports import BlobStore, ClockPort, CourseViewPort
 from study_agent.ports.storage import (
     EventSequenceConflictError,
@@ -27,15 +33,16 @@ from .events import (
     SOURCE_REVISION_SCHEMA_VERSION,
     SOURCE_REVISION_SELECTED,
     SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+    BlobLoader,
     SourceRevisionIngested,
+    decode_source_revision_event,
     decode_source_revision_ingested,
     decode_source_revision_selected_event,
     source_revision_selected_payload,
 )
 from .identity import (
-    revision_id_for,
-    source_event_id_for,
     source_kind_contract,
+    source_revision_ingested_event_id_for,
     source_revision_selected_event_id_for,
 )
 from .normalization import InvalidUtf8Error, normalize_utf8
@@ -135,28 +142,31 @@ class TextIngestionService:
 
         original_blob = _predicted_blob(content)
         normalized_blob = _predicted_blob(normalized.content)
-        revision_id = revision_id_for(
-            original_sha256=original_blob.checksum_sha256,
-            source_id=source_id,
-            kind=kind,
-            title=title,
-            trust_level=trust_level,
-            source_role=source_role,
-            normalization_version=normalized.version,
-            chunker_version=self._chunking.version,
-            max_characters=self._chunking.max_characters,
-        )
         now = self._clock.now()
         try:
+            revision = SourceRevision.create(
+                source_id=source_id,
+                content=content,
+                media_type=media_type,
+                created_at=now,
+                normalization_version=normalized.version,
+                substrate_id=substrate_id_for(normalized.content),
+                metadata={
+                    "kind": kind.value,
+                    "source_role": source_role,
+                    "title": title,
+                    "trust_level": trust_level,
+                },
+            )
             source = SourceDocument(
                 source_id,
-                revision_id,
+                revision.revision_id,
                 kind,
                 title,
                 media_type,
                 original_blob.checksum_sha256,
                 original_blob.byte_length,
-                now,
+                revision.created_at,
                 trust_level,
                 source_role,
                 original_blob,
@@ -170,33 +180,38 @@ class TextIngestionService:
             chunks = chunk_text(
                 normalized.text,
                 source_id=source_id,
-                revision_id=revision_id,
+                revision_id=revision.revision_id,
                 kind=kind,
                 config=self._chunking,
             )
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
 
-        current = _current_revision(stream, source_id)
-        if current is not None and _matches_request(current, source, self._chunking):
-            if expected_sequence is not None:
-                latest = _read_domain_events(self._events, context.course_id)
-                latest_sequence = latest[-1].course_sequence if latest else 0
-                if latest_sequence != expected_sequence:
-                    raise TextIngestionError(
-                        IngestionErrorCode.SEQUENCE_CONFLICT,
-                        "course stream advanced before idempotent return; "
-                        f"expected {expected_sequence}, observed {latest_sequence}",
-                        retryable=True,
-                    )
-            return TextIngestionResult(
-                IngestionStatus.IDEMPOTENT,
-                current.source,
-                current.chunks,
-                current_sequence,
+        current = _current_revision(stream, source_id, self._blobs.get)
+        if current is not None and current.source.revision_id == source.revision_id:
+            if _matches_request(current, source, self._chunking):
+                if expected_sequence is not None:
+                    latest = _read_domain_events(self._events, context.course_id)
+                    latest_sequence = latest[-1].course_sequence if latest else 0
+                    if latest_sequence != expected_sequence:
+                        raise TextIngestionError(
+                            IngestionErrorCode.SEQUENCE_CONFLICT,
+                            "course stream advanced before idempotent return; "
+                            f"expected {expected_sequence}, observed {latest_sequence}",
+                            retryable=True,
+                        )
+                return TextIngestionResult(
+                    IngestionStatus.IDEMPOTENT,
+                    current.source,
+                    current.chunks,
+                    current_sequence,
+                )
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "revision identity already exists with a different chunking configuration",
             )
         historical = _find_matching_revision(
-            stream, source_id, source, self._chunking
+            stream, source_id, source, self._chunking, self._blobs.get
         )
         if historical is not None:
             return self._select_historical_revision(
@@ -214,7 +229,9 @@ class TextIngestionService:
                 chunker_version=self._chunking.version,
                 max_characters=self._chunking.max_characters,
             )
-            decoded = decode_source_revision_ingested(payload)
+            decoded = decode_source_revision_ingested(
+                payload, receipt_created_at=now
+            )
             if decoded.source != source or decoded.chunks != chunks:
                 raise ValueError("typed event payload changed immutable source data")
             if decoded.normalized_character_length != len(normalized.text):
@@ -225,7 +242,9 @@ class TextIngestionService:
             ):
                 raise ValueError("typed event payload changed chunking configuration")
             event = DomainEvent(
-                source_event_id_for(context.course_id, revision_id),
+                source_revision_ingested_event_id_for(
+                    context.course_id, source.revision_id, now
+                ),
                 context.course_id,
                 current_sequence + 1,
                 SOURCE_REVISION_INGESTED,
@@ -249,7 +268,7 @@ class TextIngestionService:
             )
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
-            concurrent = _current_revision(concurrent_stream, source_id)
+            concurrent = _current_revision(concurrent_stream, source_id, self._blobs.get)
             if (
                 expected_sequence is None
                 and concurrent is not None
@@ -313,7 +332,7 @@ class TextIngestionService:
         except EventSequenceConflictError as error:
             concurrent_stream = _read_domain_events(self._events, context.course_id)
             concurrent = _current_revision(
-                concurrent_stream, revision.source.source_id
+                concurrent_stream, revision.source.source_id, self._blobs.get
             )
             if (
                 expected_sequence is None
@@ -437,14 +456,12 @@ def _find_matching_revision(
     source_id: SourceId,
     requested: SourceDocument,
     chunking: ChunkingConfig,
+    load_blob: BlobLoader,
 ) -> SourceRevisionIngested | None:
     for event in events:
-        if (
-            event.event_type != SOURCE_REVISION_INGESTED
-            or event.schema_version != SOURCE_REVISION_SCHEMA_VERSION
-        ):
+        if event.event_type != SOURCE_REVISION_INGESTED or event.schema_version not in (1, 2):
             continue
-        decoded = decode_source_revision_ingested(event.payload)
+        decoded = decode_source_revision_event(event, load_blob)
         if decoded.source.source_id == source_id and _matches_request(
             decoded, requested, chunking
         ):
@@ -453,16 +470,13 @@ def _find_matching_revision(
 
 
 def _current_revision(
-    events: tuple[DomainEvent, ...], source_id: SourceId
+    events: tuple[DomainEvent, ...], source_id: SourceId, load_blob: BlobLoader
 ) -> SourceRevisionIngested | None:
     revisions: dict[RevisionId, SourceRevisionIngested] = {}
     current_revision_id: RevisionId | None = None
     for event in events:
-        if (
-            event.event_type == SOURCE_REVISION_INGESTED
-            and event.schema_version == SOURCE_REVISION_SCHEMA_VERSION
-        ):
-            decoded = decode_source_revision_ingested(event.payload)
+        if event.event_type == SOURCE_REVISION_INGESTED and event.schema_version in (1, 2):
+            decoded = decode_source_revision_event(event, load_blob)
             if decoded.source.source_id == source_id:
                 revisions[decoded.source.revision_id] = decoded
                 current_revision_id = decoded.source.revision_id

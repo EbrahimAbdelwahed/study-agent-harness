@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from hashlib import sha256
 
-from study_agent.domain.identifiers import ChunkId, CourseId, EventId, RevisionId, SourceId
-from study_agent.domain.source import SourceKind
-from study_agent.domain.source_identity import (
-    INGESTION_REVISION_ID_NAMESPACE,
-    source_revision_id_for,
+from study_agent.domain.bounded_json import canonical_json_bytes
+from study_agent.domain.identifiers import (
+    ChunkId,
+    CourseId,
+    EventId,
+    RevisionId,
+    SourceId,
 )
-from study_agent.state import canonical_json_bytes
+from study_agent.domain.source import SourceKind
 
 NORMALIZATION_POLICY_VERSION = "utf8-newlines-nfc-v1"
 CHUNKER_POLICY_VERSION = "heading-paragraph-v1"
@@ -39,41 +42,33 @@ def revision_id_for(
     chunker_version: str,
     max_characters: int,
 ) -> RevisionId:
-    """Identify immutable content, metadata, and processing configuration (v2)."""
+    """Compatibility helper for historical ingestion-v2 fixtures only.
 
-    return source_revision_id_for(
-        {
-            "chunker_version": chunker_version,
-            "kind": kind.value,
-            "max_characters": max_characters,
-            "normalization_version": normalization_version,
-            "original_sha256": original_sha256,
-            "source_id": str(source_id),
-            "source_role": source_role,
-            "title": title,
-            "trust_level": trust_level,
-        },
-        namespace=INGESTION_REVISION_ID_NAMESPACE,
-        identifier_prefix="revision-sha256:",
+    Current ingestion calls ``SourceRevision.create``.  This helper remains so
+    old event fixtures can still construct the historical identity that the v1
+    replay upcaster classifies.
+    """
+
+    manifest = {
+        "chunker_version": chunker_version,
+        "kind": kind.value,
+        "max_characters": max_characters,
+        "normalization_version": normalization_version,
+        "original_sha256": original_sha256,
+        "source_id": str(source_id),
+        "source_role": source_role,
+        "title": title,
+        "trust_level": trust_level,
+    }
+    # This is intentionally the old v2 compatibility domain, never a current
+    # append path.  The historical helper itself lives in ingestion.legacy;
+    # this import-compatible wrapper is retained for pre-existing fixtures.
+    return RevisionId(
+        "revision-sha256:"
+        + sha256(
+            b"study-agent-source-revision-v2\0" + canonical_json_bytes(manifest)
+        ).hexdigest()
     )
-
-
-def legacy_revision_id_for(
-    *,
-    original_sha256: str,
-    source_id: SourceId,
-    kind: SourceKind,
-    normalization_version: str,
-    chunker_version: str,
-    max_characters: int,
-) -> RevisionId:
-    """Reconstruct the v0.1 identity used before metadata became revision-bearing."""
-
-    identity = (
-        f"{source_id}\0{original_sha256}\0{kind.value}\0{normalization_version}\0"
-        f"{chunker_version}\0{max_characters}"
-    ).encode()
-    return RevisionId(f"revision-sha256:{sha256(identity).hexdigest()}")
 
 
 def chunk_id_for(
@@ -94,6 +89,26 @@ def chunk_id_for(
 
 def source_event_id_for(course_id: CourseId, revision_id: RevisionId) -> EventId:
     identity = f"{course_id}\0{revision_id}".encode()
+    return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
+
+
+def source_revision_ingested_event_id_for(
+    course_id: CourseId, revision_id: RevisionId, occurred_at: datetime
+) -> EventId:
+    """Authenticate the v2 capture receipt, including its UTC timestamp."""
+
+    if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+        raise ValueError("occurred_at must be timezone-aware")
+    receipt = occurred_at.astimezone(UTC).isoformat(timespec="microseconds").replace(
+        "+00:00", "Z"
+    )
+    identity = b"study-agent/source-revision-ingested/v2\0" + canonical_json_bytes(
+        {
+            "course_id": str(course_id),
+            "occurred_at": receipt,
+            "revision_id": str(revision_id),
+        }
+    )
     return EventId(f"event-sha256:{sha256(identity).hexdigest()}")
 
 

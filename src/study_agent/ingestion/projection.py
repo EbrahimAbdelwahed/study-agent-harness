@@ -15,6 +15,7 @@ from study_agent.state import EventRegistry
 
 from .events import (
     SOURCE_REVISION_INGESTED,
+    SOURCE_REVISION_INGESTED_V1,
     SOURCE_REVISION_SCHEMA_VERSION,
     SOURCE_REVISION_SELECTED,
     SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
@@ -24,6 +25,7 @@ from .events import (
     SourceRevisionSelected,
     decode_source_revision_event,
     decode_source_revision_selected_event,
+    upcast_source_revision_ingested_v1,
 )
 from .identity import CHUNK_MAX_CHARACTERS, CHUNKER_POLICY_VERSION
 from .substrate_events import (
@@ -38,6 +40,8 @@ from .succession import (
     decode_source_superseded_by_event,
     reduce_source_superseded_by,
 )
+
+_LEGACY_REPLAY_MARKER = "__legacy_v1_replay"
 
 
 def _timestamp(value: datetime) -> str:
@@ -71,7 +75,24 @@ def source_manifest(source: SourceDocument) -> JsonObject:
         "structure_origin": source.structure_origin.value,
         "ingestion_method": source.ingestion_method,
         "content_origin": source.content_origin.value,
+        "metadata_authority": source.metadata_authority.value,
     }
+
+
+def source_event_manifest(source: SourceDocument) -> JsonObject:
+    """Encode the current schema-2 source without its receipt timestamp."""
+
+    manifest = dict(source_manifest(source))
+    manifest.pop("created_at")
+    return manifest
+
+
+def source_manifest_v1(source: SourceDocument) -> JsonObject:
+    """Encode the retained historical schema-1 source shape."""
+
+    manifest = dict(source_manifest(source))
+    manifest.pop("metadata_authority")
+    return manifest
 
 
 def chunk_manifest(chunk: SourceChunk) -> JsonObject:
@@ -101,7 +122,7 @@ def source_revision_payload(
         source, chunks, source.normalized_character_length, chunking
     )
     return {
-        "source": source_manifest(decoded.source),
+        "source": source_event_manifest(decoded.source),
         "chunks": tuple(chunk_manifest(chunk) for chunk in decoded.chunks),
         "normalized_character_length": decoded.normalized_character_length,
         "chunking": {
@@ -125,6 +146,30 @@ def _legacy_substrate_manifest(
         "blob": _blob(normalized_blob),
         "character_length": character_length,
         "substrate_id": f"substrate:sha256:{normalized_blob.checksum_sha256}",
+    }
+
+
+def source_revision_payload_v1(
+    source: SourceDocument,
+    chunks: tuple[SourceChunk, ...],
+    *,
+    chunker_version: str = CHUNKER_POLICY_VERSION,
+    max_characters: int = CHUNK_MAX_CHARACTERS,
+) -> JsonObject:
+    """Fixture/compatibility encoder for historical schema-1 events only."""
+
+    chunking = PersistedChunkingConfig(chunker_version, max_characters)
+    decoded = SourceRevisionIngested(
+        source, chunks, source.normalized_character_length, chunking
+    )
+    return {
+        "source": source_manifest_v1(decoded.source),
+        "chunks": tuple(chunk_manifest(chunk) for chunk in decoded.chunks),
+        "normalized_character_length": decoded.normalized_character_length,
+        "chunking": {
+            "version": decoded.chunking.version,
+            "max_characters": decoded.chunking.max_characters,
+        },
     }
 
 
@@ -286,12 +331,70 @@ def reduce_source_revision_selected(
     return {**state, "sources": sources}
 
 
+def _upcast_v1_payload_for_registry(value: JsonObject) -> JsonObject:
+    """Bridge the generic registry's payload-only upcaster to source replay.
+
+    The marker is internal to this reducer registration.  The direct v2
+    decoder never accepts it, and the retained event envelope/ID stays v1.
+    """
+
+    payload = dict(value)
+    source_value = payload.get("source")
+    if not isinstance(source_value, Mapping):
+        raise ValueError("legacy source payload must contain a source object")
+    source = dict(source_value)
+    source.pop("created_at", None)
+    source["metadata_authority"] = "trusted"
+    payload["source"] = source
+    payload[_LEGACY_REPLAY_MARKER] = True
+    return payload
+
+
+def _decode_registered_source_event(
+    event: DomainEvent, load_blob: BlobLoader
+) -> SourceRevisionIngested:
+    marker = event.payload.get(_LEGACY_REPLAY_MARKER)
+    if marker is True:
+        payload = dict(event.payload)
+        del payload[_LEGACY_REPLAY_MARKER]
+        source_value = payload.get("source")
+        if not isinstance(source_value, Mapping):
+            raise ValueError("legacy source payload must contain a source object")
+        source = dict(source_value)
+        source.pop("metadata_authority", None)
+        source["created_at"] = event.occurred_at.astimezone(UTC).isoformat(
+            timespec="microseconds"
+        ).replace("+00:00", "Z")
+        payload["source"] = source
+        legacy_event = DomainEvent(
+            event.event_id,
+            event.course_id,
+            event.course_sequence,
+            event.event_type,
+            1,
+            event.actor,
+            event.occurred_at,
+            event.correlation_id,
+            payload,
+            session_id=event.session_id,
+            causation_id=event.causation_id,
+        )
+        return upcast_source_revision_ingested_v1(legacy_event, load_blob)
+    return decode_source_revision_event(event, load_blob)
+
+
 def register_source_revision_events(registry: EventRegistry, load_blob: BlobLoader) -> None:
     registry.register_projection_migration(ensure_legacy_substrates)
+    registry.register_upcaster(
+        SOURCE_REVISION_INGESTED,
+        SOURCE_REVISION_INGESTED_V1[1],
+        _upcast_v1_payload_for_registry,
+        SOURCE_REVISION_SCHEMA_VERSION,
+    )
     registry.register_event(
         SOURCE_REVISION_INGESTED,
         SOURCE_REVISION_SCHEMA_VERSION,
-        lambda event: decode_source_revision_event(event, load_blob),
+        lambda event: _decode_registered_source_event(event, load_blob),
         reduce_source_revision,
     )
     registry.register_event(
