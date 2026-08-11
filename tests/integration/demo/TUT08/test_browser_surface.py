@@ -3,13 +3,18 @@ from __future__ import annotations
 import io
 import json
 import socket
+import threading
 from dataclasses import dataclass
+from http.client import HTTPConnection
 from typing import cast
+
+import pytest
 
 from study_agent.demo.browser import (
     BrowserSurface,
     _BrowserRequestHandler,
     _BrowserServer,
+    create_server,
 )
 
 
@@ -134,3 +139,73 @@ def test_local_browser_journey_drives_page_state_and_free_form_entry() -> None:
     )
     assert invalid_response.status == 400
     assert json.loads(invalid_response.body)["error"] == "learner_entry is invalid"
+
+    malformed_response = _request(
+        server,
+        "POST",
+        "/api/entry",
+        body=b"{malformed",
+        headers=(("Content-Length", str(len(b"{malformed"))),),
+    )
+    assert malformed_response.status == 400
+    assert json.loads(malformed_response.body)["error"] == "learner_entry is invalid"
+
+
+def test_local_browser_journey_serves_page_state_and_free_form_entry() -> None:
+    try:
+        server = create_server("127.0.0.1", 0, journey=_journey)
+    except PermissionError as error:
+        pytest.skip(f"loopback sockets unavailable in this environment: {error}")
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        host, port = cast(tuple[str, int], server.server_address)
+        connection = HTTPConnection(host, port, timeout=2)
+        connection.request("GET", "/")
+        page_response = connection.getresponse()
+        page = page_response.read()
+        assert page_response.status == 200
+        assert b"Start anywhere" in page
+        assert b"Context conflicts" in page
+        connection.close()
+
+        connection = HTTPConnection(host, port, timeout=2)
+        connection.request("GET", "/api/state")
+        state_response = connection.getresponse()
+        state_response.read()
+        assert state_response.status == 200
+        assert state_response.getheader("Content-Type") == "application/json; charset=utf-8"
+        connection.close()
+
+        body = json.dumps({"learner_entry": "  Explain the aortic valve  "}).encode()
+        connection = HTTPConnection(host, port, timeout=2)
+        connection.request(
+            "POST",
+            "/api/entry",
+            body=body,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+        )
+        entry_response = connection.getresponse()
+        updated = entry_response.read()
+        assert entry_response.status == 200
+        assert json.loads(updated)["learner_entry"] == "Explain the aortic valve"
+        connection.close()
+
+        # Equivalent payloads are byte-stable for deterministic offline checks.
+        connection = HTTPConnection(host, port, timeout=2)
+        connection.request("GET", "/api/state")
+        assert connection.getresponse().read() == updated
+        connection.close()
+
+        connection = HTTPConnection(host, port, timeout=2)
+        connection.request("POST", "/api/entry", body=b'{"learner_entry":"   "}')
+        invalid_response = connection.getresponse()
+        assert invalid_response.status == 400
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+
+    assert not server_thread.is_alive()
