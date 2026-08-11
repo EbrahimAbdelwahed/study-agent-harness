@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import json
-import os
 import sqlite3
-import stat
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
 from hashlib import sha256
 from pathlib import Path
-from typing import Protocol
-from urllib.parse import quote
+from typing import Protocol, cast
 
-from study_agent.domain._validation import JsonObject
 from study_agent.domain.authority import IdempotencyKey
 from study_agent.domain.errors import (
     ConflictFailure,
@@ -27,9 +22,11 @@ from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
 from study_agent.kernel.module import KernelModuleRegistry, KernelSnapshot
 from study_agent.ports.storage import (
+    CourseStreamHighWater,
     EventSequenceConflictError,
     IdempotencyConflictError,
     _BoundedEventRead,
+    _require_canonical_course_id,
 )
 from study_agent.state import (
     EventRegistry,
@@ -42,6 +39,11 @@ from study_agent.state import (
     replay,
 )
 from study_agent.state.registry import EventInput
+
+from ._database import SQLiteConnectionIdentityError as _SQLiteConnectionIdentityError
+from ._database import _SQLiteAccess, _SQLiteDatabase
+
+SQLiteConnectionIdentityError = _SQLiteConnectionIdentityError
 
 
 class SequenceConflictError(EventSequenceConflictError):
@@ -63,55 +65,19 @@ class UnsupportedSQLiteDatabaseError(ValidationFailure, ValueError):
     """The adapter requires a path-backed database for connection-safe persistence."""
 
 
+SQLITE_BUSY_TIMEOUT_SECONDS = 5
+"""Bounded SQLite lock wait for request-path adapter operations."""
+
+_MAX_SQLITE_SEQUENCE = 2**63 - 1
+
+
 class SQLiteConnectionGuard(Protocol):
-    """Technical seam that proves which regular file SQLite actually opened."""
+    """Legacy test-only name retained without an adapter injection seam."""
 
-    def connect(
-        self, opener: Callable[[], sqlite3.Connection]
-    ) -> sqlite3.Connection: ...
+    def connect(self, opener: object) -> sqlite3.Connection: ...
 
 
-class SQLiteConnectionIdentityError(InternalFailure):
-    """SQLite did not retain the database identity authorized by its host."""
-
-
-class SQLiteConnectionIdentityGuard:
-    """Fail closed unless SQLite retains exactly the host-authorized inode."""
-
-    def __init__(
-        self,
-        expected_identity: tuple[int, int],
-        verify_owner: Callable[[], None],
-    ) -> None:
-        self._expected_identity = expected_identity
-        self._verify_owner = verify_owner
-
-    def connect(
-        self, opener: Callable[[], sqlite3.Connection]
-    ) -> sqlite3.Connection:
-        self._verify_owner()
-        before = _live_file_descriptors()
-        try:
-            connection = opener()
-        except sqlite3.Error:
-            self._verify_owner()
-            raise
-        try:
-            after = _live_file_descriptors()
-            opened_regular = _new_regular_identities(before, after)
-            if not opened_regular:
-                connection.execute("PRAGMA schema_version").fetchone()
-                after = _live_file_descriptors()
-                opened_regular = _new_regular_identities(before, after)
-            if opened_regular != (self._expected_identity,):
-                raise SQLiteConnectionIdentityError(
-                    "SQLite connection did not retain the authorized database binding"
-                )
-            self._verify_owner()
-            return connection
-        except BaseException:
-            connection.close()
-            raise
+__all__ = ["SQLiteConnectionIdentityError"]
 
 
 _SCHEMA = """
@@ -148,27 +114,6 @@ CREATE TABLE IF NOT EXISTS event_idempotency (
     result_sequence INTEGER NOT NULL CHECK (result_sequence >= 0)
 ) STRICT;
 """
-
-_SQLITE_INTEGER_MAX = 2**63 - 1
-
-
-def _canonical_projection_object(data: bytes) -> JsonObject:
-    """Decode persisted projection state without hiding duplicate object keys."""
-
-    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        keys = [key for key, _ in pairs]
-        if len(keys) != len(set(keys)):
-            raise ValueError("projection state contains duplicate keys")
-        return dict(pairs)
-
-    try:
-        json.loads(data, object_pairs_hook=reject_duplicates)
-        state = canonical_json_object(data)
-        if canonical_json_bytes(state) != data:
-            raise ValueError("projection state is not canonical")
-        return state
-    except (TypeError, UnicodeError, ValueError, RecursionError) as error:
-        raise ValidationFailure("persisted projection state is invalid") from error
 
 
 def _idempotency_material(key: IdempotencyKey | str) -> tuple[str, bytes]:
@@ -207,7 +152,12 @@ class SQLiteEventStore:
         *,
         read_only: bool = False,
         connection_identity_guard: SQLiteConnectionGuard | None = None,
+        **unsupported: object,
     ) -> None:
+        if connection_identity_guard is not None:
+            raise SQLiteConnectionIdentityError("exact SQLite binding is unavailable")
+        if any(value is not None for value in unsupported.values()):
+            raise SQLiteConnectionIdentityError("exact SQLite binding is unavailable")
         self._database = str(database)
         if self._database == ":memory:":
             raise UnsupportedSQLiteDatabaseError(
@@ -216,7 +166,16 @@ class SQLiteEventStore:
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
         self._read_only = read_only
-        self._connection_identity_guard = connection_identity_guard
+        self._sqlite_database = _SQLiteDatabase.for_path(
+            database,
+            access=(
+                _SQLiteAccess.READ_ONLY
+                if read_only
+                else _SQLiteAccess.READ_WRITE_EXISTING
+            ),
+            busy_timeout_ms=SQLITE_BUSY_TIMEOUT_SECONDS * 1000,
+            isolation_level=None,
+        )
         if isinstance(registry, KernelModuleRegistry):
             registry.close()
             registry = registry.compile()
@@ -237,28 +196,7 @@ class SQLiteEventStore:
                 ) from error
 
     def _connect(self) -> sqlite3.Connection:
-        database = self._database
-        uri = False
-        if self._read_only:
-            database = (
-                Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
-            )
-            uri = True
-        elif self._connection_identity_guard is not None:
-            database = _writable_nofollow_uri(database)
-            uri = True
-        def opener() -> sqlite3.Connection:
-            return sqlite3.connect(
-                database, isolation_level=None, timeout=30, uri=uri
-            )
-        connection = (
-            opener()
-            if self._connection_identity_guard is None
-            else self._connection_identity_guard.connect(opener)
-        )
-        if not self._read_only:
-            connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        return cast(sqlite3.Connection, self._sqlite_database.connect())
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -274,13 +212,33 @@ class SQLiteEventStore:
             raise
         finally:
             connection.close()
+
     @staticmethod
     def _current_sequence(connection: sqlite3.Connection, course_id: CourseId) -> int:
         row = connection.execute(
-            "SELECT COALESCE(MAX(course_sequence), 0) FROM events WHERE course_id = ?",
+            """
+            SELECT MAX(course_sequence), COUNT(*)
+            FROM events WHERE course_id = ?
+            """,
             (str(course_id),),
         ).fetchone()
-        return int(row[0]) if row else 0
+        if type(row) is not tuple or len(row) != 2:
+            raise ValidationFailure("stored event stream high-water is invalid")
+        raw_sequence, raw_count = row
+        if type(raw_count) is not int or raw_count < 0:
+            raise ValidationFailure("stored event stream high-water is invalid")
+        if raw_count == 0:
+            if raw_sequence is not None:
+                raise ValidationFailure("stored event stream high-water is invalid")
+            return 0
+        if (
+            type(raw_sequence) is not int
+            or raw_sequence < 1
+            or raw_sequence > _MAX_SQLITE_SEQUENCE
+            or raw_sequence != raw_count
+        ):
+            raise ValidationFailure("stored event stream high-water is invalid")
+        return raw_sequence
 
     def _load_projection(
         self,
@@ -306,7 +264,7 @@ class SQLiteEventStore:
             )
         if self._registry is None:
             raise ValidationFailure("projection reduction requires an EventRegistry")
-        raw_state = _canonical_projection_object(bytes(row[1]))
+        raw_state = canonical_json_object(bytes(row[1]))
         state = self._registry.migrate_projection(raw_state)
         if state != raw_state and not self._read_only:
             connection.execute(
@@ -324,15 +282,15 @@ class SQLiteEventStore:
         *,
         _legacy: bool = False,
     ) -> int:
-        if not isinstance(course_id, CourseId):
-            raise EventBatchError("stream_id must be a CourseId")
+        course_id = _require_canonical_course_id(course_id)
         if type(expected_sequence) is not int or expected_sequence < 0:
             raise EventBatchError("expected_sequence cannot be negative")
         event_batch = tuple(events)
         for event in event_batch:
             if not isinstance(event, (DomainEvent, EventEnvelope)):
                 raise EventBatchError("every item must be a DomainEvent or EventEnvelope")
-            if event.course_id != course_id:
+            event_course_id = _require_canonical_course_id(event.course_id)
+            if event_course_id != course_id:
                 raise EventBatchError("every event must belong to the appended course")
         if idempotency_key is None and not _legacy:
             legacy_batch = tuple(
@@ -486,6 +444,35 @@ class SQLiteEventStore:
             _legacy=True,
         )
 
+    def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater:
+        """Read the canonical stream high-water from the existing events table."""
+        canonical_course_id = _require_canonical_course_id(course_id)
+        try:
+            with closing(self._connect()) as connection:
+                sequence = self._current_sequence(connection, canonical_course_id)
+            if (
+                type(sequence) is not int
+                or sequence < 0
+                or sequence > _MAX_SQLITE_SEQUENCE
+            ):
+                raise ValidationFailure("stored event stream high-water is invalid")
+            try:
+                return CourseStreamHighWater(canonical_course_id, sequence)
+            except ValidationFailure as error:
+                raise InternalFailure("stored event stream high-water is invalid") from error
+        except ValidationFailure as error:
+            raise InternalFailure("stored event stream high-water is invalid") from error
+        except HarnessError:
+            raise
+        except (OSError, sqlite3.Error) as error:
+            raise UnavailableDependencyFailure(
+                "storage dependency is unavailable", retryable=True
+            ) from error
+        except (TypeError, ValueError) as error:
+            raise InternalFailure("stored event stream high-water is invalid") from error
+        except Exception as error:
+            raise InternalFailure("event stream high-water observation failed") from error
+
     def read(
         self, course_id: CourseId, after_sequence: int = 0
     ) -> Sequence[EventEnvelope]:
@@ -499,7 +486,8 @@ class SQLiteEventStore:
         self, course_id: CourseId, after_sequence: int = 0
     ) -> Sequence[EventInput]:
         """Read typed legacy records for reducers and projection replay."""
-        if not isinstance(course_id, CourseId) or type(after_sequence) is not int:
+        course_id = _require_canonical_course_id(course_id)
+        if type(after_sequence) is not int:
             raise ValidationFailure("stream and high-water position are invalid")
         if after_sequence < 0:
             raise ValidationFailure("after_sequence cannot be negative")
@@ -537,7 +525,7 @@ class SQLiteEventStore:
             not isinstance(course_id, CourseId)
             or type(after_sequence) is not int
             or after_sequence < 0
-            or after_sequence > _SQLITE_INTEGER_MAX
+            or after_sequence > _MAX_SQLITE_SEQUENCE
             or type(max_events) is not int
             or max_events < 0
             or type(max_encoded_bytes) is not int
@@ -601,6 +589,7 @@ class SQLiteEventStore:
         return tuple(CourseId(row[0]) for row in rows)
 
     def projection(self, course_id: CourseId) -> Projection:
+        course_id = _require_canonical_course_id(course_id)
         if self._registry is None:
             raise ValidationFailure("projection reduction requires an EventRegistry")
         with closing(self._connect()) as connection:
@@ -608,10 +597,11 @@ class SQLiteEventStore:
             return self._load_projection(connection, course_id, current)
 
     def projection_bytes(self, course_id: CourseId) -> bytes:
-        return self.projection(course_id).canonical_bytes()
+        return self.projection(_require_canonical_course_id(course_id)).canonical_bytes()
 
     def rebuild_projection(self, course_id: CourseId) -> bytes:
         """Replace one discardable projection solely by replaying canonical events."""
+        course_id = _require_canonical_course_id(course_id)
         if self._registry is None:
             raise ValidationFailure("projection reduction requires an EventRegistry")
         with self._transaction() as connection:
@@ -635,6 +625,7 @@ class SQLiteEventStore:
 
     def verify_projection(self, course_id: CourseId) -> bool:
         """Compare persisted projection bytes with an independent in-memory replay."""
+        course_id = _require_canonical_course_id(course_id)
         if self._registry is None:
             raise ValidationFailure("projection reduction requires an EventRegistry")
         persisted = self.projection_bytes(course_id)
@@ -659,51 +650,4 @@ def _event_to_envelope(event: EventInput) -> EventEnvelope:
         actor=event.actor,
         payload=event.payload,
         causation_id=event.causation_id,
-    )
-
-
-def _writable_nofollow_uri(database: str) -> str:
-    """Open an existing database without following its final path component."""
-
-    path = Path(database)
-    base = (
-        path.as_uri()
-        if path.is_absolute()
-        else f"file:{quote(path.as_posix(), safe='/')}"
-    )
-    return f"{base}?mode=rw&nofollow=1"
-
-
-def _live_file_descriptors() -> dict[int, tuple[int, int] | None]:
-    for root in (Path("/dev/fd"), Path("/proc/self/fd")):
-        try:
-            entries = os.listdir(root)
-        except OSError:
-            continue
-        live: dict[int, tuple[int, int] | None] = {}
-        for entry in entries:
-            try:
-                descriptor = int(entry)
-                metadata = os.fstat(descriptor)
-            except (OSError, ValueError):
-                continue
-            live[descriptor] = (
-                (metadata.st_dev, metadata.st_ino)
-                if stat.S_ISREG(metadata.st_mode)
-                else None
-            )
-        return live
-    raise SQLiteConnectionIdentityError(
-        "platform cannot inspect SQLite connection file descriptors"
-    )
-
-
-def _new_regular_identities(
-    before: dict[int, tuple[int, int] | None],
-    after: dict[int, tuple[int, int] | None],
-) -> tuple[tuple[int, int], ...]:
-    return tuple(
-        identity
-        for descriptor, identity in after.items()
-        if descriptor not in before and identity is not None
     )

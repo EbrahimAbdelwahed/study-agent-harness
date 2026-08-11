@@ -9,7 +9,7 @@ import stat
 import threading
 import unicodedata
 import weakref
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
@@ -98,6 +98,37 @@ class RepositoryTargetInspection:
     code: RepositoryTargetInspectionCode
     paths: LocalRepositoryPaths
     observation: RepositoryObservationHandle | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RetainedDatabaseBinding:
+    """Private retained state/database seam for pathname-continuous SQLite."""
+
+    database_path: Path
+    state_descriptor: int
+    database_descriptor: int
+    state_identity: tuple[int, int]
+    database_identity: tuple[int, int]
+    _verify_owner: Callable[[], None]
+
+    def verify(self) -> None:
+        """Revalidate owner, state directory, database fd, and real entry."""
+        try:
+            self._verify_owner()
+            _verify_descriptor_identity(self.state_descriptor, self.state_identity, directory=True)
+            _verify_descriptor_identity(
+                self.database_descriptor, self.database_identity, directory=False
+            )
+            _verify_regular_binding(
+                self.state_descriptor,
+                self.database_path.name,
+                self.database_identity,
+                "repository database",
+            )
+        except RepositoryTargetError:
+            raise
+        except (OSError, ValueError):
+            raise RepositoryTargetError("repository database binding changed") from None
 
 
 class RepositoryObservationHandle:
@@ -192,18 +223,39 @@ class RepositoryObservationHandle:
             raise RepositoryTargetError("repository mutation scope is not active")
         return Path(entry)
 
-    def database_connection_identity(self, name: str) -> tuple[int, int]:
-        """Return the retained identity for one mutable database entry."""
-        if name not in {"events", "runs", "retrieval"}:
-            raise ValueError("unsupported repository database")
-        if not self._mutation_scope_active:
-            raise RepositoryTargetError("repository mutation scope is not active")
-        descriptor = self._required_descriptor(name)
+    def _retain_database_binding(self, name: str) -> _RetainedDatabaseBinding | None:
+        """Return a private retained binding without exposing descriptor paths."""
+        entries = {
+            "events": _EVENT_DATABASE,
+            "runs": _RUN_DATABASE,
+            "retrieval": _RETRIEVAL_DATABASE,
+        }
+        try:
+            entry = entries[name]
+        except KeyError:
+            raise ValueError("unsupported repository database") from None
+        self.verify_binding()
+        descriptor = self._descriptors[name]
         identity = self._identities[name]
-        if identity is None:
+        if descriptor is None:
+            return None
+        state_descriptor = self._required_descriptor("state")
+        state_identity = self._identities["state"]
+        if identity is None or state_identity is None:
             raise RepositoryTargetError("repository database binding is unavailable")
-        _verify_descriptor_identity(descriptor, identity, directory=False)
-        return identity
+        database_path = (
+            Path(entry) if self._mutation_scope_active else self._target.paths.state / entry
+        )
+        binding = _RetainedDatabaseBinding(
+            database_path,
+            state_descriptor,
+            descriptor,
+            state_identity,
+            identity,
+            self.verify_binding,
+        )
+        binding.verify()
+        return binding
 
     def _ensure_database_bindings(self) -> None:
         """Create absent database entries with no-follow openat before SQLite runs."""
@@ -286,15 +338,6 @@ class RepositoryObservationHandle:
             self._identities[name] = created_identity
             self._adopted_finalizers.append(weakref.finalize(self, os.close, created))
         self.verify_binding()
-
-    def database_descriptor_path(self, name: str) -> Path | None:
-        """Return an identity-checked process-local path to a retained database fd."""
-        if name not in {"events", "retrieval"}:
-            raise ValueError("unsupported repository database descriptor")
-        descriptor = self._descriptors[name]
-        if descriptor is None:
-            return None
-        return _stable_descriptor_path(descriptor)
 
     def verify_binding(self) -> None:
         """Revalidate every retained descriptor and its repository entry binding."""
@@ -1149,27 +1192,6 @@ def _verify_descriptor_identity(
     expected_type = stat.S_ISDIR if directory else stat.S_ISREG
     if not expected_type(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != identity:
         raise RepositoryTargetError("repository observation descriptor changed")
-
-
-def _stable_descriptor_path(descriptor: int) -> Path:
-    """Return a supported path whose identity is exactly the retained descriptor."""
-    expected = os.fstat(descriptor)
-    for root in (Path("/dev/fd"), Path("/proc/self/fd")):
-        candidate = root / str(descriptor)
-        try:
-            probe = os.open(candidate, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
-        except OSError:
-            continue
-        try:
-            observed = os.fstat(probe)
-            if (observed.st_dev, observed.st_ino) == (
-                expected.st_dev,
-                expected.st_ino,
-            ):
-                return candidate
-        finally:
-            os.close(probe)
-    raise RepositoryTargetError("platform cannot bind SQLite reads to retained file descriptors")
 
 
 def _close_descriptors(descriptors: tuple[int, ...]) -> None:

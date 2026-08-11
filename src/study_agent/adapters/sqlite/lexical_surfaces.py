@@ -9,8 +9,8 @@ from contextlib import closing, suppress
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path
+from typing import cast
 
-from study_agent.adapters.sqlite.event_store import SQLiteConnectionGuard, _writable_nofollow_uri
 from study_agent.domain.citation_v2 import TextCitationV2
 from study_agent.domain.identifiers import ScopeId, UnitId, substrate_id_for
 from study_agent.domain.lineage import SelectionStatus
@@ -29,6 +29,7 @@ from study_agent.ports.knowledge import (
 )
 from study_agent.state.serialization import canonical_json_bytes
 
+from ._database import _SQLiteAccess, _SQLiteDatabase
 from .literal_query import compile_medical_trigram_query
 
 LEXICAL_SCHEMA_VERSION = "sqlite-lexical-schema-v1"
@@ -262,7 +263,6 @@ class SQLiteLexicalSurfaces:
         catalog: LexicalCatalogPort,
         *,
         read_only: bool = False,
-        connection_identity_guard: SQLiteConnectionGuard | None = None,
     ) -> None:
         self._database = str(database)
         if self._database == ":memory:":
@@ -271,32 +271,22 @@ class SQLiteLexicalSurfaces:
             raise TypeError("read_only must be a boolean")
         self._read_only = read_only
         self._catalog = catalog
-        self._connection_identity_guard = connection_identity_guard
+        self._sqlite_database = _SQLiteDatabase.for_path(
+            database,
+            access=(
+                _SQLiteAccess.READ_ONLY
+                if read_only
+                else _SQLiteAccess.READ_WRITE_EXISTING
+            ),
+            busy_timeout_ms=30_000,
+            isolation_level=None,
+        )
         if not read_only:
             with closing(self._connect()) as connection:
                 self._initialize_schema(connection)
 
     def _connect(self) -> sqlite3.Connection:
-        database = self._database
-        uri = False
-        if self._read_only:
-            database = Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
-            uri = True
-        elif self._connection_identity_guard is not None:
-            database = _writable_nofollow_uri(database)
-            uri = True
-
-        def opener() -> sqlite3.Connection:
-            return sqlite3.connect(database, timeout=30, uri=uri)
-
-        connection = (
-            opener()
-            if self._connection_identity_guard is None
-            else self._connection_identity_guard.connect(opener)
-        )
-        if not self._read_only:
-            connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        return cast(sqlite3.Connection, self._sqlite_database.connect())
 
     @staticmethod
     def _initialize_schema(connection: sqlite3.Connection) -> None:

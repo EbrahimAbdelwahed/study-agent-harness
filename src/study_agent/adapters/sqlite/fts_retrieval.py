@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
+from typing import cast
 
 from study_agent.domain.identifiers import ChunkId, CourseId, RevisionId, SourceId
 from study_agent.domain.source import Citation, SourceChunk
@@ -23,7 +24,7 @@ from study_agent.ports.retrieval import (
     retrieval_read_set_fingerprint,
 )
 
-from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
+from ._database import _SQLiteAccess, _SQLiteDatabase
 from .literal_query import compile_unicode61_query_on
 
 INDEX_VERSION = "sqlite-fts5-unicode61-v1"
@@ -94,7 +95,6 @@ class SQLiteFtsRetrieval:
         content: RetrievalCatalogPort,
         *,
         read_only: bool = False,
-        connection_identity_guard: SQLiteConnectionGuard | None = None,
     ) -> None:
         self._database = str(database)
         if self._database == ":memory:":
@@ -102,33 +102,23 @@ class SQLiteFtsRetrieval:
         if type(read_only) is not bool:
             raise TypeError("read_only must be a boolean")
         self._read_only = read_only
-        self._connection_identity_guard = connection_identity_guard
+        self._sqlite_database = _SQLiteDatabase.for_path(
+            database,
+            access=(
+                _SQLiteAccess.READ_ONLY
+                if read_only
+                else _SQLiteAccess.READ_WRITE_EXISTING
+            ),
+            busy_timeout_ms=30_000,
+            isolation_level="",
+        )
         self._content = content
         if not read_only:
             with closing(self._connect()) as connection:
                 connection.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        database = self._database
-        uri = False
-        if self._read_only:
-            database = (
-                Path(database).absolute().as_uri() + "?mode=ro&immutable=1"
-            )
-            uri = True
-        elif self._connection_identity_guard is not None:
-            database = _writable_nofollow_uri(database)
-            uri = True
-        def opener() -> sqlite3.Connection:
-            return sqlite3.connect(database, timeout=30, uri=uri)
-        connection = (
-            opener()
-            if self._connection_identity_guard is None
-            else self._connection_identity_guard.connect(opener)
-        )
-        if not self._read_only:
-            connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        return cast(sqlite3.Connection, self._sqlite_database.connect())
 
     def _require_write(self) -> None:
         if self._read_only:

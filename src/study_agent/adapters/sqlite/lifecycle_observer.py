@@ -5,14 +5,17 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Callable
-from pathlib import Path
 
 from study_agent.adapters.filesystem.blob_store import FilesystemBlobStore
-from study_agent.adapters.filesystem.repository_target import RepositoryObservationHandle
+from study_agent.adapters.filesystem.repository_target import (
+    RepositoryObservationHandle,
+    _RetainedDatabaseBinding,
+)
 from study_agent.artifacts import register_artifact_events
 from study_agent.assessments import register_assessment_events
 from study_agent.courses import ProjectionCourseView, register_course_events
 from study_agent.domain import ChunkId, Citation, CourseId, ResolvedCitation
+from study_agent.domain.errors import HarnessError
 from study_agent.ingestion import register_source_revision_events
 from study_agent.lifecycle import (
     IndexObservationState,
@@ -30,6 +33,7 @@ from study_agent.sessions import register_session_events
 from study_agent.state import EventRegistry, replay
 from study_agent.study_context import register_study_context_events
 
+from ._database import _use_retained_database_bindings
 from .event_store import SQLiteEventStore
 from .fts_retrieval import SQLiteFtsRetrieval
 
@@ -89,8 +93,8 @@ def observe_local_repository(
         finally:
             os.close(blob_descriptor)
         with blobs:
-            events_path = handle.database_descriptor_path("events")
-            if events_path is None:
+            events_binding = handle._retain_database_binding("events")
+            if events_binding is None:
                 courses: tuple[ObservedCourse, ...] = ()
                 catalog = _CanonicalCatalog((), _unavailable_content)
             else:
@@ -102,7 +106,10 @@ def observe_local_repository(
                 register_artifact_events(registry)
                 register_assessment_events(registry)
                 register_recall_events(registry)
-                events = SQLiteEventStore(events_path, registry, read_only=True)
+                with _use_retained_database_bindings({"events": events_binding}):
+                    events = SQLiteEventStore(
+                        events_binding.database_path, registry, read_only=True
+                    )
                 course_ids = events.list_course_ids()
                 projections = {
                     course_id: replay(course_id, events._read_records(course_id), registry)
@@ -118,11 +125,9 @@ def observe_local_repository(
                     for course_id in course_ids
                 )
                 catalog = _CanonicalCatalog(course_ids, content_for)
-            index = _observe_index(
-                handle.database_descriptor_path("retrieval"), catalog
-            )
+            index = _observe_index(handle._retain_database_binding("retrieval"), catalog)
         handle.verify_binding()
-    except (LookupError, OSError, RuntimeError, ValueError, sqlite3.DatabaseError):
+    except (HarnessError, LookupError, OSError, RuntimeError, ValueError, sqlite3.DatabaseError):
         return RepositoryObservation(RepositoryObservationState.CONFLICT, config)
 
     return RepositoryObservation(
@@ -165,13 +170,14 @@ def _observed_course(
 
 
 def _observe_index(
-    database: Path | None, catalog: _CanonicalCatalog
+    database: _RetainedDatabaseBinding | None, catalog: _CanonicalCatalog
 ) -> ObservedIndex:
     if database is None:
         return ObservedIndex(IndexObservationState.MISSING)
     try:
-        SQLiteFtsRetrieval(database, catalog, read_only=True).audit()
-    except (LookupError, OSError, RuntimeError, ValueError, sqlite3.DatabaseError):
+        with _use_retained_database_bindings({"retrieval": database}):
+            SQLiteFtsRetrieval(database.database_path, catalog, read_only=True).audit()
+    except (HarnessError, LookupError, OSError, RuntimeError, ValueError, sqlite3.DatabaseError):
         return ObservedIndex(IndexObservationState.STALE)
     return ObservedIndex(IndexObservationState.HEALTHY)
 

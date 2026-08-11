@@ -74,6 +74,42 @@ class SourceContentPort(Protocol):
 type _EventRecord = DomainEvent | EventEnvelope
 
 
+MAX_COURSE_ID_LENGTH = 256
+"""Maximum canonical course identifier length accepted at storage seams."""
+
+
+def _require_canonical_course_id(course_id: object) -> CourseId:
+    """Accept only the exact identifier shape owned by the harness."""
+    if type(course_id) is not CourseId:
+        raise ValidationFailure("course_id must be a CourseId")
+    canonical = course_id
+    if type(canonical.value) is not str or not canonical.value:
+        raise ValidationFailure("course_id must contain bounded plain text")
+    if len(canonical.value) > MAX_COURSE_ID_LENGTH:
+        raise ValidationFailure("course_id must contain bounded plain text")
+    return canonical
+
+
+@dataclass(frozen=True, slots=True)
+class CourseStreamHighWater:
+    """The authoritative sequence observed for one course event stream."""
+
+    course_id: CourseId
+    sequence: int
+
+    def __post_init__(self) -> None:
+        _require_canonical_course_id(self.course_id)
+        if type(self.sequence) is not int or self.sequence < 0:
+            raise ValidationFailure("course stream high-water must be a non-negative integer")
+
+
+@runtime_checkable
+class CourseStreamHighWaterPort(Protocol):
+    """Observe the sequence owned by a canonical course event stream."""
+
+    def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater: ...
+
+
 @dataclass(frozen=True, slots=True)
 class _BoundedEventRead:
     """One bounded, ordered event read and its captured stream high-water."""

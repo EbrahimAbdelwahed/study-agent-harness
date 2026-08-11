@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from study_agent.adapters.sqlite.capability_gap_store import (
     SQLiteCapabilityGapStore,
-    UnsupportedSQLiteCapabilityGapDatabaseError,
 )
 from study_agent.adapters.sqlite.event_store import (
     SQLiteConnectionIdentityError,
-    _writable_nofollow_uri,
 )
 from study_agent.feedback import (
     CapabilityGapAggregate,
@@ -108,7 +108,7 @@ def test_default_store_rejects_final_symlink_and_replacement(tmp_path: Path) -> 
     store = SQLiteCapabilityGapStore(database)
     link = tmp_path / "gaps-link.sqlite3"
     link.symlink_to(database)
-    with pytest.raises(UnsupportedSQLiteCapabilityGapDatabaseError):
+    with pytest.raises(SQLiteConnectionIdentityError):
         SQLiteCapabilityGapStore(link)
 
     replacement = tmp_path / "replacement.sqlite3"
@@ -124,17 +124,20 @@ def test_regular_file_swap_during_open_is_rejected(
     database = tmp_path / "gaps.sqlite3"
     store = SQLiteCapabilityGapStore(database)
     replacement = tmp_path / "replacement.sqlite3"
+    original_anchor = tmp_path / "original-anchor.sqlite3"
     replacement.touch()
-    original = _writable_nofollow_uri
+    database.rename(original_anchor)
+    replacement.replace(database)
+    real_connect: Callable[..., sqlite3.Connection] = sqlite3.connect
 
-    def swap_before_open(path: str) -> str:
-        database.replace(replacement)
-        return original(path)
+    def swap_after_sqlite_open(
+        database_argument: str, *args: Any, **kwargs: Any
+    ) -> sqlite3.Connection:
+        connection = real_connect(database_argument, *args, **kwargs)
+        original_anchor.replace(database)
+        return connection
 
-    monkeypatch.setattr(
-        "study_agent.adapters.sqlite.capability_gap_store._writable_nofollow_uri",
-        swap_before_open,
-    )
+    monkeypatch.setattr(sqlite3, "connect", swap_after_sqlite_open)
     with pytest.raises(SQLiteConnectionIdentityError):
         store.load("a" * 64)
 

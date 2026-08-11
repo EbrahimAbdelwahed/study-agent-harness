@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
-import stat
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Collection, Mapping
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import cast
+from typing import Any, cast
 
 from study_agent.feedback.contracts import (
     CapabilityGapAggregate,
@@ -22,12 +20,7 @@ from study_agent.feedback.contracts import (
     GapResolutionKind,
 )
 
-from .event_store import (
-    SQLiteConnectionGuard,
-    SQLiteConnectionIdentityError,
-    SQLiteConnectionIdentityGuard,
-    _writable_nofollow_uri,
-)
+from ._database import _SQLiteAccess, _SQLiteDatabase
 
 
 class UnsupportedSQLiteCapabilityGapDatabaseError(ValueError):
@@ -57,16 +50,18 @@ class SQLiteCapabilityGapStore:
     def __init__(
         self,
         database: str | Path,
-        *,
-        connection_identity_guard: SQLiteConnectionGuard | None = None,
     ) -> None:
         self._database = str(database)
         normalized = self._database.strip().lower()
         if not normalized or normalized == ":memory:" or normalized.startswith("file:"):
             raise UnsupportedSQLiteCapabilityGapDatabaseError("path_backed_database_required")
-        self._connection_identity_guard = _SerializedConnectionGuard(
-            connection_identity_guard or _guard_for_database(Path(self._database))
+        self._sqlite_database = _SQLiteDatabase.for_path(
+            database,
+            access=_SQLiteAccess.READ_WRITE_EXISTING,
+            busy_timeout_ms=30_000,
+            isolation_level=None,
         )
+        self._connection_lock = Lock()
         with closing(self._connect()) as connection:
             try:
                 connection.executescript(_SCHEMA)
@@ -75,12 +70,13 @@ class SQLiteCapabilityGapStore:
             self._validate_schema(connection)
 
     def _connect(self) -> sqlite3.Connection:
-        uri = _writable_nofollow_uri(self._database)
-        connection = self._connection_identity_guard.connect(
-            lambda: sqlite3.connect(uri, isolation_level=None, timeout=30, uri=True)
-        )
-        connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        self._connection_lock.acquire()
+        try:
+            connection = self._sqlite_database.connect()
+        except BaseException:
+            self._connection_lock.release()
+            raise
+        return cast(sqlite3.Connection, _LockedConnection(connection, self._connection_lock))
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -846,80 +842,22 @@ def _assert_aggregate_matches_proposal(
         raise CapabilityGapValidationError("aggregate_variant_unsupported")
 
 
-def _guard_for_database(path: Path) -> SQLiteConnectionGuard:
-    """Create the mandatory no-follow identity guard for the default adapter."""
-
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise UnsupportedSQLiteCapabilityGapDatabaseError("nofollow_unavailable")
-    absolute = path.absolute()
-    flags = os.O_RDONLY | os.O_NOFOLLOW
-    try:
-        try:
-            descriptor = os.open(absolute, flags)
-        except FileNotFoundError:
-            descriptor = os.open(
-                absolute,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-            )
-        try:
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
-                raise UnsupportedSQLiteCapabilityGapDatabaseError("regular_file_required")
-            identity = (metadata.st_dev, metadata.st_ino)
-        finally:
-            os.close(descriptor)
-    except (FileExistsError, OSError) as error:
-        raise UnsupportedSQLiteCapabilityGapDatabaseError("safe_database_binding_failed") from error
-
-    def verify_owner() -> None:
-        try:
-            current = os.open(absolute, flags)
-            try:
-                metadata = os.fstat(current)
-            finally:
-                os.close(current)
-        except OSError as error:
-            raise SQLiteConnectionIdentityError("database binding changed") from error
-        if not stat.S_ISREG(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != identity:
-            raise SQLiteConnectionIdentityError("database binding changed")
-
-    return SQLiteConnectionIdentityGuard(identity, verify_owner)
-
-
-class _SerializedConnectionGuard:
-    """Serialize descriptor snapshots so concurrent opens cannot cross-bind."""
-
-    def __init__(self, delegate: SQLiteConnectionGuard) -> None:
-        self._delegate = delegate
-        self._lock = Lock()
-
-    def connect(self, opener: Callable[[], sqlite3.Connection]) -> sqlite3.Connection:
-        self._lock.acquire()
-        try:
-            connection = self._delegate.connect(opener)
-        except BaseException:
-            self._lock.release()
-            raise
-        return cast(sqlite3.Connection, _LockedConnection(connection, self._lock))
-
-
 class _LockedConnection:
     """Hold the connection gate until the guarded SQLite handle is closed."""
 
-    def __init__(self, connection: sqlite3.Connection, lock: Lock) -> None:
+    def __init__(self, connection: object, lock: Lock) -> None:
         self._connection = connection
         self._lock = lock
         self._closed = False
 
-    def __getattr__(self, name: str) -> object:
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._connection, name)
 
     def close(self) -> None:
         if self._closed:
             return
         try:
-            self._connection.close()
+            cast(Any, self._connection).close()
         finally:
             self._closed = True
             self._lock.release()

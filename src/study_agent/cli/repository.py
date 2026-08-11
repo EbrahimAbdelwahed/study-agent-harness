@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -16,7 +17,10 @@ from study_agent.adapters.filesystem import (
     initialize_local_repository,
     validate_local_repository_layout,
 )
-from study_agent.adapters.filesystem.repository_target import RepositoryObservationHandle
+from study_agent.adapters.filesystem.repository_target import (
+    RepositoryObservationHandle,
+    _RetainedDatabaseBinding,
+)
 from study_agent.adapters.model import (
     ADAPTER_ID as OPENAI_COMPATIBLE_ADAPTER_ID,
 )
@@ -27,12 +31,8 @@ from study_agent.adapters.model import (
     OpenAICompatibleConfig,
     OpenAICompatibleModel,
 )
-from study_agent.adapters.sqlite import (
-    SQLiteConnectionIdentityGuard,
-    SQLiteEventStore,
-    SQLiteFtsRetrieval,
-    SQLiteRunStore,
-)
+from study_agent.adapters.sqlite import SQLiteEventStore, SQLiteFtsRetrieval, SQLiteRunStore
+from study_agent.adapters.sqlite._database import _use_retained_database_bindings
 from study_agent.adapters.system import SystemClock
 from study_agent.application import (
     GroundingAskConfiguration,
@@ -350,33 +350,16 @@ class LocalRepository:
             if observation is None
             else observation.mutation_database_path("retrieval")
         )
-        events_guard = (
-            None
-            if observation is None
-            else SQLiteConnectionIdentityGuard(
-                observation.database_connection_identity("events"),
-                observation.verify_binding,
-            )
-        )
-        runs_guard = (
-            None
-            if observation is None
-            else SQLiteConnectionIdentityGuard(
-                observation.database_connection_identity("runs"),
-                observation.verify_binding,
-            )
-        )
-        retrieval_guard = (
-            None
-            if observation is None
-            else SQLiteConnectionIdentityGuard(
-                observation.database_connection_identity("retrieval"),
-                observation.verify_binding,
-            )
-        )
+        retained_bindings: dict[str, _RetainedDatabaseBinding] = {}
+        if observation is not None:
+            for name in ("events", "runs", "retrieval"):
+                binding = observation._retain_database_binding(name)
+                if binding is None:
+                    raise LocalRepositoryError("repository database binding is unavailable")
+                retained_bindings[name] = binding
         self.paths = paths
         self._retrieval_database = retrieval_database
-        self._retrieval_connection_identity_guard = retrieval_guard
+        self._retained_bindings = retained_bindings
         self.config = config
         self.clock = SystemClock()
         self.blobs = blobs
@@ -388,12 +371,14 @@ class LocalRepository:
         register_artifact_events(registry)
         register_assessment_events(registry)
         register_recall_events(registry)
-        self.events = SQLiteEventStore(
-            events_database, registry, connection_identity_guard=events_guard
+        binding_scope = (
+            _use_retained_database_bindings(retained_bindings)
+            if retained_bindings
+            else nullcontext()
         )
-        self.runs = SQLiteRunStore(
-            runs_database, connection_identity_guard=runs_guard
-        )
+        with binding_scope:
+            self.events = SQLiteEventStore(events_database, registry)
+            self.runs = SQLiteRunStore(runs_database)
         self._source_catalog = _RepositorySourceCatalog(
             self.events.list_course_ids, self.events, self.blobs
         )
@@ -478,13 +463,11 @@ class LocalRepository:
 
     def for_course(self, course_id: CourseId) -> CourseRepository:
         content = CourseSourceContent(course_id, self.events, self.blobs)
+        with _use_retained_database_bindings(self._retained_bindings):
+            retrieval = SQLiteFtsRetrieval(self._retrieval_database, self._source_catalog)
         return CourseRepository(
             content,
-            SQLiteFtsRetrieval(
-                self._retrieval_database,
-                self._source_catalog,
-                connection_identity_guard=self._retrieval_connection_identity_guard,
-            ),
+            retrieval,
             TextIngestionService(
                 blobs=self.blobs,
                 events=self.events,
@@ -495,11 +478,8 @@ class LocalRepository:
 
     def rebuild_retrieval(self) -> IndexReceipt:
         """Rebuild the one discardable index from the complete canonical catalog."""
-        retrieval = SQLiteFtsRetrieval(
-            self._retrieval_database,
-            self._source_catalog,
-            connection_identity_guard=self._retrieval_connection_identity_guard,
-        )
+        with _use_retained_database_bindings(self._retained_bindings):
+            retrieval = SQLiteFtsRetrieval(self._retrieval_database, self._source_catalog)
         documents = tuple(self._source_catalog.documents(include_superseded=True))
         return retrieval.rebuild(documents)
 
@@ -516,11 +496,8 @@ class LocalRepository:
             raise LocalRepositoryError("repository retrieval receipt is incompatible")
         content = CourseSourceContent(course_id, self.events, self.blobs)
         documents = tuple(content.documents(include_superseded=True))
-        retrieval = SQLiteFtsRetrieval(
-            self._retrieval_database,
-            self._source_catalog,
-            connection_identity_guard=self._retrieval_connection_identity_guard,
-        )
+        with _use_retained_database_bindings(self._retained_bindings):
+            retrieval = SQLiteFtsRetrieval(self._retrieval_database, self._source_catalog)
         try:
             audited = retrieval.index(())
         except (OSError, RuntimeError, ValueError) as error:
