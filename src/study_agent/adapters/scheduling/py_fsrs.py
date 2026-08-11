@@ -7,13 +7,19 @@ reconstructed from the complete canonical history for every decision.
 
 from __future__ import annotations
 
-import importlib
 import importlib.metadata
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import ModuleType
 from typing import Any, cast
 
+from study_agent.adapters.package_trust import (
+    PackageIdentity,
+    PackageTrustBinding,
+    PackageTrustError,
+    use_verified_package,
+    validate_distribution,
+)
 from study_agent.domain._validation import JsonObject
 from study_agent.recall.contracts import (
     RecallRating,
@@ -83,11 +89,15 @@ class FsrsUnavailableError(FsrsAdapterError):
 class PyFsrsSchedulingPolicy:
     """Implement :class:`SchedulingPolicyPort` with deterministic FSRS calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, package_trust: PackageTrustBinding | None = None) -> None:
         # Composition fails before a host can issue a command.  Decisions also
         # revalidate the distribution because an embedding process can mutate
         # its environment after construction.
-        _load_fsrs()
+        self._package_trust = package_trust
+        if package_trust is None:
+            probe_fsrs()
+        else:
+            probe_fsrs(package_trust)
 
     @property
     def configuration_fingerprint(self) -> str:
@@ -113,7 +123,27 @@ class PyFsrsSchedulingPolicy:
 
         if not isinstance(request, SchedulingRequest):
             raise TypeError("request must be SchedulingRequest")
-        fsrs = _load_fsrs()
+        if self._package_trust is None:
+            return _decide_with_fsrs(_load_fsrs(), request)
+        identity = _verified_fsrs_identity(self._package_trust)
+        try:
+            return cast(
+                SchedulingResult,
+                use_verified_package(
+                    identity, lambda fsrs: _decide_with_fsrs(fsrs, request)
+                ),
+            )
+        except PackageTrustError as error:
+            if str(error) in {
+                "optional package identity changed",
+                "approved package root changed",
+                "optional package file changed",
+            }:
+                raise FsrsUnavailableError("FSRS installation changed") from None
+            raise FsrsUnavailableError("FSRS installation is untrusted") from None
+
+
+def _decide_with_fsrs(fsrs: ModuleType, request: SchedulingRequest) -> SchedulingResult:
         _validate_history_order(request)
         scheduler = _new_scheduler(fsrs, request.policy)
         card = _new_card(fsrs, request)
@@ -158,30 +188,80 @@ class PyFsrsSchedulingPolicy:
         return _with_result_fingerprint(request, partial)
 
 
-def _load_fsrs() -> ModuleType:
-    try:
-        installed = importlib.metadata.version("fsrs")
-    except importlib.metadata.PackageNotFoundError as error:
+def _load_fsrs(package_trust: PackageTrustBinding | None = None) -> ModuleType:
+    if package_trust is None:
+        try:
+            installed = importlib.metadata.version("fsrs")
+        except importlib.metadata.PackageNotFoundError as error:
+            raise FsrsUnavailableError(
+                "FSRS trust configuration is unavailable; cannot be imported"
+            ) from error
+        except Exception as error:
+            raise FsrsUnavailableError(
+                "FSRS trust configuration is unavailable; cannot be imported"
+            ) from error
+        if installed != FSRS_IMPLEMENTATION_VERSION:
+            raise FsrsUnavailableError(
+                f"unsupported fsrs version {installed!r}; install exactly "
+                f"fsrs=={FSRS_IMPLEMENTATION_VERSION}"
+            )
+        # A legacy, unbound adapter has no host-owned manifest to authorize
+        # execution.  Report the same bounded availability failure as the
+        # current adapter while refusing to import the package.
         raise FsrsUnavailableError(
-            "FSRS is unavailable; install the optional dependency with "
-            "study-agent-harness[recall] (requires fsrs==6.3.1)"
-        ) from error
-    except Exception as error:
-        raise FsrsUnavailableError("FSRS version metadata could not be read") from error
-    if installed != FSRS_IMPLEMENTATION_VERSION:
-        raise FsrsUnavailableError(
-            f"unsupported fsrs version {installed!r}; install exactly "
-            f"fsrs=={FSRS_IMPLEMENTATION_VERSION}"
+            "FSRS trust configuration is unavailable; cannot be imported without "
+            "an explicit host binding"
         )
     try:
-        module = importlib.import_module("fsrs")
+        identity = _verified_fsrs_identity(package_trust)
+        def validate_exports(module: ModuleType) -> None:
+            if not all(
+                hasattr(module, name)
+                for name in ("Card", "Rating", "Scheduler", "State")
+            ):
+                raise PackageTrustError("FSRS installation is untrusted")
+
+        use_verified_package(identity, validate_exports)
+        return ModuleType("fsrs")
+    except PackageTrustError as error:
+        if str(error) in {
+            "optional package identity changed",
+            "approved package root changed",
+            "optional package file changed",
+        }:
+            raise FsrsUnavailableError("FSRS installation changed") from None
+        raise FsrsUnavailableError("FSRS installation is untrusted") from None
     except Exception as error:
+        if isinstance(error, FsrsUnavailableError):
+            raise
         raise FsrsUnavailableError(
             "FSRS is installed but cannot be imported; reinstall the recall extra"
         ) from error
-    if not all(hasattr(module, name) for name in ("Card", "Rating", "Scheduler", "State")):
-        raise FsrsUnavailableError("installed fsrs package does not expose the supported API")
-    return module
+def _verified_fsrs_identity(package_trust: PackageTrustBinding) -> PackageIdentity:
+    if (
+        package_trust.package_name != "fsrs"
+        or package_trust.expected_version != FSRS_IMPLEMENTATION_VERSION
+    ):
+        raise FsrsUnavailableError("unsupported fsrs version")
+    try:
+        return validate_distribution(package_trust)
+    except PackageTrustError as error:
+        if str(error) in {
+            "optional package identity changed",
+            "approved package root changed",
+            "optional package file changed",
+        }:
+            raise FsrsUnavailableError("FSRS installation changed") from None
+        raise FsrsUnavailableError("FSRS installation is untrusted") from None
+
+
+def probe_fsrs(package_trust: PackageTrustBinding | None = None) -> None:
+    """Validate the exact distribution and supported package surface."""
+
+    if package_trust is None:
+        _load_fsrs()
+    else:
+        _load_fsrs(package_trust)
 
 
 def _new_scheduler(fsrs: ModuleType, policy: SchedulingPolicyConfigV1) -> Any:
@@ -278,4 +358,5 @@ __all__ = [
     "FsrsAdapterError",
     "FsrsUnavailableError",
     "PyFsrsSchedulingPolicy",
+    "probe_fsrs",
 ]

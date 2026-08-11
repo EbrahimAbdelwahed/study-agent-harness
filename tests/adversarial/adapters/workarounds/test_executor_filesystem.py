@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import os
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
+from study_agent.adapters.package_trust import PackageTrustBinding
 from study_agent.adapters.workarounds import (
     PDF_MARKDOWN_MANIFEST,
     PdfMarkdownExecutor,
@@ -39,6 +41,40 @@ def _task(pdf: bytes) -> WorkaroundTask:
     )
 
 
+def _package_trust(tmp_path: Path) -> PackageTrustBinding:
+    root = (tmp_path / "pypdf-site").resolve()
+    package = root / "pypdf"
+    dist = root / "pypdf-6.14.2.dist-info"
+    package.mkdir(parents=True, exist_ok=True)
+    dist.mkdir(exist_ok=True)
+    files = {
+        "pypdf/__init__.py": b"__version__ = '6.14.2'\n",
+        "pypdf-6.14.2.dist-info/METADATA": (
+            b"Metadata-Version: 2.3\nName: pypdf\nVersion: 6.14.2\n"
+        ),
+        "pypdf-6.14.2.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\n"
+        ),
+    }
+    for relative, value in files.items():
+        path = root / relative
+        path.write_bytes(value)
+    record_rows = [
+        f"{relative},sha256={base64.urlsafe_b64encode(sha256(value).digest()).decode().rstrip('=')},{len(value)}"
+        for relative, value in files.items()
+    ]
+    record_rows.append("pypdf-6.14.2.dist-info/RECORD,,")
+    (dist / "RECORD").write_text("\n".join(record_rows) + "\n", encoding="utf-8")
+    manifest = {
+        relative: (
+            sha256((root / relative).read_bytes()).hexdigest(),
+            (root / relative).stat().st_size,
+        )
+        for relative in (*files, "pypdf-6.14.2.dist-info/RECORD")
+    }
+    return PackageTrustBinding.from_manifest("pypdf", root, "6.14.2", manifest)
+
+
 def _approval(task: WorkaroundTask, *, marker: str = "a") -> WorkaroundApprovalReceipt:
     return WorkaroundApprovalReceipt(
         task.fingerprint,
@@ -58,6 +94,7 @@ def _executor(root: Path, pdf: bytes, *, output: str = "derived.md") -> PdfMarkd
         output,
         task.input_fingerprint,
         _approval(task),
+        package_trust=_package_trust(root),
     )
 
 
@@ -172,7 +209,7 @@ def test_symlink_root_input_parent_and_output_fail_closed_without_effects(
     (tmp_path / "derived.md").symlink_to(target / "input.pdf")
     monkeypatch.setattr(
         "study_agent.adapters.workarounds.pdf_markdown.parse_in_worker",
-        lambda *_: b"# derived\n",
+        lambda *_, **__: b"# derived\n",
     )
     failed = _executor(tmp_path, pdf).execute(task, PDF_MARKDOWN_MANIFEST.identity)
     assert failed.status is WorkaroundReceiptStatus.ATTEMPTED_FAILED
@@ -283,7 +320,7 @@ def test_executor_uses_identity_captured_with_the_bytes_without_reopening_input(
     )
     monkeypatch.setattr(
         "study_agent.adapters.workarounds.pdf_markdown.parse_in_worker",
-        lambda *_: b"# derived\n",
+        lambda *_, **__: b"# derived\n",
     )
     observed: dict[str, object] = {}
 
@@ -458,7 +495,7 @@ def test_collision_reconciliation_is_byte_exact_and_never_overwrites(
     executor = _executor(tmp_path, pdf)
     monkeypatch.setattr(
         "study_agent.adapters.workarounds.pdf_markdown.parse_in_worker",
-        lambda *_: output,
+        lambda *_, **__: output,
     )
     first = executor.execute(task, PDF_MARKDOWN_MANIFEST.identity)
     first_bytes = first.to_bytes()
@@ -491,7 +528,7 @@ def test_parser_timeout_protocol_and_containment_failures_create_no_output(
     for code in ("worker_timeout", "worker_protocol_failed", "resource_containment_unavailable"):
         monkeypatch.setattr(
             "study_agent.adapters.workarounds.pdf_markdown.parse_in_worker",
-            lambda *_args, _code=code: (_ for _ in ()).throw(PdfWorkerError(_code)),
+            lambda *_args, _code=code, **__: (_ for _ in ()).throw(PdfWorkerError(_code)),
         )
         receipt = _executor(tmp_path, pdf).execute(task, PDF_MARKDOWN_MANIFEST.identity)
         assert receipt.status is WorkaroundReceiptStatus.ATTEMPTED_FAILED

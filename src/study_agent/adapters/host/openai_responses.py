@@ -7,15 +7,23 @@ retry and capability effects.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import json
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from study_agent.adapters.package_trust import (
+    PackageIdentity,
+    PackageTrustBinding,
+    PackageTrustError,
+    discard_verified_package,
+    load_verified_package,
+    use_verified_package,
+    validate_distribution,
+)
 from study_agent.hosts.contracts import (
     TutorDecision,
     TutorHostContext,
@@ -113,11 +121,13 @@ class OpenAIResponsesTutorDecisionPort(TutorDecisionPort):
         config: OpenAIResponsesTutorConfig,
         *,
         client: OpenAIResponsesClient | None = None,
+        package_trust: PackageTrustBinding | None = None,
     ) -> None:
         if not isinstance(config, OpenAIResponsesTutorConfig):
             raise TypeError("config must be OpenAIResponsesTutorConfig")
         self._config = config
         self._client = client
+        self._package_trust = package_trust
 
     async def decide(
         self,
@@ -126,8 +136,10 @@ class OpenAIResponsesTutorDecisionPort(TutorDecisionPort):
     ) -> TutorDecision:
         if interruption.is_interrupted():
             raise OpenAIResponsesAdapterError("tutor decision interrupted")
-        owned = False
         client = self._client
+        if client is None and self._package_trust is not None:
+            return await self._decide_with_verified_package(context, interruption)
+        owned = False
         if client is None:
             client = self._build_default_client()
             owned = True
@@ -151,6 +163,63 @@ class OpenAIResponsesTutorDecisionPort(TutorDecisionPort):
         finally:
             if owned:
                 await _close_client(client)
+
+    async def _decide_with_verified_package(
+        self,
+        context: TutorHostContext,
+        interruption: TutorInterruptionToken,
+    ) -> TutorDecision:
+        package_trust = self._package_trust
+        if package_trust is None:
+            raise OpenAIResponsesConfigurationError("OpenAI SDK installation is untrusted")
+        identity = _verified_openai_identity(package_trust)
+
+        async def execute(module: object) -> TutorDecision:
+            key = self._validated_api_key()
+            factory = getattr(module, "AsyncOpenAI", None)
+            if not callable(factory):
+                raise OpenAIResponsesConfigurationError(
+                    "OpenAI SDK installation is untrusted"
+                )
+            client = factory(
+                api_key=key,
+                timeout=self._config.timeout_seconds,
+                max_retries=0,
+            )
+            try:
+                if interruption.is_interrupted():
+                    raise OpenAIResponsesAdapterError("tutor decision interrupted")
+                response = await client.responses.create(**self._request(context))
+                if interruption.is_interrupted():
+                    raise OpenAIResponsesAdapterError("tutor decision interrupted")
+                return self._parse_response(response, context)
+            finally:
+                await _close_client(client)
+
+        try:
+            return await cast(
+                Awaitable[TutorDecision], use_verified_package(identity, execute)
+            )
+        except RetryableTutorDecisionError:
+            raise RetryableTutorDecisionError("provider request is retryable") from None
+        except OpenAIResponsesAdapterError as error:
+            if str(error) in _SAFE_ADAPTER_MESSAGES:
+                raise
+            raise OpenAIResponsesAdapterError("provider request failed") from None
+        except PackageTrustError as error:
+            if str(error) in {
+                "optional package identity changed",
+                "approved package root changed",
+                "optional package file changed",
+            }:
+                raise OpenAIResponsesConfigurationError(
+                    "OpenAI SDK installation changed"
+                ) from None
+            raise OpenAIResponsesConfigurationError(
+                "OpenAI SDK installation is untrusted"
+            ) from None
+        except Exception as error:
+            raise _map_provider_error(error) from None
 
     def _request(self, context: TutorHostContext) -> dict[str, object]:
         # Keep the provider input a single SDK-valid user message.  The
@@ -180,21 +249,45 @@ class OpenAIResponsesTutorDecisionPort(TutorDecisionPort):
         }
 
     def _build_default_client(self) -> OpenAIResponsesClient:
-        key = os.environ.get(self._config.api_key_env)
-        if not isinstance(key, str) or not key or any(
-            ord(character) < 32 or ord(character) == 127 for character in key
-        ):
-            raise OpenAIResponsesConfigurationError("API key environment is unavailable")
+        key = self._validated_api_key()
         try:
-            module = importlib.import_module("openai")
-            factory = module.AsyncOpenAI
-            client = factory(
-                api_key=key,
-                timeout=self._config.timeout_seconds,
-                max_retries=0,
-            )
+            if self._package_trust is None:
+                factory = _verified_openai_factory()
+                client = factory(
+                    api_key=key,
+                    timeout=self._config.timeout_seconds,
+                    max_retries=0,
+                )
+            else:
+                identity = _verified_openai_identity(self._package_trust)
+
+                def construct(module: object) -> object:
+                    factory = getattr(module, "AsyncOpenAI", None)
+                    if not callable(factory):
+                        raise OpenAIResponsesConfigurationError(
+                            "OpenAI SDK installation is untrusted"
+                        )
+                    return factory(
+                        api_key=key,
+                        timeout=self._config.timeout_seconds,
+                        max_retries=0,
+                    )
+
+                client = use_verified_package(identity, construct)
         except OpenAIResponsesAdapterError:
             raise
+        except PackageTrustError as error:
+            if str(error) in {
+                "optional package identity changed",
+                "approved package root changed",
+                "optional package file changed",
+            }:
+                raise OpenAIResponsesConfigurationError(
+                    "OpenAI SDK installation changed"
+                ) from None
+            raise OpenAIResponsesConfigurationError(
+                "OpenAI SDK installation is untrusted"
+            ) from None
         except (ImportError, AttributeError):
             raise OpenAIResponsesConfigurationError(
                 "optional OpenAI SDK is unavailable"
@@ -203,9 +296,16 @@ class OpenAIResponsesTutorDecisionPort(TutorDecisionPort):
             raise OpenAIResponsesConfigurationError(
                 "OpenAI client could not be constructed"
             ) from None
-        if not hasattr(client, "responses"):
+        if not callable(getattr(getattr(client, "responses", None), "create", None)):
             raise OpenAIResponsesConfigurationError("OpenAI client is incompatible")
         return cast(OpenAIResponsesClient, client)
+
+    def _validated_api_key(self) -> str:
+        key = os.environ.get(self._config.api_key_env)
+        if not _valid_api_key_value(key):
+            raise OpenAIResponsesConfigurationError("API key environment is unavailable")
+        assert isinstance(key, str)
+        return key
 
     @staticmethod
     def _parse_response(response: object, context: TutorHostContext) -> TutorDecision:
@@ -259,6 +359,98 @@ class OpenAIResponsesTutorDecisionPort(TutorDecisionPort):
             return decision_from_bytes(encoded, context)
         except Exception:
             raise OpenAIResponsesAdapterError("provider decision was invalid") from None
+
+
+def _verified_openai_factory(
+    package_trust: PackageTrustBinding | None = None,
+) -> Callable[..., object]:
+    """Return the SDK factory only after one host-owned load transaction."""
+
+    if package_trust is None:
+        raise OpenAIResponsesConfigurationError("OpenAI SDK installation is untrusted")
+    try:
+        identity = _verified_openai_identity(package_trust)
+        # Keep the legacy seam observable for callers that instrument the
+        # loader, while all authority-bearing use remains transaction-scoped.
+        load_verified_package(identity)
+
+        def read_factory(module: object) -> object:
+            return getattr(module, "AsyncOpenAI", None)
+
+        factory = use_verified_package(identity, read_factory)
+    except PackageTrustError as error:
+        message = str(error)
+        if message in {
+            "optional package identity changed",
+            "approved package root changed",
+            "optional package file changed",
+        }:
+            raise OpenAIResponsesConfigurationError(
+                "OpenAI SDK installation changed"
+            ) from None
+        raise OpenAIResponsesConfigurationError(
+            "OpenAI SDK installation is untrusted"
+        ) from None
+    except OpenAIResponsesConfigurationError:
+        raise
+    except (ImportError, AttributeError, OSError, RuntimeError, ValueError, TypeError):
+        raise OpenAIResponsesConfigurationError(
+            "optional OpenAI SDK is unavailable"
+        ) from None
+    if not callable(factory):
+        # A host binding with no supported export is not an authenticated SDK
+        # installation.  Keep the public failure redacted and fail closed.
+        discard_verified_package("openai")
+        raise OpenAIResponsesConfigurationError("OpenAI SDK installation is untrusted")
+
+    def invoke_verified_factory(**kwargs: object) -> object:
+        def invoke(module: object) -> object:
+            current = getattr(module, "AsyncOpenAI", None)
+            if not callable(current):
+                raise OpenAIResponsesConfigurationError(
+                    "OpenAI SDK installation is untrusted"
+                )
+            return current(**kwargs)
+
+        return use_verified_package(identity, invoke)
+
+    invoke_verified_factory.__name__ = "AsyncOpenAI"
+    return cast(Callable[..., object], invoke_verified_factory)
+
+
+def _verified_openai_identity(package_trust: PackageTrustBinding) -> PackageIdentity:
+    if package_trust.package_name != "openai" or not _supported_openai_version(
+        package_trust.expected_version
+    ):
+        raise OpenAIResponsesConfigurationError("unsupported OpenAI SDK version")
+    try:
+        return validate_distribution(package_trust)
+    except PackageTrustError as error:
+        message = str(error)
+        if message in {
+            "optional package identity changed",
+            "approved package root changed",
+            "optional package file changed",
+        }:
+            raise OpenAIResponsesConfigurationError(
+                "OpenAI SDK installation changed"
+            ) from None
+        raise OpenAIResponsesConfigurationError(
+            "OpenAI SDK installation is untrusted"
+        ) from None
+
+
+def _valid_api_key_value(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and not any(
+        ord(character) < 32 or ord(character) == 127 for character in value
+    )
+
+
+def _supported_openai_version(version: str) -> bool:
+    parts = version.split(".")
+    if len(parts) < 2 or not all(part.isdigit() for part in parts[:2]):
+        return False
+    return (int(parts[0]), int(parts[1])) >= (2, 46) and int(parts[0]) < 3
 
 
 def _field(value: object, name: str) -> object:

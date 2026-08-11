@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+from study_agent.adapters.package_trust import PackageTrustBinding
 from study_agent.feedback.workarounds import (
     WorkaroundApprovalReceipt,
     WorkaroundExecutionReceipt,
@@ -50,6 +51,7 @@ class PdfMarkdownBinding:
     output_relative_path: str
     input_fingerprint: str
     approval: WorkaroundApprovalReceipt
+    package_trust: PackageTrustBinding | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.trusted_root, Path):
@@ -73,6 +75,10 @@ class PdfMarkdownBinding:
             or self.approval.effect_fingerprint != PDF_MARKDOWN_MANIFEST.effect_fingerprint
         ):
             raise PdfMarkdownExecutionError("approval_receipt_mismatch")
+        if self.package_trust is not None and not isinstance(
+            self.package_trust, PackageTrustBinding
+        ):
+            raise PdfMarkdownExecutionError("package_trust_binding_invalid")
 
 
 class PdfMarkdownExecutor:
@@ -88,6 +94,7 @@ class PdfMarkdownExecutor:
         input_fingerprint: str,
         approval: WorkaroundApprovalReceipt,
         *,
+        package_trust: PackageTrustBinding | None = None,
         wall_timeout_seconds: float = DEFAULT_PDF_MARKDOWN_TIMEOUT_SECONDS,
     ) -> None:
         root, root_identity = capture_root_identity(trusted_root)
@@ -97,6 +104,7 @@ class PdfMarkdownExecutor:
             output_relative_path,
             input_fingerprint,
             approval,
+            package_trust,
         )
         self._root_identity = root_identity
         if not 0 < wall_timeout_seconds <= 30:
@@ -122,6 +130,14 @@ class PdfMarkdownExecutor:
             raise PdfMarkdownExecutionError("input_fingerprint_mismatch")
         if self._binding.approval.task_fingerprint != task.fingerprint:
             raise PdfMarkdownExecutionError("approval_task_mismatch")
+        package_trust = self._binding.package_trust
+        if package_trust is None:
+            return self._failed_receipt("package_trust_unavailable")
+        if (
+            package_trust.package_name != "pypdf"
+            or package_trust.expected_version != "6.14.2"
+        ):
+            return self._failed_receipt("package_trust_mismatch")
 
         try:
             captured = capture_pdf(
@@ -133,7 +149,11 @@ class PdfMarkdownExecutor:
             input_fingerprint = sha256(content).hexdigest()
             if input_fingerprint != self._binding.input_fingerprint:
                 return self._failed_receipt("input_digest_mismatch")
-            output = parse_in_worker(content, self._wall_timeout_seconds)
+            output = parse_in_worker(
+                content,
+                self._wall_timeout_seconds,
+                package_trust=package_trust,
+            )
             if len(output) > MAX_PDF_MARKDOWN_OUTPUT_BYTES:
                 return self._failed_receipt("output_limit_exceeded")
             published = publish_markdown(
@@ -188,6 +208,7 @@ def bind_pdf_markdown_executor(
     input_fingerprint: str,
     approval: WorkaroundApprovalReceipt,
     *,
+    package_trust: PackageTrustBinding | None = None,
     wall_timeout_seconds: float = DEFAULT_PDF_MARKDOWN_TIMEOUT_SECONDS,
 ) -> PdfMarkdownExecutor:
     """Bind trusted host paths once; subsequent execute calls receive no path."""
@@ -198,6 +219,7 @@ def bind_pdf_markdown_executor(
         output_relative_path,
         input_fingerprint,
         approval,
+        package_trust=package_trust,
         wall_timeout_seconds=wall_timeout_seconds,
     )
 
