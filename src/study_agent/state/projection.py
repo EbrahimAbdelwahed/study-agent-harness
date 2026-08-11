@@ -55,7 +55,21 @@ def replay(
     events: Sequence[DomainEvent | EventEnvelope],
     registry: EventRegistry,
 ) -> Projection:
+    """Replay canonical history, preserving exact registered old schemas."""
+
     projection = Projection(course_id)
     for event in events:
-        projection = apply_event(projection, event, registry)
+        expected = projection.sequence + 1
+        prepared = registry.prepare_for_replay(event)
+        if prepared.course_id != projection.course_id:
+            raise ProjectionSequenceError("event course does not match projection course")
+        if prepared.course_sequence != expected:
+            raise ProjectionSequenceError(
+                f"expected event sequence {expected}, got {prepared.course_sequence}"
+            )
+        projection = Projection(
+            prepared.course_id,
+            prepared.course_sequence,
+            registry.reduce_for_replay(projection.state, prepared),
+        )
     return projection

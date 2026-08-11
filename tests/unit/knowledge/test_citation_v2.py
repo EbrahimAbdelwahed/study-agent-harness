@@ -6,13 +6,9 @@ from hashlib import sha256
 import pytest
 
 from study_agent.api.sources import (
-    CitationFailure,
-    CitationFailureKind,
     DerivedRef,
     FigureCitationV1,
     TextCitationV2,
-    citation_from_bytes,
-    citation_from_json,
 )
 from study_agent.domain import Citation as LegacyCitation
 from study_agent.domain import (
@@ -26,11 +22,16 @@ from study_agent.domain import (
     substrate_id_for,
     unit_id_for,
 )
+from study_agent.domain.citation_v2 import (
+    CitationFailure,
+    CitationFailureKind,
+    citation_from_bytes,
+    citation_from_json,
+)
 from study_agent.domain.identifiers import ChunkId
 from study_agent.domain.lineage import RevisionRef
 from study_agent.knowledge.citation import (
     text_citation_for,
-    upgrade_v1_citation,
     verify_figure_citation,
     verify_text_citation,
 )
@@ -290,40 +291,6 @@ def legacy(quoted: str | None) -> LegacyCitation:
     )
 
 
-def test_a_v01_citation_upgrades_when_its_snippet_matches_canonical_bytes() -> None:
-    upgraded = upgrade_v1_citation(
-        legacy(TEXT[3:20]), unit=unit(), substrate_bytes=BYTES
-    )
-    assert upgraded.start == 3
-    assert upgraded.end == 20
-    assert upgraded.locator == "p. 1"
-    resolved = verify_text_citation(
-        upgraded, substrate_bytes=BYTES, unit=unit(), selection_status=CURRENT
-    )
-    assert resolved.text == TEXT[3:20]
-
-
-def test_a_v01_citation_whose_snippet_drifted_fails_instead_of_re_anchoring() -> None:
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(legacy("testo che non c'e' piu'"), unit=unit(), substrate_bytes=BYTES)
-    assert kind_of(error) is CitationFailureKind.MISMATCHED_CHECKSUM
-
-
-def test_a_v01_citation_without_a_snippet_upgrades_on_offsets_alone() -> None:
-    upgraded = upgrade_v1_citation(legacy(None), unit=unit(), substrate_bytes=BYTES)
-    assert upgraded.quoted_sha256 == sha256(TEXT[3:20].encode()).hexdigest()
-
-
-def test_upgrading_with_a_foreign_unit_is_rejected() -> None:
-    foreign = RetrievableUnit(
-        unit().unit_id, SourceId("altra"), REVISION, UnitKind.PASSAGE, 3,
-        ("doc",), TextSpan(SUBSTRATE, 0, len(TEXT)), META,
-    )
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(legacy(None), unit=foreign, substrate_bytes=BYTES)
-    assert kind_of(error) is CitationFailureKind.REFERENCE_MISMATCH
-
-
 def test_the_v01_contract_itself_is_untouched() -> None:
     original = legacy(TEXT[3:20])
     assert original.chunk_id == ChunkId("chunk-sha256:" + "d" * 64)
@@ -347,15 +314,6 @@ def test_invalid_utf8_substrate_bytes_fail_closed_with_a_typed_reason() -> None:
 def test_minting_from_invalid_utf8_fails_closed_with_a_typed_reason() -> None:
     with pytest.raises(CitationFailure) as error:
         text_citation_for(unit(), substrate_bytes=b"\xff\xfe", start=0, end=1)
-    assert kind_of(error) is CitationFailureKind.CORRUPT
-
-
-def test_a_legacy_snippet_with_a_lone_surrogate_fails_closed() -> None:
-    broken = LegacyCitation(
-        SOURCE, REVISION, ChunkId("chunk-sha256:" + "d" * 64), 3, 20, "p. 1", "ab\ud800cd"
-    )
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(broken, unit=unit(), substrate_bytes=BYTES)
     assert kind_of(error) is CitationFailureKind.CORRUPT
 
 

@@ -12,8 +12,8 @@ from study_agent.ingestion import (
     InvalidUtf8Error,
     chunk_text,
     normalize_utf8,
-    revision_id_for,
 )
+from study_agent.ingestion.legacy import _historical_ingestion_v2_revision_id
 
 
 def test_normalization_is_strict_versioned_and_canonicalizes_newlines_and_nfc() -> None:
@@ -146,13 +146,13 @@ def test_revision_identity_includes_metadata_and_algorithms() -> None:
         "chunker_version": "chunker-v1",
         "max_characters": 100,
     }
-    first = revision_id_for(
+    first = _historical_ingestion_v2_revision_id(
         title="First title", trust_level=10, source_role="primary", **common  # type: ignore[arg-type]
     )
-    metadata_changed = revision_id_for(
+    metadata_changed = _historical_ingestion_v2_revision_id(
         title="Changed", trust_level=99, source_role="supplement", **common  # type: ignore[arg-type]
     )
-    chunking_changed = revision_id_for(
+    chunking_changed = _historical_ingestion_v2_revision_id(
         title="First title",
         trust_level=10,
         source_role="primary",

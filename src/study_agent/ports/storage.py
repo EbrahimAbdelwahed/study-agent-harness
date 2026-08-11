@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from study_agent.domain.authority import IdempotencyKey
-from study_agent.domain.errors import ConflictFailure, NotFoundFailure, StaleFailure
+from study_agent.domain.errors import (
+    ConflictFailure,
+    NotFoundFailure,
+    StaleFailure,
+    ValidationFailure,
+)
 from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId, RevisionId, RunId
 from study_agent.domain.source import BlobRef, Citation, ResolvedCitation
@@ -66,6 +72,48 @@ class SourceContentPort(Protocol):
 
 
 type _EventRecord = DomainEvent | EventEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedEventRead:
+    """One bounded, ordered event read and its captured stream high-water."""
+
+    records: tuple[_EventRecord, ...]
+    high_water_sequence: int
+
+
+@runtime_checkable
+class _BoundedEventReader(Protocol):
+    """Private bounded read used by course-owned source verification."""
+
+    def _read_records_bounded(
+        self,
+        course_id: CourseId,
+        *,
+        max_events: int,
+        max_encoded_bytes: int,
+        after_sequence: int = 0,
+    ) -> _BoundedEventRead: ...
+
+
+def _read_bounded_records(
+    store: object,
+    course_id: CourseId,
+    *,
+    max_events: int,
+    max_encoded_bytes: int,
+    after_sequence: int = 0,
+) -> _BoundedEventRead:
+    """Read through the explicit bounded seam; never fall back to ``read``."""
+
+    if not isinstance(store, _BoundedEventReader):
+        raise ValidationFailure("storage adapter does not provide bounded event reads")
+    return store._read_records_bounded(
+        course_id,
+        max_events=max_events,
+        max_encoded_bytes=max_encoded_bytes,
+        after_sequence=after_sequence,
+    )
 
 
 @runtime_checkable

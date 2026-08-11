@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import stat
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote
 
+from study_agent.domain._validation import JsonObject
 from study_agent.domain.authority import IdempotencyKey
 from study_agent.domain.errors import (
     ConflictFailure,
@@ -24,7 +26,11 @@ from study_agent.domain.errors import (
 from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
 from study_agent.kernel.module import KernelModuleRegistry, KernelSnapshot
-from study_agent.ports.storage import EventSequenceConflictError, IdempotencyConflictError
+from study_agent.ports.storage import (
+    EventSequenceConflictError,
+    IdempotencyConflictError,
+    _BoundedEventRead,
+)
 from study_agent.state import (
     EventRegistry,
     PayloadValidationError,
@@ -142,6 +148,27 @@ CREATE TABLE IF NOT EXISTS event_idempotency (
     result_sequence INTEGER NOT NULL CHECK (result_sequence >= 0)
 ) STRICT;
 """
+
+_SQLITE_INTEGER_MAX = 2**63 - 1
+
+
+def _canonical_projection_object(data: bytes) -> JsonObject:
+    """Decode persisted projection state without hiding duplicate object keys."""
+
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        keys = [key for key, _ in pairs]
+        if len(keys) != len(set(keys)):
+            raise ValueError("projection state contains duplicate keys")
+        return dict(pairs)
+
+    try:
+        json.loads(data, object_pairs_hook=reject_duplicates)
+        state = canonical_json_object(data)
+        if canonical_json_bytes(state) != data:
+            raise ValueError("projection state is not canonical")
+        return state
+    except (TypeError, UnicodeError, ValueError, RecursionError) as error:
+        raise ValidationFailure("persisted projection state is invalid") from error
 
 
 def _idempotency_material(key: IdempotencyKey | str) -> tuple[str, bytes]:
@@ -279,7 +306,7 @@ class SQLiteEventStore:
             )
         if self._registry is None:
             raise ValidationFailure("projection reduction requires an EventRegistry")
-        raw_state = canonical_json_object(bytes(row[1]))
+        raw_state = _canonical_projection_object(bytes(row[1]))
         state = self._registry.migrate_projection(raw_state)
         if state != raw_state and not self._read_only:
             connection.execute(
@@ -494,6 +521,75 @@ class SQLiteEventStore:
                 "storage dependency is unavailable", retryable=True
             ) from error
         except (TypeError, ValueError) as error:
+            raise ValidationFailure("stored event bytes are invalid") from error
+
+    def _read_records_bounded(
+        self,
+        course_id: CourseId,
+        *,
+        max_events: int,
+        max_encoded_bytes: int,
+        after_sequence: int = 0,
+    ) -> _BoundedEventRead:
+        """Preflight and read one immutable bounded stream snapshot."""
+
+        if (
+            not isinstance(course_id, CourseId)
+            or type(after_sequence) is not int
+            or after_sequence < 0
+            or after_sequence > _SQLITE_INTEGER_MAX
+            or type(max_events) is not int
+            or max_events < 0
+            or type(max_encoded_bytes) is not int
+            or max_encoded_bytes < 0
+        ):
+            raise ValidationFailure("bounded event-read limits are invalid")
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN")
+                try:
+                    count, encoded_bytes, high_water = connection.execute(
+                        """
+                        SELECT COUNT(*), COALESCE(SUM(length(envelope)), 0),
+                               COALESCE(MAX(course_sequence), ?)
+                        FROM events
+                        WHERE course_id = ? AND course_sequence > ?
+                        """,
+                        (after_sequence, str(course_id), after_sequence),
+                    ).fetchone()
+                    if int(count) > max_events:
+                        raise ValidationFailure(
+                            "course history exceeds the event-count budget"
+                        )
+                    if int(encoded_bytes) > max_encoded_bytes:
+                        raise ValidationFailure(
+                            "course history exceeds the encoded-byte budget"
+                        )
+                    records: list[EventInput] = []
+                    cursor = connection.execute(
+                        """
+                        SELECT envelope FROM events
+                        WHERE course_id = ? AND course_sequence > ?
+                        ORDER BY course_sequence
+                        """,
+                        (str(course_id), after_sequence),
+                    )
+                    for row in cursor:
+                        records.append(event_from_bytes(bytes(row[0])))
+                    if len(records) != int(count):
+                        raise ValidationFailure("bounded event-read snapshot changed")
+                    connection.commit()
+                    return _BoundedEventRead(tuple(records), int(high_water))
+                except BaseException:
+                    connection.rollback()
+                    raise
+        except (HarnessError, ValidationFailure):
+            raise
+        except sqlite3.Error as error:
+            raise UnavailableDependencyFailure(
+                "storage dependency is unavailable", retryable=True
+            ) from error
+        except (OverflowError, RecursionError, TypeError, ValueError) as error:
             raise ValidationFailure("stored event bytes are invalid") from error
 
     def list_course_ids(self) -> tuple[CourseId, ...]:

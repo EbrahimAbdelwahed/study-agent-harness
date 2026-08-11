@@ -37,7 +37,7 @@ from study_agent.domain import (
 )
 from study_agent.domain._validation import JsonValue
 from study_agent.domain.study_context import StudyStatementValue
-from study_agent.ingestion import decode_source_revision_ingested
+from study_agent.ingestion.projection import validate_projected_source_receipts
 from study_agent.ports.storage import _LegacyEventStore, _read_domain_events
 from study_agent.sessions import (
     SESSION_ANSWER_RECORDED,
@@ -68,15 +68,10 @@ class TutorSnapshotReader:
         course = ProjectionCourseView(load).get(course_id)
         session_view = ProjectionSessionView(load)
         session = session_view.get_session(course_id, session_id)
-        interactions = {
-            item.id: item for item in session_view.interactions(course_id, session_id)
-        }
-        answers = {
-            item.id: item for item in session_view.answers(course_id, session_id)
-        }
+        interactions = {item.id: item for item in session_view.interactions(course_id, session_id)}
+        answers = {item.id: item for item in session_view.answers(course_id, session_id)}
         assistant_turns = {
-            item.id: item
-            for item in ProjectionAssistantTurnView(load).turns(course_id, session_id)
+            item.id: item for item in ProjectionAssistantTurnView(load).turns(course_id, session_id)
         }
         context = ProjectionStudyContextView(load).get(course_id)
 
@@ -110,7 +105,7 @@ class TutorSnapshotReader:
                 for item in timeline
                 if item.kind is TutorTimelineKind.NOTE
             ),
-            materials=_materials(projection),
+            materials=_materials(projection, captured),
         )
 
 
@@ -308,24 +303,12 @@ def _grounded_content(record: AnswerRecord) -> str:
     return note
 
 
-def _materials(projection: Projection) -> tuple[TutorMaterialSummary, ...]:
+def _materials(
+    projection: Projection, captured: tuple[DomainEvent, ...]
+) -> tuple[TutorMaterialSummary, ...]:
     sources = _mapping(projection.state.get("sources", {}), "sources")
-    chunks = _mapping(projection.state.get("chunks", {}), "chunks")
-    grouped_chunks: dict[tuple[str, str], list[tuple[str, Mapping[str, JsonValue]]]] = {}
-    for chunk_id, raw_chunk in chunks.items():
-        if (
-            not isinstance(chunk_id, str)
-            or not isinstance(raw_chunk, Mapping)
-            or raw_chunk.get("chunk_id") != chunk_id
-        ):
-            raise ValueError("chunk projection entry is corrupt")
-        source_id = _text(raw_chunk.get("source_id"), "chunk source_id")
-        revision_id = _text(raw_chunk.get("revision_id"), "chunk revision_id")
-        grouped_chunks.setdefault((source_id, revision_id), []).append(
-            (chunk_id, raw_chunk)
-        )
+    receipt_times = validate_projected_source_receipts(projection.state, captured)
     result: list[TutorMaterialSummary] = []
-    consumed_chunk_groups: set[tuple[str, str]] = set()
     for source_id, raw_source in sorted(sources.items(), key=lambda item: str(item[0])):
         if not isinstance(source_id, str) or not isinstance(raw_source, Mapping):
             raise ValueError("source projection entry is corrupt")
@@ -355,25 +338,8 @@ def _materials(projection: Projection) -> tuple[TutorMaterialSummary, ...]:
             }:
                 raise ValueError("source revision projection is corrupt")
             group_key = (source_id, revision_id)
-            revision_chunks = grouped_chunks.get(group_key, [])
             try:
-                ordered_chunks = tuple(
-                    raw
-                    for _, raw in sorted(
-                        revision_chunks,
-                        key=lambda item: _ordinal(item[1].get("ordinal")),
-                    )
-                )
-                decoded = decode_source_revision_ingested(
-                    {
-                        "source": raw_revision["source"],
-                        "chunks": ordered_chunks,
-                        "normalized_character_length": raw_revision[
-                            "normalized_character_length"
-                        ],
-                        "chunking": raw_revision["chunking"],
-                    }
-                )
+                decoded, _, _ = receipt_times[group_key]
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError("source revision projection is corrupt") from error
             if (
@@ -381,7 +347,6 @@ def _materials(projection: Projection) -> tuple[TutorMaterialSummary, ...]:
                 or str(decoded.source.revision_id) != revision_id
             ):
                 raise ValueError("source revision ownership is corrupt")
-            consumed_chunk_groups.add(group_key)
             if revision_id == current:
                 current_revision = decoded
         if current_revision is None:  # pragma: no cover - guarded above
@@ -399,15 +364,7 @@ def _materials(projection: Projection) -> tuple[TutorMaterialSummary, ...]:
                 len(current_revision.chunks),
             )
         )
-    if set(grouped_chunks) != consumed_chunk_groups:
-        raise ValueError("orphan source chunks exist in the captured projection")
     return tuple(result)
-
-
-def _ordinal(value: JsonValue | None) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError("chunk ordinal is corrupt")
-    return value
 
 
 def _mapping(value: JsonValue | None, name: str) -> Mapping[str, JsonValue]:

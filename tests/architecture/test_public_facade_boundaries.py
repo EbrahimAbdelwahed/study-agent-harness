@@ -51,8 +51,6 @@ def test_every_listed_subfacade_is_importable_without_optional_modules() -> None
         "sources": {
             "BlobRef",
             "Citation",
-            "CitationFailure",
-            "CitationFailureKind",
             "DerivedRef",
             "FIGURE_CITATION_VERSION",
             "FigureCitationV1",

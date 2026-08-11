@@ -21,8 +21,6 @@ from .identity import (
     CHUNKER_POLICY_VERSION,
     NORMALIZATION_POLICY_VERSION,
     chunk_id_for,
-    revision_id_for,
-    source_event_id_for,
     source_kind_contract,
     source_revision_selected_event_id_for,
 )
@@ -117,8 +115,6 @@ __all__ = [
     "reduce_source_revision",
     "reduce_source_revision_selected",
     "register_source_revision_events",
-    "revision_id_for",
-    "source_event_id_for",
     "source_kind_contract",
     "source_manifest",
     "source_revision_payload",

@@ -27,6 +27,7 @@ from study_agent.ports.storage import (
     RunStore,
     RunStoreConflictFailure,
     SourceContentPort,
+    _BoundedEventRead,
 )
 from study_agent.state import EventRegistry, Projection, event_to_bytes
 
@@ -209,6 +210,42 @@ class MemoryEventStore:
                 for event in self._events.get(stream_id, ())
                 if event.course_sequence > after_sequence
             )
+
+    def _read_records_bounded(
+        self,
+        stream_id: CourseId,
+        *,
+        max_events: int,
+        max_encoded_bytes: int,
+        after_sequence: int = 0,
+    ) -> _BoundedEventRead:
+        """Read a course stream after charging count and encoded-byte budgets."""
+
+        if (
+            not isinstance(stream_id, CourseId)
+            or type(after_sequence) is not int
+            or after_sequence < 0
+            or type(max_events) is not int
+            or max_events < 0
+            or type(max_encoded_bytes) is not int
+            or max_encoded_bytes < 0
+        ):
+            raise ValidationFailure("bounded event-read limits are invalid")
+        with self._lock:
+            selected: list[_EventInput] = []
+            encoded_bytes = 0
+            high_water = after_sequence
+            for event in self._events.get(stream_id, ()):
+                if event.course_sequence <= after_sequence:
+                    continue
+                if len(selected) >= max_events:
+                    raise ValidationFailure("course history exceeds the event-count budget")
+                encoded_bytes += len(event_to_bytes(event))
+                if encoded_bytes > max_encoded_bytes:
+                    raise ValidationFailure("course history exceeds the encoded-byte budget")
+                selected.append(event)
+                high_water = event.course_sequence
+            return _BoundedEventRead(tuple(selected), high_water)
 
     def projection(self, stream_id: CourseId) -> Projection:
         with self._lock:

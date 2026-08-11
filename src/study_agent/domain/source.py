@@ -8,12 +8,18 @@ from hashlib import sha256
 from typing import cast
 
 from ._validation import JsonObject, freeze_object, require_aware, require_text
+from .bounded_json import MAX_METADATA_BYTES, validate_json_object
 from .identifiers import BlobId, ChunkId, RevisionId, SourceId, SubstrateId
 from .provenance import ContentOrigin, StructureOrigin
 from .source_identity import (
     source_revision_id_for,
+    source_revision_manifest,
     verify_source_revision_id,
 )
+
+# Compatibility spelling retained for historical importers; current callers
+# use ``source_revision_manifest`` directly.
+source_revision_identity_manifest = source_revision_manifest
 
 _SHA256_HEX_LENGTH = 64
 
@@ -28,59 +34,23 @@ def _require_sha256(value: object, field_name: str) -> str:
     return value
 
 
-def _canonical_metadata(value: Mapping[str, object]) -> object:
-    """Return metadata in a JSON-safe form for deterministic revision codecs."""
+def _encode_metadata(value: Mapping[str, object]) -> JsonObject:
     if not isinstance(value, Mapping):
         raise ValueError("source metadata must be a JSON object")
-
-    def jsonable(item: object) -> object:
-        if isinstance(item, Mapping):
-            if any(not isinstance(key, str) for key in item):
-                raise ValueError("source metadata object keys must be strings")
-            return {key: jsonable(nested) for key, nested in item.items()}
-        if isinstance(item, (tuple, list)):
-            return [jsonable(nested) for nested in item]
-        if item is None or isinstance(item, (str, int, bool)):
-            return item
-        if isinstance(item, float) and item == item and item not in (
-            float("inf"),
-            float("-inf"),
-        ):
-            return item
-        raise ValueError("source metadata must contain only JSON values")
-
-    return jsonable(value)
-
-
-def _encode_metadata(value: Mapping[str, object]) -> JsonObject:
-    encoded = _canonical_metadata(value)
-    if not isinstance(encoded, Mapping):  # pragma: no cover - checked by the caller
-        raise TypeError("source metadata must be a JSON object")
-    return encoded
-
-
-def source_revision_identity_manifest(
-    *,
-    source_id: SourceId,
-    blob: BlobRef,
-    media_type: str,
-    normalization_version: str,
-    substrate_id: SubstrateId,
-    metadata: JsonObject,
-) -> JsonObject:
-    return {
-        "blob": blob.to_json(),
-        "media_type": media_type,
-        "metadata": metadata,
-        "normalization_version": normalization_version,
-        "source_id": str(source_id),
-        "substrate_id": str(substrate_id),
-    }
+    try:
+        return validate_json_object(value, max_bytes=MAX_METADATA_BYTES)
+    except Exception as error:
+        raise ValueError("source metadata is outside the bounded JSON profile") from error
 
 
 class SourceKind(StrEnum):
     TEXT = "text"
     MARKDOWN = "markdown"
+
+
+class MetadataAuthority(StrEnum):
+    TRUSTED = "trusted"
+    LEGACY_UNVERIFIED = "legacy-unverified"
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +180,7 @@ class SourceRevision:
         """
         blob = BlobRef.from_bytes(content)
         canonical_metadata = _encode_metadata({} if metadata is None else metadata)
-        manifest = source_revision_identity_manifest(
+        manifest = source_revision_manifest(
             source_id=source_id,
             blob=blob,
             media_type=media_type,
@@ -259,10 +229,10 @@ class SourceRevision:
         require_aware(self.created_at, "created_at")
         object.__setattr__(self, "created_at", self.created_at.astimezone(UTC))
         metadata = _encode_metadata(self.metadata)
-        object.__setattr__(self, "metadata", freeze_object(metadata))
+        object.__setattr__(self, "metadata", metadata)
         verify_source_revision_id(
             self.revision_id,
-            source_revision_identity_manifest(
+            source_revision_manifest(
                 source_id=self.source_id,
                 blob=self.blob,
                 media_type=self.media_type,
@@ -297,10 +267,16 @@ class SourceRevision:
         }
 
     @classmethod
-    def from_json(cls, payload: Mapping[str, object]) -> SourceRevision:
-        """Decode exactly one revision manifest without accepting extra fields."""
-        if not isinstance(payload, Mapping):
-            raise ValueError("source revision payload must be an object")
+    def from_json(
+        cls, payload: Mapping[str, object], *, receipt_created_at: datetime
+    ) -> SourceRevision:
+        """Decode a revision against the trusted capture receipt timestamp."""
+        try:
+            payload = validate_json_object(payload)
+        except Exception as error:
+            raise ValueError(
+                "source revision payload is outside the bounded JSON profile"
+            ) from error
         expected = {
             "blob",
             "created_at",
@@ -358,12 +334,17 @@ class SourceRevision:
             timestamp = datetime.fromisoformat(created_at)
         except ValueError as error:
             raise ValueError("source revision created_at must be ISO-8601") from error
+        require_aware(timestamp, "created_at")
+        require_aware(receipt_created_at, "receipt_created_at")
+        trusted_timestamp = receipt_created_at.astimezone(UTC)
+        if timestamp.astimezone(UTC) != trusted_timestamp:
+            raise ValueError("source revision created_at does not match trusted receipt")
         return cls(
             SourceId(source_id),
             RevisionId(revision_id),
             BlobRef(BlobId(blob_id), checksum, byte_length),
             media_type,
-            timestamp,
+            trusted_timestamp,
             normalization_version,
             SubstrateId(substrate_id),
             _encode_metadata(metadata),
@@ -389,6 +370,7 @@ class SourceDocument:
     structure_origin: StructureOrigin
     ingestion_method: str
     content_origin: ContentOrigin = ContentOrigin.ORIGINAL
+    metadata_authority: MetadataAuthority = MetadataAuthority.TRUSTED
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_id, SourceId):
@@ -403,6 +385,8 @@ class SourceDocument:
             raise TypeError("structure_origin must be StructureOrigin")
         if not isinstance(self.content_origin, ContentOrigin):
             raise TypeError("content_origin must be ContentOrigin")
+        if not isinstance(self.metadata_authority, MetadataAuthority):
+            raise TypeError("metadata_authority must be MetadataAuthority")
         require_text(self.title, "title")
         require_text(self.media_type, "media_type")
         require_text(self.source_role, "source_role")
@@ -496,6 +480,7 @@ class ResolvedCitation:
 __all__ = [
     "BlobRef",
     "Citation",
+    "MetadataAuthority",
     "ResolvedCitation",
     "SourceChunk",
     "SourceDocument",

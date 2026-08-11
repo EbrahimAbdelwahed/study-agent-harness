@@ -337,8 +337,48 @@ class EventRegistry:
         # timestamps, payload, and causation before dispatch.
         return prepared
 
+    def prepare_for_replay(self, event: EventInput) -> DomainEvent:
+        """Prepare one retained event without rewriting an exact old schema.
+
+        Current append validation intentionally targets the newest registered
+        schema.  Stored history is different: when an exact decoder is
+        registered for an older envelope, replay must dispatch that decoder
+        with the original schema and payload so its compatibility verifier can
+        preserve the event identity and bytes.  Other event types continue
+        through the normal deterministic upcaster path.
+        """
+
+        if not isinstance(event, (DomainEvent, EventEnvelope)):
+            raise ValidationFailure("event must be a DomainEvent or EventEnvelope")
+        validate_event_type(event.event_type)
+        key = (event.event_type, event.schema_version)
+        normalized = (
+            self._legacy_to_domain(event) if isinstance(event, DomainEvent) else event
+        )
+        if key in self._registrations:
+            return (
+                normalized
+                if isinstance(normalized, DomainEvent)
+                else self._envelope_to_domain(normalized)
+            )
+        return self.prepare(normalized)
+
     def decode(self, event: EventInput) -> object:
         prepared = self.prepare(event)
+        registration = self._registration(prepared)
+        try:
+            return registration.decoder(prepared)
+        except (ValidationFailure, UnknownEventSchemaError):
+            raise
+        except Exception as error:
+            raise PayloadValidationError(
+                f"invalid payload for {prepared.event_type}@{prepared.schema_version}: {error}"
+            ) from error
+
+    def decode_for_replay(self, event: EventInput) -> object:
+        """Decode a stored event using its exact registered schema."""
+
+        prepared = self.prepare_for_replay(event)
         registration = self._registration(prepared)
         try:
             return registration.decoder(prepared)
@@ -356,6 +396,23 @@ class EventRegistry:
         registration = self._registration(prepared)
         return freeze_object(registration.reducer(state, prepared, decoded_payload))
 
+    def reduce_decoded_for_replay(
+        self, state: JsonObject, event: EventInput, decoded_payload: object
+    ) -> JsonObject:
+        """Reduce a retained event without changing its envelope schema."""
+
+        prepared = self.prepare_for_replay(event)
+        registration = self._registration(prepared)
+        return freeze_object(registration.reducer(state, prepared, decoded_payload))
+
     def reduce(self, state: JsonObject, event: EventInput) -> JsonObject:
         prepared = self.prepare(event)
         return self.reduce_decoded(state, prepared, self.decode(prepared))
+
+    def reduce_for_replay(self, state: JsonObject, event: EventInput) -> JsonObject:
+        """Decode and reduce one stored event through exact-schema replay."""
+
+        prepared = self.prepare_for_replay(event)
+        return self.reduce_decoded_for_replay(
+            state, prepared, self.decode_for_replay(prepared)
+        )

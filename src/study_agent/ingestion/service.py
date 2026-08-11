@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -10,9 +11,21 @@ from pathlib import PurePath
 
 from study_agent.domain.context import ExecutionContext
 from study_agent.domain.events import Actor, DomainEvent
-from study_agent.domain.identifiers import BlobId, RevisionId, SourceId
+from study_agent.domain.identifiers import (
+    BlobId,
+    CourseId,
+    RevisionId,
+    SourceId,
+    substrate_id_for,
+)
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
-from study_agent.domain.source import BlobRef, SourceChunk, SourceDocument, SourceKind
+from study_agent.domain.source import (
+    BlobRef,
+    SourceChunk,
+    SourceDocument,
+    SourceKind,
+    SourceRevision,
+)
 from study_agent.ports import BlobStore, ClockPort, CourseViewPort
 from study_agent.ports.storage import (
     EventSequenceConflictError,
@@ -23,23 +36,30 @@ from study_agent.ports.storage import (
 
 from .chunking import CHUNKER_VERSION, DEFAULT_CHUNKING_CONFIG, ChunkingConfig, chunk_text
 from .events import (
+    MAX_VERIFIED_BLOB_BYTES,
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
     SOURCE_REVISION_SELECTED,
     SOURCE_REVISION_SELECTED_SCHEMA_VERSION,
+    BlobLoader,
     SourceRevisionIngested,
+    decode_source_revision_event,
     decode_source_revision_ingested,
     decode_source_revision_selected_event,
     source_revision_selected_payload,
 )
 from .identity import (
-    revision_id_for,
-    source_event_id_for,
     source_kind_contract,
+    source_revision_ingested_event_id_for,
     source_revision_selected_event_id_for,
 )
 from .normalization import InvalidUtf8Error, normalize_utf8
 from .projection import source_revision_payload
+
+MAX_HISTORY_EVENTS = 4_096
+MAX_HISTORY_BLOB_READS = 8
+MAX_SOURCE_BYTES = 16 * 1024 * 1024
+MAX_HISTORY_BLOB_BYTES = 32 * 1024 * 1024
 
 
 class IngestionErrorCode(StrEnum):
@@ -74,6 +94,28 @@ class TextIngestionResult:
         object.__setattr__(self, "chunks", tuple(self.chunks))
 
 
+@dataclass(slots=True)
+class _BoundedBlobLoader:
+    """Charge every historical verification read against one ingest budget."""
+
+    loader: BlobLoader
+    max_reads: int
+    max_bytes: int = MAX_HISTORY_BLOB_BYTES
+    reads: int = 0
+    bytes_requested: int = 0
+
+    def __call__(self, ref: BlobRef) -> bytes:
+        if self.reads >= self.max_reads:
+            raise ValueError("source verification work budget exceeded")
+        if ref.byte_length > MAX_VERIFIED_BLOB_BYTES:
+            raise ValueError("source verification byte bound exceeded")
+        if self.bytes_requested + ref.byte_length > self.max_bytes:
+            raise ValueError("source verification byte budget exceeded")
+        self.reads += 1
+        self.bytes_requested += ref.byte_length
+        return self.loader(ref)
+
+
 class TextIngestionService:
     def __init__(
         self,
@@ -83,12 +125,24 @@ class TextIngestionService:
         clock: ClockPort,
         courses: CourseViewPort,
         chunking: ChunkingConfig = DEFAULT_CHUNKING_CONFIG,
+        max_history_events: int = MAX_HISTORY_EVENTS,
+        max_history_blob_reads: int = MAX_HISTORY_BLOB_READS,
+        max_history_blob_bytes: int = MAX_HISTORY_BLOB_BYTES,
     ) -> None:
+        if type(max_history_events) is not int or max_history_events < 1:
+            raise ValueError("max_history_events must be positive")
+        if type(max_history_blob_reads) is not int or max_history_blob_reads < 1:
+            raise ValueError("max_history_blob_reads must be positive")
+        if type(max_history_blob_bytes) is not int or max_history_blob_bytes < 1:
+            raise ValueError("max_history_blob_bytes must be positive")
         self._blobs = blobs
         self._events = events
         self._clock = clock
         self._courses = courses
         self._chunking = chunking
+        self._max_history_events = max_history_events
+        self._max_history_blob_reads = max_history_blob_reads
+        self._max_history_blob_bytes = max_history_blob_bytes
 
     def ingest(
         self,
@@ -114,7 +168,7 @@ class TextIngestionService:
         )
         kind, media_type, method = _file_contract(filename)
         self._courses.get(context.course_id)
-        stream = _read_domain_events(self._events, context.course_id)
+        stream = self._read_history(context.course_id)
         current_sequence = stream[-1].course_sequence if stream else 0
         if expected_sequence is not None and current_sequence != expected_sequence:
             raise TextIngestionError(
@@ -135,28 +189,31 @@ class TextIngestionService:
 
         original_blob = _predicted_blob(content)
         normalized_blob = _predicted_blob(normalized.content)
-        revision_id = revision_id_for(
-            original_sha256=original_blob.checksum_sha256,
-            source_id=source_id,
-            kind=kind,
-            title=title,
-            trust_level=trust_level,
-            source_role=source_role,
-            normalization_version=normalized.version,
-            chunker_version=self._chunking.version,
-            max_characters=self._chunking.max_characters,
-        )
         now = self._clock.now()
         try:
+            revision = SourceRevision.create(
+                source_id=source_id,
+                content=content,
+                media_type=media_type,
+                created_at=now,
+                normalization_version=normalized.version,
+                substrate_id=substrate_id_for(normalized.content),
+                metadata={
+                    "kind": kind.value,
+                    "source_role": source_role,
+                    "title": title,
+                    "trust_level": trust_level,
+                },
+            )
             source = SourceDocument(
                 source_id,
-                revision_id,
+                revision.revision_id,
                 kind,
                 title,
                 media_type,
                 original_blob.checksum_sha256,
                 original_blob.byte_length,
-                now,
+                revision.created_at,
                 trust_level,
                 source_role,
                 original_blob,
@@ -170,34 +227,56 @@ class TextIngestionService:
             chunks = chunk_text(
                 normalized.text,
                 source_id=source_id,
-                revision_id=revision_id,
+                revision_id=revision.revision_id,
                 kind=kind,
                 config=self._chunking,
             )
         except ValueError as error:
             raise TextIngestionError(IngestionErrorCode.INVALID_CONTENT, str(error)) from error
 
-        current = _current_revision(stream, source_id)
-        if current is not None and _matches_request(current, source, self._chunking):
-            if expected_sequence is not None:
-                latest = _read_domain_events(self._events, context.course_id)
-                latest_sequence = latest[-1].course_sequence if latest else 0
-                if latest_sequence != expected_sequence:
-                    raise TextIngestionError(
-                        IngestionErrorCode.SEQUENCE_CONFLICT,
-                        "course stream advanced before idempotent return; "
-                        f"expected {expected_sequence}, observed {latest_sequence}",
-                        retryable=True,
-                    )
-            return TextIngestionResult(
-                IngestionStatus.IDEMPOTENT,
-                current.source,
-                current.chunks,
-                current_sequence,
-            )
-        historical = _find_matching_revision(
-            stream, source_id, source, self._chunking
+        history_loader = _BoundedBlobLoader(
+            self._blobs.get,
+            self._max_history_blob_reads,
+            self._max_history_blob_bytes,
         )
+        try:
+            current = _current_revision(stream, source_id, history_loader)
+        except ValueError as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be verified",
+            ) from error
+        if current is not None and current.source.revision_id == source.revision_id:
+            if _matches_request(current, source, self._chunking):
+                if expected_sequence is not None:
+                    latest = self._read_history(context.course_id)
+                    latest_sequence = latest[-1].course_sequence if latest else 0
+                    if latest_sequence != expected_sequence:
+                        raise TextIngestionError(
+                            IngestionErrorCode.SEQUENCE_CONFLICT,
+                            "course stream advanced before idempotent return; "
+                            f"expected {expected_sequence}, observed {latest_sequence}",
+                            retryable=True,
+                        )
+                return TextIngestionResult(
+                    IngestionStatus.IDEMPOTENT,
+                    current.source,
+                    current.chunks,
+                    current_sequence,
+                )
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "revision identity already exists with a different chunking configuration",
+            )
+        try:
+            historical = _find_matching_revision(
+                stream, source_id, source, self._chunking, history_loader
+            )
+        except ValueError as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be verified",
+            ) from error
         if historical is not None:
             return self._select_historical_revision(
                 historical,
@@ -214,7 +293,9 @@ class TextIngestionService:
                 chunker_version=self._chunking.version,
                 max_characters=self._chunking.max_characters,
             )
-            decoded = decode_source_revision_ingested(payload)
+            decoded = decode_source_revision_ingested(
+                payload, receipt_created_at=now
+            )
             if decoded.source != source or decoded.chunks != chunks:
                 raise ValueError("typed event payload changed immutable source data")
             if decoded.normalized_character_length != len(normalized.text):
@@ -225,7 +306,9 @@ class TextIngestionService:
             ):
                 raise ValueError("typed event payload changed chunking configuration")
             event = DomainEvent(
-                source_event_id_for(context.course_id, revision_id),
+                source_revision_ingested_event_id_for(
+                    context.course_id, source.revision_id, now
+                ),
                 context.course_id,
                 current_sequence + 1,
                 SOURCE_REVISION_INGESTED,
@@ -248,8 +331,22 @@ class TextIngestionService:
                 self._events, context.course_id, current_sequence, (event,)
             )
         except EventSequenceConflictError as error:
-            concurrent_stream = _read_domain_events(self._events, context.course_id)
-            concurrent = _current_revision(concurrent_stream, source_id)
+            concurrent_stream = self._read_history(context.course_id)
+            try:
+                concurrent = _current_revision(
+                    concurrent_stream,
+                    source_id,
+                    _BoundedBlobLoader(
+                        self._blobs.get,
+                        self._max_history_blob_reads,
+                        self._max_history_blob_bytes,
+                    ),
+                )
+            except ValueError as verify_error:
+                raise TextIngestionError(
+                    IngestionErrorCode.INVALID_CONTENT,
+                    "source history could not be verified",
+                ) from verify_error
             if (
                 expected_sequence is None
                 and concurrent is not None
@@ -311,10 +408,22 @@ class TextIngestionService:
                 self._events, context.course_id, current_sequence, (event,)
             )
         except EventSequenceConflictError as error:
-            concurrent_stream = _read_domain_events(self._events, context.course_id)
-            concurrent = _current_revision(
-                concurrent_stream, revision.source.source_id
-            )
+            concurrent_stream = self._read_history(context.course_id)
+            try:
+                concurrent = _current_revision(
+                    concurrent_stream,
+                    revision.source.source_id,
+                    _BoundedBlobLoader(
+                        self._blobs.get,
+                        self._max_history_blob_reads,
+                        self._max_history_blob_bytes,
+                    ),
+                )
+            except ValueError as verify_error:
+                raise TextIngestionError(
+                    IngestionErrorCode.INVALID_CONTENT,
+                    "source history could not be verified",
+                ) from verify_error
             if (
                 expected_sequence is None
                 and concurrent is not None
@@ -337,6 +446,21 @@ class TextIngestionService:
         return TextIngestionResult(
             IngestionStatus.EMITTED, revision.source, revision.chunks, committed
         )
+
+    def _read_history(self, course_id: CourseId) -> tuple[DomainEvent, ...]:
+        try:
+            stream = _read_domain_events(self._events, course_id)
+        except Exception as error:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history could not be read",
+            ) from error
+        if len(stream) > self._max_history_events:
+            raise TextIngestionError(
+                IngestionErrorCode.INVALID_CONTENT,
+                "source history exceeds the configured work bound",
+            )
+        return stream
 
 
 def _file_contract(filename: str) -> tuple[SourceKind, str, str]:
@@ -381,6 +505,11 @@ def _validate_ingestion_request(
             IngestionErrorCode.INVALID_CONTENT,
             "content must be bytes",
         )
+    if len(content) > MAX_SOURCE_BYTES:
+        raise TextIngestionError(
+            IngestionErrorCode.INVALID_CONTENT,
+            "content exceeds the configured source byte bound",
+        )
     if not isinstance(source_id, SourceId):
         raise TextIngestionError(
             IngestionErrorCode.INVALID_CONTENT,
@@ -423,8 +552,11 @@ def _predicted_blob(content: bytes) -> BlobRef:
 def _write_expected_blob(store: BlobStore, content: bytes, expected: BlobRef) -> None:
     try:
         actual = store.put(content)
-    except (TypeError, ValueError) as error:
-        raise TextIngestionError(IngestionErrorCode.BLOB_MISMATCH, str(error)) from error
+    except Exception as error:
+        raise TextIngestionError(
+            IngestionErrorCode.BLOB_MISMATCH,
+            "blob store could not publish expected content",
+        ) from error
     if actual != expected:
         raise TextIngestionError(
             IngestionErrorCode.BLOB_MISMATCH,
@@ -437,35 +569,30 @@ def _find_matching_revision(
     source_id: SourceId,
     requested: SourceDocument,
     chunking: ChunkingConfig,
+    load_blob: BlobLoader,
 ) -> SourceRevisionIngested | None:
     for event in events:
-        if (
-            event.event_type != SOURCE_REVISION_INGESTED
-            or event.schema_version != SOURCE_REVISION_SCHEMA_VERSION
-        ):
+        if event.event_type != SOURCE_REVISION_INGESTED or event.schema_version not in (1, 2):
             continue
-        decoded = decode_source_revision_ingested(event.payload)
-        if decoded.source.source_id == source_id and _matches_request(
-            decoded, requested, chunking
-        ):
+        if not _source_payload_matches_request(event, source_id, requested, chunking):
+            continue
+        decoded = decode_source_revision_event(event, load_blob)
+        if _matches_request(decoded, requested, chunking):
             return decoded
     return None
 
 
 def _current_revision(
-    events: tuple[DomainEvent, ...], source_id: SourceId
+    events: tuple[DomainEvent, ...], source_id: SourceId, load_blob: BlobLoader
 ) -> SourceRevisionIngested | None:
-    revisions: dict[RevisionId, SourceRevisionIngested] = {}
-    current_revision_id: RevisionId | None = None
+    revisions: dict[RevisionId, DomainEvent] = {}
+    current_event: DomainEvent | None = None
     for event in events:
-        if (
-            event.event_type == SOURCE_REVISION_INGESTED
-            and event.schema_version == SOURCE_REVISION_SCHEMA_VERSION
-        ):
-            decoded = decode_source_revision_ingested(event.payload)
-            if decoded.source.source_id == source_id:
-                revisions[decoded.source.revision_id] = decoded
-                current_revision_id = decoded.source.revision_id
+        if event.event_type == SOURCE_REVISION_INGESTED and event.schema_version in (1, 2):
+            event_source_id, revision_id = _source_payload_identity(event)
+            if event_source_id == source_id:
+                revisions[revision_id] = event
+                current_event = event
         elif (
             event.event_type == SOURCE_REVISION_SELECTED
             and event.schema_version == SOURCE_REVISION_SELECTED_SCHEMA_VERSION
@@ -475,10 +602,61 @@ def _current_revision(
                 continue
             if selected.revision_id not in revisions:
                 raise ValueError("selected revision does not exist in source history")
-            current_revision_id = selected.revision_id
-    if current_revision_id is None:
+            current_event = revisions[selected.revision_id]
+    if current_event is None:
         return None
-    return revisions[current_revision_id]
+    return decode_source_revision_event(current_event, load_blob)
+
+
+def _source_payload_identity(event: DomainEvent) -> tuple[SourceId, RevisionId]:
+    source_value = event.payload.get("source")
+    if not isinstance(source_value, Mapping):
+        raise ValueError("source history contains an invalid source manifest")
+    source_id = source_value.get("source_id")
+    revision_id = source_value.get("revision_id")
+    if not isinstance(source_id, str) or not isinstance(revision_id, str):
+        raise ValueError("source history contains an invalid source identity")
+    try:
+        return SourceId(source_id), RevisionId(revision_id)
+    except (TypeError, ValueError) as error:
+        raise ValueError("source history contains an invalid source identity") from error
+
+
+def _source_payload_matches_request(
+    event: DomainEvent,
+    source_id: SourceId,
+    requested: SourceDocument,
+    chunking: ChunkingConfig,
+) -> bool:
+    event_source_id, _ = _source_payload_identity(event)
+    if event_source_id != source_id:
+        return False
+    source_value = event.payload["source"]
+    assert isinstance(source_value, Mapping)
+    expected_source = {
+        "source_id": str(requested.source_id),
+        "kind": requested.kind.value,
+        "title": requested.title,
+        "media_type": requested.media_type,
+        "checksum_sha256": requested.checksum_sha256,
+        "byte_length": requested.byte_length,
+        "trust_level": requested.trust_level,
+        "source_role": requested.source_role,
+        "blob": requested.blob.to_json(),
+        "normalized_blob": requested.normalized_blob.to_json(),
+        "normalization_version": requested.normalization_version,
+        "normalized_character_length": requested.normalized_character_length,
+        "structure_origin": requested.structure_origin.value,
+        "ingestion_method": requested.ingestion_method,
+        "content_origin": requested.content_origin.value,
+    }
+    if any(source_value.get(field) != expected for field, expected in expected_source.items()):
+        return False
+    chunking_value = event.payload.get("chunking")
+    return chunking_value == {
+        "version": chunking.version,
+        "max_characters": chunking.max_characters,
+    }
 
 
 def _matches_request(

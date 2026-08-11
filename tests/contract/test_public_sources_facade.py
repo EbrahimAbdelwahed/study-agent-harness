@@ -9,8 +9,6 @@ import study_agent.api.sources as sources
 EXPECTED_EXPORTS = {
     "BlobRef",
     "Citation",
-    "CitationFailure",
-    "CitationFailureKind",
     "DerivedRef",
     "FIGURE_CITATION_VERSION",
     "FigureCitationV1",
@@ -38,9 +36,7 @@ def _has_dataclass_params(value: object) -> TypeGuard[_DataclassType]:
 
 def test_sources_facade_exports_only_frozen_source_and_citation_contracts() -> None:
     assert set(sources.__all__) == EXPECTED_EXPORTS
-    assert {
-        name for name in dir(sources) if not name.startswith("_")
-    } == EXPECTED_EXPORTS
+    assert {name for name in dir(sources) if not name.startswith("_")} == EXPECTED_EXPORTS
 
     for name in EXPECTED_EXPORTS:
         assert hasattr(sources, name)
@@ -59,7 +55,7 @@ def test_sources_facade_exports_only_frozen_source_and_citation_contracts() -> N
 
 
 def test_sources_facade_does_not_import_optional_provider_modules() -> None:
-    script = r'''
+    script = r"""
 import builtins
 import json
 import sys
@@ -93,7 +89,7 @@ loaded = sorted(
     if any(name == prefix or name.startswith(prefix + ".") for prefix in blocked)
 )
 print(json.dumps({"exports": sorted(sources.__all__), "loaded": loaded}))
-'''
+"""
     process = subprocess.run(
         (sys.executable, "-c", script),
         cwd="/tmp",

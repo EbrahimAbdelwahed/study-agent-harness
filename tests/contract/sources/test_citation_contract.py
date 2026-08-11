@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from hashlib import sha256
 
@@ -8,8 +9,6 @@ import pytest
 from study_agent.api.sources import (
     FIGURE_CITATION_VERSION,
     TEXT_CITATION_VERSION,
-    CitationFailure,
-    CitationFailureKind,
     DerivedRef,
     FigureCitationV1,
     TextCitationV2,
@@ -24,6 +23,8 @@ from study_agent.domain import (
     SubstrateId,
     TextSpan,
 )
+from study_agent.domain.citation_v2 import CitationFailure, CitationFailureKind
+from study_agent.domain.errors import ValidationFailure
 from study_agent.knowledge.citation import text_citation_for, verify_text_citation
 from study_agent.state import canonical_json_bytes
 from tests.support.pf05 import BYTES, TEXT, make_text_citation, make_unit
@@ -231,13 +232,16 @@ def test_public_citation_codecs_never_leak_raw_value_error_for_bad_versions() ->
     payload = dict(make_text_citation().to_json())
     payload["version"] = 99
 
-    with pytest.raises(CitationFailure) as json_error:
+    with pytest.raises(ValidationFailure) as json_error:
         citation_from_json(payload)
-    assert type(json_error.value) is CitationFailure
-    assert failure_kind(json_error) is CitationFailureKind.UNSUPPORTED_VERSION
+    assert type(json_error.value) is ValidationFailure
+    assert json_error.value.message == "citation failed validation"
+    assert isinstance(json_error.value.details, Mapping)
+    assert json_error.value.details["reason_kind"] == "unsupported_version"
 
     malformed = b'{"version":2}'
-    with pytest.raises(CitationFailure) as bytes_error:
+    with pytest.raises(ValidationFailure) as bytes_error:
         citation_from_bytes(malformed)
-    assert type(bytes_error.value) is CitationFailure
-    assert failure_kind(bytes_error) is CitationFailureKind.CORRUPT
+    assert type(bytes_error.value) is ValidationFailure
+    assert isinstance(bytes_error.value.details, Mapping)
+    assert bytes_error.value.details["reason_kind"] == "corrupt"

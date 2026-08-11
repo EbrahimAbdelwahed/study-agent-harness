@@ -48,9 +48,11 @@ from study_agent.ingestion.events import (
     SOURCE_REVISION_INGESTED,
     SOURCE_REVISION_SCHEMA_VERSION,
     SourceRevisionIngested,
+    _decode_historical_source_event,
     decode_source_revision_ingested,
 )
-from study_agent.ingestion.identity import source_event_id_for
+from study_agent.ingestion.identity import source_revision_ingested_event_id_for
+from study_agent.ingestion.projection import validate_projected_source_receipts
 from study_agent.ingestion.substrate_projection import reduce_substrate_produced
 from study_agent.ingestion.succession import (
     SOURCE_SUPERSEDED_BY,
@@ -226,6 +228,11 @@ class ExportService:
             return self._assemble_v3(course_id, stream)
         _reject_v1_artifact_stream(stream)
         _validate_stream(course_id, stream)
+        source_projection = _replay_v2(course_id, stream)
+        try:
+            validate_projected_source_receipts(source_projection.state, stream)
+        except (TypeError, ValueError) as error:
+            raise ExportStateError("source receipts cannot be exported canonically") from error
 
         created = decode_course_created(stream[0])
 
@@ -284,6 +291,10 @@ class ExportService:
     def _assemble_v2(self, course_id: CourseId, stream: tuple[DomainEvent, ...]) -> ExportBundleV2:
         _reject_recall_stream(stream)
         projection = _replay_v2(course_id, stream)
+        try:
+            validate_projected_source_receipts(projection.state, stream)
+        except (TypeError, ValueError) as error:
+            raise ExportStateError("source receipts cannot be exported canonically") from error
         created = decode_course_created(stream[0])
         revisions = tuple(
             _decode_source_event(event)
@@ -347,6 +358,10 @@ class ExportService:
 
     def _assemble_v3(self, course_id: CourseId, stream: tuple[DomainEvent, ...]) -> ExportBundleV3:
         projection = _replay_v3(course_id, stream)
+        try:
+            validate_projected_source_receipts(projection.state, stream)
+        except (TypeError, ValueError) as error:
+            raise ExportStateError("source receipts cannot be exported canonically") from error
         created = decode_course_created(stream[0])
         revisions = tuple(
             _decode_source_event(event)
@@ -457,11 +472,8 @@ def _decode_allowlisted_event(event: DomainEvent) -> object:
 
 
 def _decode_source_event(event: DomainEvent) -> SourceRevisionIngested:
-    if (
-        event.event_type != SOURCE_REVISION_INGESTED
-        or event.schema_version != SOURCE_REVISION_SCHEMA_VERSION
-    ):
-        raise ValueError("event envelope does not match source.revision_ingested@1")
+    if event.event_type != SOURCE_REVISION_INGESTED:
+        raise ValueError("event envelope does not match a source revision receipt")
     if event.session_id is not None or event.causation_id is not None:
         raise ValueError("source ingestion cannot be session-scoped or caused")
     if not isinstance(event.event_id, EventId):
@@ -474,9 +486,15 @@ def _decode_source_event(event: DomainEvent) -> SourceRevisionIngested:
         or event.actor.kind not in (PrincipalKind.HUMAN, PrincipalKind.SERVICE)
     ):
         raise ValueError("source ingestion requires a trusted actor")
-    decoded = decode_source_revision_ingested(event.payload)
-    if event.event_id != source_event_id_for(event.course_id, decoded.source.revision_id):
-        raise ValueError("source event id does not match its canonical revision")
+    if event.schema_version == 1:
+        return _decode_historical_source_event(event)
+    if event.schema_version != SOURCE_REVISION_SCHEMA_VERSION:
+        raise ValueError("unsupported source revision event schema")
+    decoded = decode_source_revision_ingested(event.payload, receipt_created_at=event.occurred_at)
+    if event.event_id != source_revision_ingested_event_id_for(
+        event.course_id, decoded.source.revision_id, event.occurred_at
+    ):
+        raise ValueError("source event id does not match its v2 receipt identity")
     return decoded
 
 
@@ -548,6 +566,12 @@ def _replay_v2(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
     register_course_events(registry)
     registry.register_event(
         SOURCE_REVISION_INGESTED,
+        1,
+        _decode_source_event,
+        reduce_source_revision,
+    )
+    registry.register_event(
+        SOURCE_REVISION_INGESTED,
         SOURCE_REVISION_SCHEMA_VERSION,
         _decode_source_event,
         reduce_source_revision,
@@ -569,7 +593,7 @@ def _replay_v2(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
                 raise ExportStateError("event stream contains another course")
             if event.course_sequence != expected_sequence:
                 raise ExportStateError("event stream sequence is not contiguous")
-            state = registry.reduce(state, event)
+            state = registry.reduce_for_replay(state, event)
     except ExportStateError:
         raise
     except (TypeError, ValueError, LookupError) as error:
@@ -584,6 +608,12 @@ def _replay_v3(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
         raise ExportStateError("course event stream is empty")
     registry = EventRegistry()
     register_course_events(registry)
+    registry.register_event(
+        SOURCE_REVISION_INGESTED,
+        1,
+        _decode_source_event,
+        reduce_source_revision,
+    )
     registry.register_event(
         SOURCE_REVISION_INGESTED,
         SOURCE_REVISION_SCHEMA_VERSION,
@@ -621,7 +651,7 @@ def _replay_v3(course_id: CourseId, stream: Sequence[DomainEvent]) -> Projection
                 raise ExportStateError("event stream contains another course")
             if event.course_sequence != expected_sequence:
                 raise ExportStateError("event stream sequence is not contiguous")
-            state = registry.reduce(state, event)
+            state = registry.reduce_for_replay(state, event)
     except ExportStateError:
         raise
     except (TypeError, ValueError, LookupError) as error:
@@ -696,9 +726,7 @@ def _review_receipt(review: ReviewRecord, source: Mapping[str, object]) -> JsonO
     }
 
 
-def _schedule_receipt(
-    schedule: AppliedSchedule, source: Mapping[str, object]
-) -> JsonObject:
+def _schedule_receipt(schedule: AppliedSchedule, source: Mapping[str, object]) -> JsonObject:
     sequence = source.get("course_sequence")
     session_id = source.get("session_id")
     if type(sequence) is not int or not isinstance(session_id, str):

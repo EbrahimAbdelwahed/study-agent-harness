@@ -1,10 +1,10 @@
-"""Typed source-revision event payloads and strict canonical decoding."""
+"""Schema-discriminated source-revision events and replay validation."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
 
@@ -14,32 +14,41 @@ from study_agent.domain.identifiers import BlobId, ChunkId, RevisionId, SourceId
 from study_agent.domain.provenance import ContentOrigin, StructureOrigin
 from study_agent.domain.source import (
     BlobRef,
+    MetadataAuthority,
     SourceChunk,
     SourceDocument,
     SourceKind,
-    source_revision_identity_manifest,
 )
-from study_agent.domain.source_identity import source_revision_id_for
+from study_agent.domain.source_identity import (
+    source_revision_id_for,
+    source_revision_manifest,
+)
 
 from .chunking import CHUNKER_VERSION, ChunkingConfig, chunk_text
 from .identity import (
     NORMALIZATION_POLICY_VERSION,
     chunk_id_for,
-    legacy_revision_id_for,
-    revision_id_for,
-    source_event_id_for,
     source_kind_contract,
+    source_revision_ingested_event_id_for,
     source_revision_selected_event_id_for,
+)
+from .legacy import (
+    HistoricalIdentityVariant,
+    _historical_source_event_id_for,
+    classify_historical_identity,
 )
 from .normalization import normalize_utf8
 
 SOURCE_REVISION_INGESTED = "source.revision_ingested"
-SOURCE_REVISION_SCHEMA_VERSION = 1
+SOURCE_REVISION_INGESTED_V1 = (SOURCE_REVISION_INGESTED, 1)
+SOURCE_REVISION_INGESTED_V2 = (SOURCE_REVISION_INGESTED, 2)
+SOURCE_REVISION_SCHEMA_VERSION = 2
 SOURCE_REVISION_SELECTED = "source.revision_selected"
 SOURCE_REVISION_SELECTED_SCHEMA_VERSION = 1
+LEGACY_SOURCE_CREATED_AT = datetime(1970, 1, 1, tzinfo=UTC)
 
 _BLOB_KEYS = frozenset({"id", "checksum_sha256", "byte_length"})
-_SOURCE_KEYS = frozenset(
+_SOURCE_KEYS_V1 = frozenset(
     {
         "source_id",
         "revision_id",
@@ -60,6 +69,8 @@ _SOURCE_KEYS = frozenset(
         "content_origin",
     }
 )
+_SOURCE_KEYS_V2 = _SOURCE_KEYS_V1 - {"created_at"}
+_SOURCE_KEYS_V2 = _SOURCE_KEYS_V2 | {"metadata_authority"}
 _CHUNK_KEYS = frozenset(
     {
         "chunk_id",
@@ -76,6 +87,11 @@ _CHUNK_KEYS = frozenset(
 )
 _CHUNKING_KEYS = frozenset({"version", "max_characters"})
 
+# A source receipt can name at most one original and one normalized blob.  The
+# limit is checked from the declared reference before invoking a host loader;
+# the ingestion service adds a smaller aggregate budget across history reads.
+MAX_VERIFIED_BLOB_BYTES = 16 * 1024 * 1024
+
 type BlobLoader = Callable[[BlobRef], bytes]
 
 
@@ -87,7 +103,7 @@ class PersistedChunkingConfig:
     def __post_init__(self) -> None:
         if not self.version or self.version != self.version.strip():
             raise ValueError("chunking.version must be non-empty trimmed text")
-        if self.max_characters < 1:
+        if type(self.max_characters) is not int or self.max_characters < 1:
             raise ValueError("chunking.max_characters must be positive")
 
 
@@ -100,7 +116,9 @@ class SourceRevisionIngested:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "chunks", tuple(self.chunks))
-        if self.normalized_character_length < 1:
+        if type(self.normalized_character_length) is not int or (
+            self.normalized_character_length < 1
+        ):
             raise ValueError("normalized_character_length must be positive")
         if self.normalized_character_length != self.source.normalized_character_length:
             raise ValueError("normalized_character_length must match source manifest")
@@ -124,36 +142,6 @@ def source_revision_selected_payload(
     return {"source_id": str(source_id), "revision_id": str(revision_id)}
 
 
-def decode_source_revision_selected(payload: JsonObject) -> SourceRevisionSelected:
-    decoded = _object(
-        payload,
-        "payload",
-        frozenset({"source_id", "revision_id"}),
-    )
-    return SourceRevisionSelected(
-        SourceId(_text(decoded.get("source_id"), "source_id")),
-        RevisionId(_text(decoded.get("revision_id"), "revision_id")),
-    )
-
-
-def decode_source_revision_selected_event(event: DomainEvent) -> SourceRevisionSelected:
-    if (
-        event.event_type != SOURCE_REVISION_SELECTED
-        or event.schema_version != SOURCE_REVISION_SELECTED_SCHEMA_VERSION
-    ):
-        raise ValueError("event envelope does not match source.revision_selected@1")
-    decoded = decode_source_revision_selected(event.payload)
-    expected_id = source_revision_selected_event_id_for(
-        event.course_id,
-        decoded.source_id,
-        decoded.revision_id,
-        event.course_sequence,
-    )
-    if event.event_id != expected_id:
-        raise ValueError("event_id does not match revision selection identity")
-    return decoded
-
-
 def _object(value: JsonValue | None, name: str, keys: frozenset[str]) -> JsonObject:
     if not isinstance(value, Mapping):
         raise ValueError(f"{name} must be an object")
@@ -172,7 +160,7 @@ def _text(value: JsonValue | None, name: str) -> str:
 
 
 def _integer(value: JsonValue | None, name: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
+    if type(value) is not int:
         raise ValueError(f"{name} must be an integer")
     return value
 
@@ -190,19 +178,25 @@ def _blob(value: JsonValue | None, name: str) -> BlobRef:
     )
 
 
-def _timestamp(value: JsonValue | None) -> datetime:
-    text = _text(value, "source.created_at")
+def _timestamp(value: JsonValue | None, name: str) -> datetime:
+    text = _text(value, name)
     try:
         result = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as error:
-        raise ValueError("source.created_at must be an ISO-8601 timestamp") from error
+        raise ValueError(f"{name} must be an ISO-8601 timestamp") from error
     if result.tzinfo is None or result.utcoffset() is None:
-        raise ValueError("source.created_at must be timezone-aware")
-    return result
+        raise ValueError(f"{name} must be timezone-aware")
+    return result.astimezone(UTC)
 
 
-def _source(value: JsonValue | None) -> SourceDocument:
-    payload = _object(value, "source", _SOURCE_KEYS)
+def _source(
+    value: JsonValue | None,
+    *,
+    created_at: datetime | None,
+    historical: bool,
+) -> SourceDocument:
+    keys = _SOURCE_KEYS_V1 if historical else _SOURCE_KEYS_V2
+    payload = _object(value, "source", keys)
     try:
         kind = SourceKind(_text(payload.get("kind"), "source.kind"))
         structure_origin = StructureOrigin(
@@ -211,8 +205,18 @@ def _source(value: JsonValue | None) -> SourceDocument:
         content_origin = ContentOrigin(
             _text(payload.get("content_origin"), "source.content_origin")
         )
+        authority_value = payload.get("metadata_authority", MetadataAuthority.TRUSTED.value)
+        authority = MetadataAuthority(_text(authority_value, "source.metadata_authority"))
     except ValueError as error:
         raise ValueError("source contains an unsupported enum value") from error
+    if historical:
+        timestamp = _timestamp(payload.get("created_at"), "source.created_at")
+    else:
+        if created_at is None or created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise ValueError("source receipt timestamp must be timezone-aware")
+        timestamp = created_at.astimezone(UTC)
+    if timestamp is None:  # pragma: no cover - guarded by the current decoder
+        raise ValueError("source receipt timestamp is required")
     return SourceDocument(
         source_id=SourceId(_text(payload.get("source_id"), "source.source_id")),
         revision_id=RevisionId(_text(payload.get("revision_id"), "source.revision_id")),
@@ -221,7 +225,7 @@ def _source(value: JsonValue | None) -> SourceDocument:
         media_type=_text(payload.get("media_type"), "source.media_type"),
         checksum_sha256=_text(payload.get("checksum_sha256"), "source.checksum_sha256"),
         byte_length=_integer(payload.get("byte_length"), "source.byte_length"),
-        created_at=_timestamp(payload.get("created_at")),
+        created_at=timestamp,
         trust_level=_integer(payload.get("trust_level"), "source.trust_level"),
         source_role=_text(payload.get("source_role"), "source.source_role"),
         blob=_blob(payload.get("blob"), "source.blob"),
@@ -236,6 +240,12 @@ def _source(value: JsonValue | None) -> SourceDocument:
         structure_origin=structure_origin,
         ingestion_method=_text(payload.get("ingestion_method"), "source.ingestion_method"),
         content_origin=content_origin,
+        # Historical receipt time was not committed by the v1 event identity.
+        # Keep the original timestamp for byte-preserving replay, but quarantine
+        # its provenance instead of presenting it as a trusted current receipt.
+        metadata_authority=(
+            MetadataAuthority.LEGACY_UNVERIFIED if historical else authority
+        ),
     )
 
 
@@ -244,7 +254,7 @@ def _chunk(value: JsonValue, index: int) -> SourceChunk:
     payload = _object(value, name, _CHUNK_KEYS)
     section_path = payload.get("section_path")
     if not isinstance(section_path, tuple) or any(
-        not isinstance(section, str) for section in section_path
+        type(section) is not str for section in section_path
     ):
         raise ValueError(f"{name}.section_path must be an array of strings")
     metadata = payload.get("metadata")
@@ -274,6 +284,70 @@ def _chunking(value: JsonValue | None) -> PersistedChunkingConfig:
     )
 
 
+def _decode_payload(
+    payload: JsonObject,
+    *,
+    receipt_created_at: datetime | None,
+    historical: bool,
+) -> SourceRevisionIngested:
+    expected = {"source", "chunks", "normalized_character_length", "chunking"}
+    if frozenset(payload) != expected:
+        raise ValueError(
+            "payload must contain exactly source, chunks, normalized_character_length, and chunking"
+        )
+    source = _source(payload.get("source"), created_at=receipt_created_at, historical=historical)
+    chunks_value = payload.get("chunks")
+    if not isinstance(chunks_value, tuple):
+        raise ValueError("chunks must be an array")
+    chunks = tuple(_chunk(value, index) for index, value in enumerate(chunks_value))
+    return SourceRevisionIngested(
+        source,
+        chunks,
+        _integer(payload.get("normalized_character_length"), "normalized_character_length"),
+        _chunking(payload.get("chunking")),
+    )
+
+
+def decode_source_revision_ingested(
+    payload: JsonObject, *, receipt_created_at: datetime | None = None
+) -> SourceRevisionIngested:
+    """Decode only the current payload shape, with an optional trusted receipt."""
+
+    if receipt_created_at is None:
+        raise ValueError("current source payload decoding requires a trusted receipt")
+    return _decode_payload(
+        payload,
+        receipt_created_at=receipt_created_at,
+        historical=False,
+    )
+
+
+def decode_source_revision_selected(payload: JsonObject) -> SourceRevisionSelected:
+    decoded = _object(payload, "payload", frozenset({"source_id", "revision_id"}))
+    return SourceRevisionSelected(
+        SourceId(_text(decoded.get("source_id"), "source_id")),
+        RevisionId(_text(decoded.get("revision_id"), "revision_id")),
+    )
+
+
+def decode_source_revision_selected_event(event: DomainEvent) -> SourceRevisionSelected:
+    if (
+        event.event_type != SOURCE_REVISION_SELECTED
+        or event.schema_version != SOURCE_REVISION_SELECTED_SCHEMA_VERSION
+    ):
+        raise ValueError("event envelope does not match source.revision_selected@1")
+    decoded = decode_source_revision_selected(event.payload)
+    expected_id = source_revision_selected_event_id_for(
+        event.course_id,
+        decoded.source_id,
+        decoded.revision_id,
+        event.course_sequence,
+    )
+    if event.event_id != expected_id:
+        raise ValueError("event_id does not match revision selection identity")
+    return decoded
+
+
 def _validate_chunks(
     source: SourceDocument,
     chunks: tuple[SourceChunk, ...],
@@ -301,95 +375,42 @@ def _validate_chunks(
         previous_end = chunk.end_offset
 
 
-def decode_source_revision_ingested(payload: JsonObject) -> SourceRevisionIngested:
-    if frozenset(payload) != {
-        "source",
-        "chunks",
-        "normalized_character_length",
-        "chunking",
-    }:
-        raise ValueError(
-            "payload must contain exactly source, chunks, normalized_character_length, and chunking"
-        )
-    source = _source(payload.get("source"))
-    chunks_value = payload.get("chunks")
-    if not isinstance(chunks_value, tuple):
-        raise ValueError("chunks must be an array")
-    chunks = tuple(_chunk(value, index) for index, value in enumerate(chunks_value))
-    decoded = SourceRevisionIngested(
-        source,
-        chunks,
-        _integer(payload.get("normalized_character_length"), "normalized_character_length"),
-        _chunking(payload.get("chunking")),
-    )
-    _validate_revision_identity(
-        decoded.source,
-        original_sha256=decoded.source.checksum_sha256,
-        chunking=decoded.chunking,
-    )
-    return decoded
-
-
-def _validate_revision_identity(
-    source: SourceDocument,
-    *,
-    original_sha256: str,
-    chunking: PersistedChunkingConfig,
+def _validate_current_identity(
+    source: SourceDocument, *, normalization_version: str
 ) -> None:
-    # The ingestion adapter's established manifest remains readable, but the
-    # facade manifest is also a first-class event identity.  Both identities
-    # use the same source_identity codec, namespace, and digest format; only
-    # the manifest projection differs because SourceDocument carries
-    # ingestion-only fields.
-    expected_revision = revision_id_for(
-        original_sha256=original_sha256,
-        source_id=source.source_id,
-        kind=source.kind,
-        title=source.title,
-        trust_level=source.trust_level,
-        source_role=source.source_role,
-        normalization_version=source.normalization_version,
-        chunker_version=chunking.version,
-        max_characters=chunking.max_characters,
-    )
-    expected_facade_revision = source_revision_id_for(
-        source_revision_identity_manifest(
+    if source.metadata_authority is not MetadataAuthority.TRUSTED:
+        raise ValueError("current source revisions require trusted metadata")
+    expected = source_revision_id_for(
+        source_revision_manifest(
             source_id=source.source_id,
             blob=source.blob,
             media_type=source.media_type,
-            normalization_version=source.normalization_version,
+            normalization_version=normalization_version,
             substrate_id=source.substrate_id,
             metadata={
-                "chunker_version": chunking.version,
                 "kind": source.kind.value,
-                "max_characters": chunking.max_characters,
                 "source_role": source.source_role,
                 "title": source.title,
                 "trust_level": source.trust_level,
             },
         )
     )
-    legacy_revision = legacy_revision_id_for(
-        original_sha256=original_sha256,
-        source_id=source.source_id,
-        kind=source.kind,
-        normalization_version=source.normalization_version,
-        chunker_version=chunking.version,
-        max_characters=chunking.max_characters,
-    )
-    if source.revision_id not in (
-        expected_revision,
-        expected_facade_revision,
-        legacy_revision,
-    ):
-        raise ValueError("revision_id does not match canonical immutable inputs")
+    if source.revision_id != expected:
+        raise ValueError("revision_id does not match the v3 source manifest")
 
 
 def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
     if str(ref.id) != f"sha256:{ref.checksum_sha256}":
         raise ValueError(f"{name} id does not match its checksum")
-    content = load_blob(ref)
-    if not isinstance(content, bytes):
+    if ref.byte_length > MAX_VERIFIED_BLOB_BYTES:
+        raise ValueError(f"{name} exceeds the bounded verification size")
+    try:
+        content = load_blob(ref)
+    except KeyError as error:
+        raise ValueError(f"{name} blob is unavailable") from error
+    except Exception as error:
+        raise ValueError(f"{name} blob loader failed") from error
+    if type(content) is not bytes:
         raise ValueError(f"{name} loader must return bytes")
     if len(content) != ref.byte_length:
         raise ValueError(f"{name} byte length does not match loaded content")
@@ -398,21 +419,19 @@ def _verified_blob(load_blob: BlobLoader, ref: BlobRef, name: str) -> bytes:
     return content
 
 
-def decode_source_revision_event(
-    event: DomainEvent, load_blob: BlobLoader
-) -> SourceRevisionIngested:
-    if (
-        event.event_type != SOURCE_REVISION_INGESTED
-        or event.schema_version != SOURCE_REVISION_SCHEMA_VERSION
-    ):
-        raise ValueError("event envelope does not match source.revision_ingested@1")
-    decoded = decode_source_revision_ingested(event.payload)
+def _verify_content(
+    decoded: SourceRevisionIngested,
+    event: DomainEvent,
+    load_blob: BlobLoader,
+    *,
+    historical: bool = False,
+) -> None:
     source = decoded.source
     original = _verified_blob(load_blob, source.blob, "source.blob")
     normalized_bytes = _verified_blob(load_blob, source.normalized_blob, "source.normalized_blob")
     try:
         normalized_text = normalized_bytes.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:
+    except UnicodeError as error:
         raise ValueError("normalized blob must contain strict UTF-8") from error
     if normalize_utf8(normalized_bytes).content != normalized_bytes:
         raise ValueError("normalized blob is not canonical newline-normalized NFC text")
@@ -435,15 +454,11 @@ def decode_source_revision_event(
         raise ValueError("ingested source content_origin must be original")
     if source.structure_origin is not StructureOrigin.MECHANICALLY_EXTRACTED:
         raise ValueError("ingested source structure_origin must be mechanically_extracted")
-    if source.created_at != event.occurred_at:
-        raise ValueError("source.created_at must equal event.occurred_at")
-    _validate_revision_identity(
-        source,
-        original_sha256=sha256(original).hexdigest(),
-        chunking=decoded.chunking,
-    )
-    if event.event_id != source_event_id_for(event.course_id, source.revision_id):
-        raise ValueError("event_id does not match course and revision identity")
+    if historical:
+        if source.created_at != LEGACY_SOURCE_CREATED_AT:
+            raise ValueError("historical source.created_at must use the legacy sentinel")
+    elif source.created_at != event.occurred_at.astimezone(UTC):
+        raise ValueError("source.created_at must equal the event receipt")
     for chunk in decoded.chunks:
         span = normalized_text[chunk.start_offset : chunk.end_offset]
         digest = sha256(span.encode("utf-8")).hexdigest()
@@ -471,4 +486,125 @@ def decode_source_revision_event(
     )
     if decoded.chunks != reconstructed:
         raise ValueError("supplied chunks do not exactly match canonical chunking output")
+
+
+def decode_source_revision_ingested_v2(
+    event: DomainEvent, load_blob: BlobLoader
+) -> SourceRevisionIngested:
+    if (event.event_type, event.schema_version) != SOURCE_REVISION_INGESTED_V2:
+        raise ValueError("event envelope does not match source.revision_ingested@2")
+    decoded = decode_source_revision_ingested(
+        event.payload, receipt_created_at=event.occurred_at
+    )
+    _validate_current_identity(
+        decoded.source, normalization_version=decoded.source.normalization_version
+    )
+    _verify_content(decoded, event, load_blob)
+    if event.event_id != source_revision_ingested_event_id_for(
+        event.course_id, decoded.source.revision_id, event.occurred_at
+    ):
+        raise ValueError("event_id does not match v2 receipt identity")
     return decoded
+
+
+def upcast_source_revision_ingested_v1(
+    event: DomainEvent, load_blob: BlobLoader
+) -> SourceRevisionIngested:
+    """Verify and deterministically project one historical schema-1 event."""
+
+    decoded = _decode_historical_source_event(event)
+    _verify_content(decoded, event, load_blob, historical=True)
+    return decoded
+
+
+def _decode_historical_source_event(event: DomainEvent) -> SourceRevisionIngested:
+    """Decode a retained v1 envelope without needing its blob adapter.
+
+    Export has only canonical event bytes, not a blob port.  It still needs the
+    same schema, identity, timestamp, and weak-metadata quarantine checks as
+    replay; full content verification remains on ``upcast_source_revision_ingested_v1``.
+    """
+
+    if (event.event_type, event.schema_version) != SOURCE_REVISION_INGESTED_V1:
+        raise ValueError("event envelope does not match source.revision_ingested@1")
+    decoded = _decode_payload(event.payload, receipt_created_at=None, historical=True)
+    if decoded.source.created_at != event.occurred_at.astimezone(UTC):
+        raise ValueError("historical source.created_at must equal its event receipt")
+    # v0.1 retained its receipt timestamp outside the authenticated identity.
+    # Preserve the event bytes, but never present that unbound timestamp as
+    # canonical source provenance after replay.
+    decoded = replace(
+        decoded,
+        source=replace(decoded.source, created_at=LEGACY_SOURCE_CREATED_AT),
+    )
+    variant = classify_historical_identity(
+        source=decoded.source,
+        chunker_version=decoded.chunking.version,
+        max_characters=decoded.chunking.max_characters,
+    )
+    if event.event_id != _historical_source_event_id_for(
+        event.course_id, decoded.source.revision_id
+    ):
+        raise ValueError("historical event_id does not match its preserved identity")
+    if variant is HistoricalIdentityVariant.WEAK_V01:
+        decoded = replace(
+            decoded,
+            source=replace(
+                decoded.source,
+                title="Legacy source",
+                trust_level=0,
+                source_role="legacy-unverified",
+                metadata_authority=MetadataAuthority.LEGACY_UNVERIFIED,
+            ),
+        )
+    return decoded
+
+
+def prepare_for_append(event: DomainEvent, load_blob: BlobLoader) -> SourceRevisionIngested:
+    """Append boundary: schema 2 only, with no legacy fallback."""
+
+    if (event.event_type, event.schema_version) != SOURCE_REVISION_INGESTED_V2:
+        raise ValueError("source revision append requires schema 2")
+    return decode_source_revision_ingested_v2(event, load_blob)
+
+
+def prepare_for_replay(event: DomainEvent, load_blob: BlobLoader) -> SourceRevisionIngested:
+    """Replay boundary: explicitly dispatch the retained historical schema."""
+
+    if (event.event_type, event.schema_version) == SOURCE_REVISION_INGESTED_V1:
+        return upcast_source_revision_ingested_v1(event, load_blob)
+    if (event.event_type, event.schema_version) == SOURCE_REVISION_INGESTED_V2:
+        return decode_source_revision_ingested_v2(event, load_blob)
+    raise ValueError("unsupported source revision event schema")
+
+
+def decode_source_revision_event(
+    event: DomainEvent, load_blob: BlobLoader
+) -> SourceRevisionIngested:
+    """Compatibility spelling for replay callers with explicit schema dispatch."""
+
+    return prepare_for_replay(event, load_blob)
+
+
+__all__ = [
+    "LEGACY_SOURCE_CREATED_AT",
+    "SOURCE_REVISION_INGESTED",
+    "SOURCE_REVISION_INGESTED_V1",
+    "SOURCE_REVISION_INGESTED_V2",
+    "SOURCE_REVISION_SCHEMA_VERSION",
+    "SOURCE_REVISION_SELECTED",
+    "SOURCE_REVISION_SELECTED_SCHEMA_VERSION",
+    "BlobLoader",
+    "PersistedChunkingConfig",
+    "SourceRevisionIngested",
+    "SourceRevisionSelected",
+    "decode_source_revision_event",
+    "decode_source_revision_ingested",
+    "decode_source_revision_ingested_v2",
+    "decode_source_revision_selected",
+    "decode_source_revision_selected_event",
+    "prepare_for_append",
+    "prepare_for_replay",
+    "source_revision_selected_payload",
+    "upcast_source_revision_ingested_v1",
+]
