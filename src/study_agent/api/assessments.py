@@ -25,8 +25,6 @@ from study_agent.assessments.evidence import (
     EvidenceDisposition,
     LearnerEvidenceEstimate,
     LearnerEvidenceReference,
-    LearningEvidenceRecord,
-    LearningEvidenceSnapshot,
 )
 from study_agent.assessments.evidence import LearningEvidenceSnapshot as LearningEvidence
 from study_agent.ports.assessment import (
@@ -57,8 +55,6 @@ __all__ = (
     "LearnerEvidenceViewPort",
     "LearnerPresentationView",
     "LearningEvidence",
-    "LearningEvidenceRecord",
-    "LearningEvidenceSnapshot",
     "MultipleChoiceResponse",
     "PresentationRecord",
     "RationalScore",
