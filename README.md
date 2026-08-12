@@ -197,9 +197,10 @@ is the single public home for ordered future work and non-goals.
 
 ## Status and project policies
 
-Version 0.2.0 is alpha software and its public API is not stable. This checkout
-is being prepared as a source release candidate; this work does not create a
-tag, publish a package, or make an online release.
+Version 0.3.0 is the locally verified Cardine adoption artifact. Its public API
+remains unstable until the PF-11 `1.0.0` promotion after installed-parity
+evidence. This checkout does not create a tag, publish a package, or make an
+online release.
 
 The project is available under the [Apache License 2.0](LICENSE). See
 [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md),

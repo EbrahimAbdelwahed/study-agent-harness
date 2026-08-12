@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -44,6 +45,7 @@ from study_agent.domain import (
     StudyArtifactKind,
 )
 from study_agent.domain.provenance import SourceCommitment
+from study_agent.ports.artifact import ArtifactViewPort
 
 COURSE = CourseId("course-evidence")
 SESSION = SessionId("session-evidence")
@@ -212,7 +214,8 @@ def test_projection_learning_evidence_joins_accepted_artifact_provenance() -> No
             )
 
     result = ProjectionLearningEvidenceView(
-        type("Assessments", (), {"get": lambda _, course_id: assessment})(), _Artifacts()
+        type("Assessments", (), {"get": lambda _, course_id: assessment})(),
+        cast(ArtifactViewPort, _Artifacts()),
     ).get(COURSE)
 
     record = result.records[0]
@@ -262,9 +265,12 @@ def test_projection_learning_evidence_fails_closed_on_unaccepted_or_divergent_ar
 
     assessment_view = type("Assessments", (), {"get": lambda _, course_id: assessment})()
     with pytest.raises(ValueError, match="accepted"):
-        ProjectionLearningEvidenceView(assessment_view, _Artifacts(assessment.sequence)).get(COURSE)
+        ProjectionLearningEvidenceView(
+            assessment_view, cast(ArtifactViewPort, _Artifacts(assessment.sequence))
+        ).get(COURSE)
     revision.status = ArtifactRevisionStatus.ACCEPTED
     with pytest.raises(ValueError, match="divergent"):
         ProjectionLearningEvidenceView(
-            assessment_view, _Artifacts(assessment.sequence - 1)
+            assessment_view,
+            cast(ArtifactViewPort, _Artifacts(assessment.sequence - 1)),
         ).get(COURSE)

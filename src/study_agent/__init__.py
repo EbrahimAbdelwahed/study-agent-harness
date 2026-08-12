@@ -2,7 +2,7 @@
 
 from importlib import import_module as _import_module
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = ("__version__", "api")
 

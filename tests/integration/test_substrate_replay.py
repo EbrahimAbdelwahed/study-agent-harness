@@ -12,7 +12,7 @@ from study_agent.domain.events import EventEnvelope
 from study_agent.ingestion import register_source_revision_events
 from study_agent.ingestion.events import (
     SOURCE_REVISION_INGESTED,
-    SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_INGESTED_V1,
     SourceRevisionIngested,
     decode_source_revision_event,
 )
@@ -127,7 +127,7 @@ def test_v01_projection_lazy_substrate_migration_is_one_shot_and_read_only_safe(
     old_registry = EventRegistry()
     old_registry.register_event(
         SOURCE_REVISION_INGESTED,
-        SOURCE_REVISION_SCHEMA_VERSION,
+        SOURCE_REVISION_INGESTED_V1[1],
         lambda candidate: decode_source_revision_event(candidate, blobs.get),
         legacy_reduce,
     )

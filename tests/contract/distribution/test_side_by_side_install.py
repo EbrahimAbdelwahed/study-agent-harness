@@ -133,23 +133,19 @@ def _script(environment: Path, name: str) -> Path:
 
 
 def _clean_install(environment: Path, *artifacts: Path) -> None:
+    clean_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"}
+    }
     uv = shutil.which("uv")
-    if uv is None:
-        venv.EnvBuilder(with_pip=True, clear=True).create(environment)
-        command = [
-            str(_python(environment)),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-deps",
-            *(str(item) for item in artifacts),
-        ]
-    else:
+    if uv is not None:
+        clean_env["UV_CACHE_DIR"] = str(environment.parent / "uv-cache")
         subprocess.run(
             [uv, "venv", "--python", sys.executable, str(environment)],
             check=True,
             cwd=environment.parent,
+            env=clean_env,
             capture_output=True,
             text=True,
         )
@@ -162,15 +158,22 @@ def _clean_install(environment: Path, *artifacts: Path) -> None:
             "--no-deps",
             *(str(item) for item in artifacts),
         ]
+    else:
+        venv.EnvBuilder(with_pip=True, clear=True).create(environment)
+        command = [
+            str(_python(environment)),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-deps",
+            *(str(item) for item in artifacts),
+        ]
     subprocess.run(
         command,
         check=True,
         cwd=environment,
-        env={
-            key: value
-            for key, value in os.environ.items()
-            if key not in {"PYTHONPATH", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"}
-        },
+        env=clean_env,
         capture_output=True,
         text=True,
     )
@@ -230,7 +233,7 @@ def test_positive_downstream_coinstalls_from_artifacts(tmp_path: Path) -> None:
             "-c",
             "import cardine,study_agent;"
             "assert cardine.VALUE=='cardine-only';"
-            "assert study_agent.__version__=='0.2.0'",
+            "assert study_agent.__version__=='0.3.0'",
         ],
         check=True,
         cwd=tmp_path,
@@ -261,7 +264,7 @@ def test_positive_downstream_coinstalls_from_artifacts(tmp_path: Path) -> None:
             str(_python(sdist_env)),
             "-I",
             "-c",
-            "import study_agent; assert study_agent.__version__=='0.2.0'",
+            "import study_agent; assert study_agent.__version__=='0.3.0'",
         ],
         check=True,
         cwd=tmp_path,

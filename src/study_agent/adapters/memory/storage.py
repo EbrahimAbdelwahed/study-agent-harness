@@ -147,10 +147,24 @@ class MemoryEventStore:
             if self._registry is not None:
                 try:
                     for event in batch:
-                        normalized = self._registry.prepare(event)
-                        decoded = self._registry.decode(normalized)
-                        next_state = self._registry.reduce_decoded(
-                            projection.state, normalized, decoded
+                        normalized = (
+                            self._registry.prepare_for_replay(event)
+                            if _legacy
+                            else self._registry.prepare(event)
+                        )
+                        decoded = (
+                            self._registry.decode_for_replay(normalized)
+                            if _legacy
+                            else self._registry.decode(normalized)
+                        )
+                        next_state = (
+                            self._registry.reduce_decoded_for_replay(
+                                projection.state, normalized, decoded
+                            )
+                            if _legacy
+                            else self._registry.reduce_decoded(
+                                projection.state, normalized, decoded
+                            )
                         )
                         projection = Projection(stream_id, normalized.course_sequence, next_state)
                         prepared.append(event)

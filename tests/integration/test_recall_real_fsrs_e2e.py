@@ -134,7 +134,10 @@ def test_real_fsrs_recall_lifecycle_replays_and_exports_without_scheduler_on_reo
         session_context = replace(context, session_id=SESSION)
         repository.session_service.start(session_context)
         stream = tuple(repository.events.read(COURSE))
-        source = decode_source_revision_ingested(stream[1].payload)
+        source = decode_source_revision_ingested(
+            stream[1].payload,
+            receipt_created_at=stream[1].occurred_at,
+        )
         chunk = source.chunks[0]
         commitment = SourceCommitment(
             chunk.source_id,

@@ -264,7 +264,10 @@ class SQLiteEventStore:
             )
         if self._registry is None:
             raise ValidationFailure("projection reduction requires an EventRegistry")
-        raw_state = canonical_json_object(bytes(row[1]))
+        try:
+            raw_state = canonical_json_object(bytes(row[1]))
+        except (TypeError, ValueError) as error:
+            raise ValidationFailure("projection state is invalid") from error
         state = self._registry.migrate_projection(raw_state)
         if state != raw_state and not self._read_only:
             connection.execute(
@@ -342,8 +345,16 @@ class SQLiteEventStore:
                     prepared_events: list[DomainEvent] = []
                     decoded_payloads: list[object] = []
                     for event in event_batch:
-                        prepared = self._registry.prepare(event)
-                        decoded_payload = self._registry.decode(prepared)
+                        prepared = (
+                            self._registry.prepare_for_replay(event)
+                            if _legacy
+                            else self._registry.prepare(event)
+                        )
+                        decoded_payload = (
+                            self._registry.decode_for_replay(prepared)
+                            if _legacy
+                            else self._registry.decode(prepared)
+                        )
                         if prepared.course_id != course_id:
                             raise EventBatchError(
                                 "every event must belong to the appended course"
@@ -362,8 +373,14 @@ class SQLiteEventStore:
                                 f"expected projection event sequence {expected}, "
                                 f"got {prepared.course_sequence}"
                             )
-                        next_state = self._registry.reduce_decoded(
-                            next_projection.state, prepared, decoded_payload
+                        next_state = (
+                            self._registry.reduce_decoded_for_replay(
+                                next_projection.state, prepared, decoded_payload
+                            )
+                            if _legacy
+                            else self._registry.reduce_decoded(
+                                next_projection.state, prepared, decoded_payload
+                            )
                         )
                         next_projection = Projection(
                             course_id, prepared.course_sequence, next_state

@@ -39,7 +39,7 @@ jobs:
           'import study_agent.tools as tools;
           from study_agent import __version__;
           from study_agent.tools import StudyToolRegistry, public_agent_operation_manifests, public_study_tool_manifests;
-          assert __version__ == "0.2.0";
+          assert __version__ == "0.3.0";
           assert tools.StudyToolRegistry is StudyToolRegistry;
           assert public_study_tool_manifests();
           assert public_agent_operation_manifests()'
@@ -51,7 +51,7 @@ jobs:
           ["clean-install/bin/study-agent", "--json", "--version", "--repository", "/missing", "doctor"],
           check=True, capture_output=True, text=True);
           assert result.stderr == "";
-          assert json.loads(result.stdout) == {"command": "version", "data": {"version": "0.2.0"}, "ok": True}'
+          assert json.loads(result.stdout) == {"command": "version", "data": {"version": "0.3.0"}, "ok": True}'
       - run: clean-install/bin/study-agent-demo
       - run: clean-install/bin/study-agent --json describe
       - run: >-

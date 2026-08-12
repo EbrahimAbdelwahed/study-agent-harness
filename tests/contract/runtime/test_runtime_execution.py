@@ -16,6 +16,7 @@ from study_agent.api.authority import AuthorityContext, HostAuthority, Principal
 from study_agent.api.capabilities import (
     CancelledCapabilityOutcome,
     CapabilityContinuation,
+    CapabilityId,
     CapabilityManifest,
     CapabilityOutcomeStatus,
     CapabilityRequest,
@@ -26,12 +27,16 @@ from study_agent.api.runtime import (
     AssessmentObservationRequest,
     CapabilityResumeRequest,
     CapabilityStartRequest,
+    CommitReceipt,
     RecallReviewRequest,
     RuntimeDependencies,
     create_runtime,
 )
+from study_agent.artifacts.contracts import ArtifactSnapshot
 from study_agent.artifacts.service import ArtifactService
+from study_agent.assessments.contracts import GradeRecord
 from study_agent.assessments.service import AssessmentService
+from study_agent.domain._validation import JsonObject
 from study_agent.domain.artifact import ArtifactDecision
 from study_agent.domain.authority import CancellationOutcome
 from study_agent.domain.errors import StaleFailure, ValidationFailure
@@ -46,15 +51,20 @@ from study_agent.domain.identifiers import (
 )
 from study_agent.kernel.module import KernelModule
 from study_agent.playbooks import ReadDependency, ToolBehaviorPin, VersionPins
+from study_agent.ports.storage import Repository
+from study_agent.recall.contracts import RecallSnapshot
 from study_agent.recall.service import RecallService
 from study_agent.skills import ArtifactReference, SemanticVersion
 
-SCHEMA = {
+SCHEMA = cast(
+    JsonObject,
+    {
     "type": "object",
     "required": ("topic",),
     "properties": {"topic": {"type": "string"}},
     "additionalProperties": False,
-}
+    },
+)
 COURSE = CourseId("course-1")
 SESSION = SessionId("session-1")
 
@@ -130,14 +140,21 @@ class _Artifact(ArtifactService):
         supersedes_revision_id: ArtifactRevisionId | None,
         context: object,
         expected_sequence: int,
-    ) -> _Result:
+    ) -> ArtifactSnapshot:
         self.calls.append(
             (revision_id, decision, supersedes_revision_id, context, expected_sequence)
         )
-        current = self._events.observe_high_water(cast(Any, context).course_id).sequence
+        current = cast(InMemoryEventStore, self._events).observe_high_water(
+            cast(Any, context).course_id
+        ).sequence
         if current > expected_sequence:
-            return _Result(current)
-        return _append_marker(self._events, context, expected_sequence, "test.artifact")
+            return cast(ArtifactSnapshot, _Result(current))
+        return cast(
+            ArtifactSnapshot,
+            _append_marker(
+                cast(InMemoryEventStore, self._events), context, expected_sequence, "test.artifact"
+            ),
+        )
 
 
 class _Assessment(AssessmentService):
@@ -152,9 +169,17 @@ class _Assessment(AssessmentService):
         expected_sequence: int,
         *,
         supersedes_grade_id: object = None,
-    ) -> _Result:
+    ) -> GradeRecord:
         self.calls.append((run_id, context, expected_sequence, supersedes_grade_id))
-        return _append_marker(self._events, context, expected_sequence, "test.assessment")
+        return cast(
+            GradeRecord,
+            _append_marker(
+                cast(InMemoryEventStore, self._events),
+                context,
+                expected_sequence,
+                "test.assessment",
+            ),
+        )
 
 
 class _Recall(RecallService):
@@ -172,7 +197,7 @@ class _Recall(RecallService):
         latency_ms: int | None = None,
         confidence_bps: int | None = None,
         policy: object = None,
-    ) -> _Result:
+    ) -> RecallSnapshot:
         self.calls.append(
             (
                 revision_id,
@@ -184,7 +209,12 @@ class _Recall(RecallService):
                 policy,
             )
         )
-        return _append_marker(self._events, context, expected_sequence, "test.recall")
+        return cast(
+            RecallSnapshot,
+            _append_marker(
+                cast(InMemoryEventStore, self._events), context, expected_sequence, "test.recall"
+            ),
+        )
 
 
 def _append_marker(
@@ -209,7 +239,7 @@ def _append_marker(
 
 def _manifest() -> CapabilityManifest:
     return CapabilityManifest(
-        "study.echo",
+        CapabilityId("study.echo"),
         SemanticVersion.parse("1.0.0"),
         SCHEMA,
         SCHEMA,
@@ -264,7 +294,7 @@ def _composition() -> tuple[
     recall = _Recall(store)
     dependencies = RuntimeDependencies(
         authority.principal,
-        repository,
+        cast(Repository, repository),
         store,
         FixedClock(datetime(2026, 1, 1, tzinfo=UTC)),
         DeterministicIdFactory(),
@@ -359,6 +389,7 @@ def test_durable_service_calls_share_store_and_return_one_event_receipt_each() -
                 "artifact-1",
             )
         )
+        assert isinstance(artifact, CommitReceipt)
         assert artifact.stream_sequence == 1
         assert artifact.replayed is False
         assert len(artifact.event_ids) == 1
@@ -375,6 +406,7 @@ def test_durable_service_calls_share_store_and_return_one_event_receipt_each() -
                 "artifact-1",
             )
         )
+        assert isinstance(replayed, CommitReceipt)
         assert replayed.stream_sequence == 1
         assert replayed.replayed is True
         assert replayed.event_ids == ()
@@ -391,6 +423,7 @@ def test_durable_service_calls_share_store_and_return_one_event_receipt_each() -
                 "assessment-1",
             )
         )
+        assert isinstance(assessment, CommitReceipt)
         assert assessment.stream_sequence == 2
         assert len(assessment.event_ids) == 1
 
@@ -408,6 +441,7 @@ def test_durable_service_calls_share_store_and_return_one_event_receipt_each() -
                 confidence_bps=8000,
             )
         )
+        assert isinstance(recall, CommitReceipt)
         assert recall.stream_sequence == 3
         assert len(recall.event_ids) == 1
 

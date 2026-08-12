@@ -11,7 +11,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parents[2]
 DIST_ROOT = Path(os.environ.get("STUDY_AGENT_DIST_DIR", PROJECT_ROOT / "dist")).resolve()
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PRIVATE_NAME = re.compile(
     r"(?:sbobby|tutorkit|study-agent-(?:ui|platform)|vetrina|inglese|audio_to_sbobina)",
     re.IGNORECASE,

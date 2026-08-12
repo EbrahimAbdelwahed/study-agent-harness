@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "study-agent-harness"
-version = "0.2.0"
+version = "0.3.0"
 description = "Provider-neutral, event-sourced study-agent harness"
 keywords = ["study agents", "tutoring", "event sourcing", "replay"]
 readme = "README.md"
@@ -63,6 +63,7 @@ pythonpath = ["src", "."]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+exclude = ["^tests/fixtures/distribution/"]
 
 [tool.ruff]
 target-version = "py312"

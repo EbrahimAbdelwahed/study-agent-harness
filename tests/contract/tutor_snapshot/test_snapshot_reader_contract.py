@@ -227,7 +227,7 @@ def test_snapshot_reader_fails_closed_on_corrupt_current_material(tmp_path: Path
         ),
     )
 
-    with pytest.raises(ValueError, match="source projection fields are corrupt"):
+    with pytest.raises(ValueError, match="source projection fields are invalid"):
         TutorSnapshotReader(events, registry).get(COURSE, SESSION)
 
 

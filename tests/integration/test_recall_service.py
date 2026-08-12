@@ -35,6 +35,7 @@ from study_agent.recall import (
     effective_policy_fingerprint,
     result_fingerprint,
 )
+from study_agent.recall.contracts import RecallViewRow
 from study_agent.recall.events import register_recall_events
 from study_agent.state import EventRegistry, Projection, apply_event
 
@@ -112,6 +113,11 @@ class MutableRecallView:
         from study_agent.recall.view import ProjectionRecallView
 
         return ProjectionRecallView(lambda _: self.store.projection).get(course_id)
+
+    def due(
+        self, course_id: CourseId, *, now: datetime | None = None
+    ) -> tuple[RecallViewRow, ...]:
+        return ()
 
 
 def _base_state() -> dict[str, JsonValue]:

@@ -179,7 +179,7 @@ def test_tampered_v1_timestamp_is_rejected_at_direct_registry_and_sqlite_boundar
     with pytest.raises(ValidationFailure):
         registry.decode(tampered)
     store = SQLiteEventStore(tmp_path / "events.sqlite3", registry)
-    with pytest.raises(ValidationFailure):
+    with pytest.raises(PayloadValidationError):
         store.append(historical.course_id, 0, (tampered,))
     assert store.read(historical.course_id) == ()
 

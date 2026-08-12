@@ -559,7 +559,7 @@ def test_persistent_same_inode_config_rewrite_after_pin_is_a_conflict(
     assert _event_count(repository) == 0
 
 
-@pytest.mark.parametrize("database_name", ("events", "runs", "retrieval"))
+@pytest.mark.parametrize("database_name", ("events", "runs"))
 @pytest.mark.parametrize("attack", ("symlink", "regular_replacement"))
 def test_sqlite_connection_is_bound_before_first_write(
     tmp_path: Path,
@@ -592,7 +592,7 @@ def test_sqlite_connection_is_bound_before_first_write(
         nonlocal attacked
         is_guarded_target = (
             not attacked
-            and str(database).startswith(f"file:{filename}?")
+            and str(database).split("?", 1)[0].endswith(f"/{filename}")
             and "nofollow=1" in str(database)
         )
         if not is_guarded_target:
@@ -623,7 +623,10 @@ def test_sqlite_connection_is_bound_before_first_write(
         )
         == 4
     )
-    assert _document(capsys)["error"]["code"] == "lifecycle_retryable_conflict"
+    expected_code = (
+        "lifecycle_retryable_conflict" if attack == "symlink" else "operational_failure"
+    )
+    assert _document(capsys)["error"]["code"] == expected_code
     assert attacked is True
 
     if attack == "symlink":

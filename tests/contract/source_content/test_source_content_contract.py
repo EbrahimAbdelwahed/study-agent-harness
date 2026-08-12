@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 
@@ -42,6 +43,12 @@ class MemoryBlobs:
         return self.values[str(ref.id)]
 
 
+@dataclass(frozen=True)
+class _BoundedRead:
+    records: tuple[DomainEvent, ...]
+    high_water_sequence: int
+
+
 class MemoryEvents:
     def __init__(self) -> None:
         self.values: list[DomainEvent] = []
@@ -59,6 +66,19 @@ class MemoryEvents:
             for event in self.values
             if event.course_id == course_id and event.course_sequence > after_sequence
         )
+
+    def _read_records_bounded(
+        self,
+        course_id: CourseId,
+        *,
+        max_events: int,
+        max_encoded_bytes: int,
+        after_sequence: int = 0,
+    ) -> _BoundedRead:
+        del max_encoded_bytes
+        records = tuple(self.read(course_id, after_sequence))
+        assert len(records) <= max_events
+        return _BoundedRead(records, len(self.values))
 
 
 class Clock:

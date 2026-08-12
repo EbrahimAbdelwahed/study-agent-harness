@@ -241,6 +241,13 @@ def _source_projection_revisions(
             raise ValueError("source projection chunk ownership is unknown")
 
     result: dict[tuple[str, str], SourceRevisionIngested] = {}
+
+    def chunk_ordinal(value: Mapping[str, JsonValue]) -> int:
+        ordinal = value.get("ordinal")
+        if type(ordinal) is not int:
+            raise ValueError("source projection chunk ordinal is invalid")
+        return ordinal
+
     for source_id, source_value in sources.items():
         if type(source_id) is not str:
             raise ValueError("source projection key is invalid")
@@ -269,12 +276,17 @@ def _source_projection_revisions(
             if raw_source_id != source_id or raw_revision_id != revision_id:
                 raise ValueError("source revision projection is corrupt")
             revision_chunks = tuple(
-                value
-                for chunk_id, value in chunks.items()
-                if isinstance(value, Mapping)
-                and value.get("chunk_id") == chunk_id
-                and value.get("source_id") == source_id
-                and value.get("revision_id") == revision_id
+                sorted(
+                    (
+                        value
+                        for chunk_id, value in chunks.items()
+                        if isinstance(value, Mapping)
+                        and value.get("chunk_id") == chunk_id
+                        and value.get("source_id") == source_id
+                        and value.get("revision_id") == revision_id
+                    ),
+                    key=chunk_ordinal,
+                )
             )
             consumed_chunk_ids.update(
                 chunk_id

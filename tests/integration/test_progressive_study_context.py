@@ -322,5 +322,5 @@ def test_export_rejects_context_event_with_orphan_origin(tmp_path: Path) -> None
             session_id,
         )
 
-        with pytest.raises(ExportStateError, match="contextual events"):
+        with pytest.raises(ExportStateError, match="event stream cannot be replayed"):
             ExportService(_StaticEvents((*stream, malformed))).assemble(course_id)

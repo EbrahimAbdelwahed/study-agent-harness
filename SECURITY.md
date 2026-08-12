@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-Security fixes are made on the current 0.2.0 development line; older snapshots
-are not supported. Version 0.2.0 remains alpha software with an unstable public
+Security fixes are made on the current 0.3.0 adoption line; older snapshots
+are not supported. Version 0.3.0 remains alpha software with an unstable public
 API.
 
 ## Reporting a vulnerability

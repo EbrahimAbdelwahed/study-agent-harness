@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -21,6 +22,7 @@ from study_agent.recall.contracts import (
     effective_policy_fingerprint,
     result_fingerprint,
 )
+from study_agent.recall.due import DueRecallView
 from study_agent.recall.view import CompositeRecallView, ProjectionRecallView
 from study_agent.state import Projection
 
@@ -77,7 +79,9 @@ def test_host_composite_recall_view_owns_snapshot_and_due_rows() -> None:
         ) -> tuple[RecallViewRow, ...]:
             return ()
 
-    view: RecallViewPort = CompositeRecallView(_Projection(), _Due())
+    view: RecallViewPort = CompositeRecallView(
+        cast(ProjectionRecallView, _Projection()), cast(DueRecallView, _Due())
+    )
     course = CourseId("course-1")
     assert view.get(course).course_id == course
     assert view.due(course) == ()

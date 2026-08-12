@@ -33,7 +33,15 @@ def canonical_json_bytes(value: JsonObject) -> bytes:
 
 def canonical_json_object(data: bytes) -> JsonObject:
     """Decode JSON bytes and return a deeply immutable JSON object."""
-    decoded: Any = json.loads(data)
+    def pairs(values: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+        result: dict[str, JsonValue] = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError("canonical state contains a duplicate object key")
+            result[key] = value
+        return result
+
+    decoded: Any = json.loads(data, object_pairs_hook=pairs)
     if not isinstance(decoded, dict):
         raise ValueError("canonical state must be a JSON object")
     return freeze_object(cast(dict[str, JsonValue], decoded))

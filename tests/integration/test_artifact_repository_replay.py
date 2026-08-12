@@ -66,7 +66,11 @@ def test_artifact_repository_opens_replays_and_exports_without_canonical_rewrite
             context=context(),
         )
         repository.session_service.start(context(session_scoped=True))
-        source = decode_source_revision_ingested(repository.events.read(COURSE)[1].payload)
+        source_event = repository.events.read(COURSE)[1]
+        source = decode_source_revision_ingested(
+            source_event.payload,
+            receipt_created_at=source_event.occurred_at,
+        )
         chunk = source.chunks[0]
         commitment = SourceCommitment(
             chunk.source_id,
