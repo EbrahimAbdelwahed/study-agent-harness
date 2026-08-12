@@ -173,6 +173,8 @@ class CapabilityStartRequest:
         _session(self.session_id)
         if type(self.capability) is not _CapabilityRequest:
             raise _invalid("capability must be a CapabilityRequest")
+        if self.capability.authority.session_id != str(self.session_id):
+            raise _invalid("capability authority session does not match request")
 
 
 @_dataclass(frozen=True, slots=True)
@@ -196,6 +198,8 @@ class CapabilityResumeRequest:
         except (TypeError, ValueError) as error:
             raise _invalid("response must be a JSON value") from error
         _authority(self.authority)
+        if self.authority.session_id != str(self.session_id):
+            raise _invalid("authority session does not match request")
         _correlation(self.correlation_id)
         _high_water(self.expected_stream_high_water)
         _key(self.idempotency_key)
@@ -220,11 +224,14 @@ class ArtifactDecisionRequest:
             raise _invalid("artifact_revision_id is invalid")
         if self.decision is not None and type(self.decision) is not _ArtifactDecision:
             raise _invalid("decision is invalid")
-        if self.supersedes_revision_id is not None and type(
-            self.supersedes_revision_id
-        ) is not _ArtifactRevisionId:
+        if (
+            self.supersedes_revision_id is not None
+            and type(self.supersedes_revision_id) is not _ArtifactRevisionId
+        ):
             raise _invalid("supersedes_revision_id is invalid")
         _authority(self.authority)
+        if self.authority.session_id != str(self.session_id):
+            raise _invalid("authority session does not match request")
         _correlation(self.correlation_id)
         _high_water(self.expected_stream_high_water)
         _key(self.idempotency_key)
@@ -249,6 +256,8 @@ class AssessmentObservationRequest:
         if self.supersedes_grade_id is not None and type(self.supersedes_grade_id) is not _GradeId:
             raise _invalid("supersedes_grade_id is invalid")
         _authority(self.authority)
+        if self.authority.session_id != str(self.session_id):
+            raise _invalid("authority session does not match request")
         _correlation(self.correlation_id)
         _high_water(self.expected_stream_high_water)
         _key(self.idempotency_key)
@@ -275,6 +284,8 @@ class RecallReviewRequest:
         if type(self.rating) is not _RecallRating:
             raise _invalid("rating is invalid")
         _authority(self.authority)
+        if self.authority.session_id != str(self.session_id):
+            raise _invalid("authority session does not match request")
         _correlation(self.correlation_id)
         _high_water(self.expected_stream_high_water)
         _key(self.idempotency_key)

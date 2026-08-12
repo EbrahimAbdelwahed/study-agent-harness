@@ -19,6 +19,7 @@ from study_agent.ports.clock import require_utc
 from study_agent.ports.id_factory import IdFactory
 from study_agent.ports.storage import (
     BlobStore,
+    CourseStreamHighWater,
     EventSequenceConflictError,
     EventStore,
     IdempotencyConflictError,
@@ -194,6 +195,13 @@ class MemoryEventStore:
                 for event in self._events.get(stream_id, ())
                 if event.course_sequence > after_sequence
             )
+
+    def observe_high_water(self, course_id: CourseId) -> CourseStreamHighWater:
+        """Observe the canonical stream sequence without exposing event bytes."""
+
+        records = self.read(course_id)
+        sequence = records[-1].stream_sequence if records else 0
+        return CourseStreamHighWater(course_id, sequence)
 
     def _read_records(
         self, stream_id: CourseId, after_sequence: int = 0
@@ -391,6 +399,10 @@ class MemoryRepository(Repository):
     blob_store: BlobStore
     run_store: RunStore
     source_content: SourceContentPort | None = None
+
+    def close(self) -> None:
+        """Close the in-memory resource graph (there are no owned handles)."""
+        return None
 
 
 InMemoryEventStore = MemoryEventStore
