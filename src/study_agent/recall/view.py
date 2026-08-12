@@ -14,6 +14,7 @@ from .contracts import (
     AppliedSchedule,
     RecallRating,
     RecallSnapshot,
+    RecallViewRow,
     ReviewRecord,
     SchedulingPolicyConfigV1,
 )
@@ -67,6 +68,28 @@ class ProjectionRecallView:
         if not isinstance(result, str):
             raise ValueError("recall command fingerprint is corrupt")
         return result
+
+
+class CompositeRecallView:
+    """Stateless read adapter preserving the separate projection and due views."""
+
+    def __init__(self, view: ProjectionRecallView, due_view: DueRecallView) -> None:
+        self._view = view
+        self._due_view = due_view
+
+    @property
+    def view(self) -> ProjectionRecallView:
+        return self._view
+
+    @property
+    def due_view(self) -> DueRecallView:
+        return self._due_view
+
+    def get(self, course_id: CourseId) -> RecallSnapshot:
+        return self._view.get(course_id)
+
+    def due(self, course_id: CourseId, *, now: datetime | None = None) -> tuple[RecallViewRow, ...]:
+        return self._due_view.due(course_id, now=now)
 
 
 def review_record_from_json(value: Mapping[str, JsonValue]) -> ReviewRecord:
@@ -197,6 +220,7 @@ def _time(value: object) -> datetime:
 
 
 __all__ = [
+    "CompositeRecallView",
     "DueRecallView",
     "ProjectionRecallView",
     "review_record_from_json",

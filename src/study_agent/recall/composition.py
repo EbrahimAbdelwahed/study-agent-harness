@@ -22,7 +22,7 @@ from study_agent.state import Projection
 
 from .due import DueRecallView
 from .service import RecallService
-from .view import ProjectionRecallView
+from .view import CompositeRecallView, ProjectionRecallView
 
 
 class RecallAvailabilityCode(StrEnum):
@@ -53,7 +53,7 @@ class RecallComposition:
     """Read views plus an optional command service for one repository."""
 
     availability: RecallAvailability
-    view: ProjectionRecallView
+    view: CompositeRecallView
     due: DueRecallView
     service: RecallService | None
 
@@ -87,6 +87,7 @@ def compose_recall(
     scheduler_from_factory = scheduler_factory is not None
     recall_view = ProjectionRecallView(_course_projection_loader(load_projection))
     due = DueRecallView(_course_projection_loader(load_projection), clock)
+    composite_view = CompositeRecallView(recall_view, due)
     if scheduler_factory is not None:
         try:
             scheduler = scheduler_factory()
@@ -97,7 +98,7 @@ def compose_recall(
                     "optional recall scheduler is unavailable; install and configure "
                     "the recall extra",
                 ),
-                recall_view,
+                composite_view,
                 due,
                 None,
             )
@@ -108,7 +109,7 @@ def compose_recall(
                     "recall is optional; supply an explicit scheduling adapter "
                     "(for example the recall extra)",
             ),
-            recall_view,
+            composite_view,
             due,
             None,
         )
@@ -121,7 +122,7 @@ def compose_recall(
                 "optional recall scheduler is unavailable; install and configure "
                 "the recall extra",
             ),
-            recall_view,
+            composite_view,
             due,
             None,
         )
@@ -132,9 +133,9 @@ def compose_recall(
         RecallAvailability(
             RecallAvailabilityCode.AVAILABLE, "optional recall scheduler configured"
         ),
-        recall_view,
+        composite_view,
         due,
-        RecallService(events, clock, artifact_view, scheduler, recall_view),
+        RecallService(events, clock, artifact_view, scheduler, composite_view),
     )
 
 

@@ -21,7 +21,7 @@ from study_agent.recall.contracts import (
     effective_policy_fingerprint,
     result_fingerprint,
 )
-from study_agent.recall.view import ProjectionRecallView
+from study_agent.recall.view import CompositeRecallView, ProjectionRecallView
 from study_agent.state import Projection
 
 
@@ -67,18 +67,17 @@ def test_projection_recall_view_rejects_missing_or_opaque_sections() -> None:
 
 
 def test_host_composite_recall_view_owns_snapshot_and_due_rows() -> None:
-    """PF08 can compose the existing snapshot and due owners behind one port."""
-
-    class CompositeRecallView:
+    class _Projection:
         def get(self, course_id: CourseId) -> RecallSnapshot:
             return RecallSnapshot(course_id, 0)
 
+    class _Due:
         def due(
             self, course_id: CourseId, *, now: datetime | None = None
         ) -> tuple[RecallViewRow, ...]:
             return ()
 
-    view: RecallViewPort = CompositeRecallView()
+    view: RecallViewPort = CompositeRecallView(_Projection(), _Due())
     course = CourseId("course-1")
     assert view.get(course).course_id == course
     assert view.due(course) == ()

@@ -13,6 +13,7 @@ from study_agent.recall.composition import (
     RecallAvailabilityCode,
     compose_recall,
 )
+from study_agent.recall.view import CompositeRecallView
 from study_agent.repository_config import EMPTY_CONFIG
 
 
@@ -61,6 +62,7 @@ def test_scheduler_factory_failure_is_safe_and_does_not_require_provider_imports
     )
 
     assert composition.service is None
+    assert isinstance(composition.view, CompositeRecallView)
     assert composition.availability.code is RecallAvailabilityCode.UNAVAILABLE
     assert composition.availability.available is False
     assert "install" in composition.availability.message

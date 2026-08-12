@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
+from hashlib import sha256
+from types import SimpleNamespace
 
-from study_agent.artifacts.content import AssessmentItemContent
+import pytest
+
+from study_agent.artifacts.content import AssessmentItemContent, StudyArtifactEnvelope
 from study_agent.assessments import (
     AssessmentSnapshot,
     AttemptRecord,
@@ -20,18 +25,25 @@ from study_agent.assessments import (
     learner_evidence_from,
     response_fingerprint,
 )
+from study_agent.assessments.evidence import ProjectionLearningEvidenceView
 from study_agent.domain import (
     ArtifactRevisionId,
+    ArtifactRevisionStatus,
     AssessmentFormat,
     AttemptId,
+    ChunkId,
     CourseId,
     CriterionStatus,
     GradeId,
     GradeLifecycle,
     GradeStatus,
     PresentationId,
+    RevisionId,
     SessionId,
+    SourceId,
+    StudyArtifactKind,
 )
+from study_agent.domain.provenance import SourceCommitment
 
 COURSE = CourseId("course-evidence")
 SESSION = SessionId("session-evidence")
@@ -168,3 +180,91 @@ def test_projection_port_exposes_a_separate_course_scoped_snapshot() -> None:
     view = ProjectionLearnerEvidenceView(_View())
 
     assert view.get(COURSE) == learner_evidence_from(snapshot)
+
+
+def test_projection_learning_evidence_joins_accepted_artifact_provenance() -> None:
+    assessment = _snapshot()
+    presentation = assessment.presentations[0]
+    envelope = StudyArtifactEnvelope(
+        StudyArtifactKind.ASSESSMENT_ITEM,
+        presentation.content,
+    )
+    presentation = replace(
+        presentation, content_fingerprint=sha256(envelope.to_bytes()).hexdigest()
+    )
+    assessment = replace(assessment, presentations=(presentation,))
+    commitment = SourceCommitment(
+        SourceId("source"), RevisionId("source-revision"), ChunkId("chunk"), 0, 10
+    )
+    revision = SimpleNamespace(
+        id=presentation.revision_id,
+        status=ArtifactRevisionStatus.ACCEPTED,
+        content=envelope,
+        provenance=SimpleNamespace(source_commitments=(commitment,)),
+    )
+
+    class _Artifacts:
+        def get(self, course_id: CourseId) -> object:
+            return SimpleNamespace(
+                course_id=course_id,
+                sequence=assessment.sequence,
+                revision=lambda requested: revision,
+            )
+
+    result = ProjectionLearningEvidenceView(
+        type("Assessments", (), {"get": lambda _, course_id: assessment})(), _Artifacts()
+    ).get(COURSE)
+
+    record = result.records[0]
+    assert record.source_commitments == (commitment,)
+    assert record.content_fingerprint == sha256(envelope.to_bytes()).hexdigest()
+    assert record.grading_policy_id == "exact-policy"
+    assert record.assistance is None
+    assert record.confidence_bps is None
+
+
+def test_projection_learning_evidence_fails_closed_on_unaccepted_or_divergent_artifact() -> None:
+    assessment = _snapshot()
+    envelope = StudyArtifactEnvelope(
+        StudyArtifactKind.ASSESSMENT_ITEM,
+        assessment.presentations[0].content,
+    )
+    assessment = replace(
+        assessment,
+        presentations=(
+            replace(
+                assessment.presentations[0],
+                content_fingerprint=sha256(envelope.to_bytes()).hexdigest(),
+            ),
+        ),
+    )
+    revision = SimpleNamespace(
+        id=assessment.presentations[0].revision_id,
+        status=ArtifactRevisionStatus.PROPOSED,
+        content=envelope,
+        provenance=SimpleNamespace(
+            source_commitments=(
+                SourceCommitment(SourceId("source"), RevisionId("rev"), ChunkId("chunk"), 0, 10),
+            )
+        ),
+    )
+
+    class _Artifacts:
+        def __init__(self, sequence: int) -> None:
+            self.sequence = sequence
+
+        def get(self, course_id: CourseId) -> object:
+            return SimpleNamespace(
+                course_id=course_id,
+                sequence=self.sequence,
+                revision=lambda requested: revision,
+            )
+
+    assessment_view = type("Assessments", (), {"get": lambda _, course_id: assessment})()
+    with pytest.raises(ValueError, match="accepted"):
+        ProjectionLearningEvidenceView(assessment_view, _Artifacts(assessment.sequence)).get(COURSE)
+    revision.status = ArtifactRevisionStatus.ACCEPTED
+    with pytest.raises(ValueError, match="divergent"):
+        ProjectionLearningEvidenceView(
+            assessment_view, _Artifacts(assessment.sequence - 1)
+        ).get(COURSE)
