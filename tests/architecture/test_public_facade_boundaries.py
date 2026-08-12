@@ -25,14 +25,26 @@ BLOCKED_PREFIXES = (
 
 def test_every_listed_subfacade_is_importable_without_optional_modules() -> None:
     expected_exports = {
-        "runtime": {
-            "EventSchema",
-            "EventUpcasterRegistry",
-            "KernelModule",
-            "KernelModuleRegistry",
-            "ModuleRegistry",
-            "Registry",
-        },
+            "runtime": {
+                "ArtifactDecisionRequest",
+                "AssessmentObservationRequest",
+                "AsyncStudyAgentRuntime",
+                "CapabilityResumeRequest",
+                "CapabilityStartRequest",
+                "CommitReceipt",
+                "EventSchema",
+                "EventUpcasterRegistry",
+                "KernelModule",
+                "KernelModuleRegistry",
+                "ModuleRegistry",
+                "RecallReviewRequest",
+                "Registry",
+                "RuntimeDependencies",
+                "RuntimePolicyPort",
+                "RuntimeSnapshot",
+                "SyncStudyAgentRuntime",
+                "create_runtime",
+            },
         "storage": {
             "Actor",
             "BlobStore",
