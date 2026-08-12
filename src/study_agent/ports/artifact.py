@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from study_agent.artifacts.content import StudyArtifactEnvelope
     from study_agent.artifacts.contracts import (
+        ArtifactBulkDecisionReceipt,
+        ArtifactDecisionRequest,
         ArtifactSnapshot,
         ServiceDecisionPolicyReceipt,
         ServiceDecisionPolicyRequest,
@@ -49,6 +51,20 @@ class ArtifactCommandPort(Protocol):
         context: ExecutionContext,
         expected_sequence: int,
     ) -> ArtifactSnapshot: ...
+
+    def record_human_decision_batch(
+        self,
+        decisions: tuple[ArtifactDecisionRequest, ...],
+        context: ExecutionContext,
+        expected_sequence: int,
+    ) -> ArtifactBulkDecisionReceipt: ...
+
+    def record_human_decisions(
+        self,
+        decisions: tuple[ArtifactDecisionRequest, ...],
+        context: ExecutionContext,
+        expected_sequence: int,
+    ) -> ArtifactBulkDecisionReceipt: ...
 
     def apply_service_decision(
         self,
