@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from study_agent.domain import ArtifactRevisionId, CourseId, ExecutionContext
 from study_agent.recall.contracts import (
     RecallRating,
     RecallSnapshot,
+    RecallViewRow,
     SchedulingPolicyConfigV1,
 )
 
 
 class RecallViewPort(Protocol):
     def get(self, course_id: CourseId) -> RecallSnapshot: ...
+
+    def due(
+        self, course_id: CourseId, *, now: datetime | None = None
+    ) -> tuple[RecallViewRow, ...]: ...
 
 
 class RecallCommandPort(Protocol):

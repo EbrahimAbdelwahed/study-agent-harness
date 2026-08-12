@@ -256,6 +256,58 @@ class ReviewRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RetentionObservation:
+    """A source-neutral observation of one recorded recall review.
+
+    The observation joins the immutable review fact to the matching applied
+    schedule receipt.  It records what happened and the scheduler receipt; it
+    does not interpret rating, ability, or learner-model state.
+    """
+
+    revision_id: ArtifactRevisionId
+    review_id: ReviewId
+    occurred_at: datetime
+    rating: RecallRating
+    latency_ms: int | None
+    confidence_bps: int | None
+    due_at: datetime
+    policy_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.revision_id, ArtifactRevisionId) or not isinstance(
+            self.review_id, ReviewId
+        ):
+            raise TypeError("retention observation identities are invalid")
+        if not isinstance(self.rating, RecallRating):
+            raise TypeError("retention observation rating is invalid")
+        _bounded_int(self.latency_ms, "latency_ms")
+        _bounded_int(self.confidence_bps, "confidence_bps", maximum=10000)
+        object.__setattr__(self, "occurred_at", _utc(self.occurred_at, "occurred_at"))
+        object.__setattr__(self, "due_at", _utc(self.due_at, "due_at"))
+        _fp(self.policy_fingerprint, "policy_fingerprint")
+
+    @classmethod
+    def from_review(cls, review: ReviewRecord, schedule: AppliedSchedule) -> RetentionObservation:
+        """Derive an observation only from matching canonical review/schedule facts."""
+        if not isinstance(review, ReviewRecord) or not isinstance(schedule, AppliedSchedule):
+            raise TypeError("retention observation requires review and schedule records")
+        if schedule.trigger != "review" or schedule.review_id != review.review_id:
+            raise ValueError("retention observation schedule does not match review")
+        if schedule.revision_id != review.revision_id:
+            raise ValueError("retention observation revision does not match review")
+        return cls(
+            review.revision_id,
+            review.review_id,
+            review.occurred_at,
+            review.rating,
+            review.latency_ms,
+            review.confidence_bps,
+            schedule.due_at,
+            schedule.policy_fingerprint,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AppliedSchedule:
     decision_id: ScheduleDecisionId
     revision_id: ArtifactRevisionId
@@ -530,6 +582,7 @@ __all__ = [
     "RecallRating",
     "RecallSnapshot",
     "RecallViewRow",
+    "RetentionObservation",
     "ReviewHistoryEntry",
     "ReviewRecord",
     "SchedulingPolicyConfigV1",
