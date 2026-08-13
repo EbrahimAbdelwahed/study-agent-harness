@@ -8,10 +8,11 @@ from study_agent.adapters.filesystem import FilesystemBlobStore
 from study_agent.adapters.sqlite import SQLiteEventStore
 from study_agent.domain import BlobId, BlobRef, DomainEvent
 from study_agent.domain._validation import JsonObject, JsonValue
+from study_agent.domain.events import EventEnvelope
 from study_agent.ingestion import register_source_revision_events
 from study_agent.ingestion.events import (
     SOURCE_REVISION_INGESTED,
-    SOURCE_REVISION_SCHEMA_VERSION,
+    SOURCE_REVISION_INGESTED_V1,
     SourceRevisionIngested,
     decode_source_revision_event,
 )
@@ -88,7 +89,9 @@ def test_v01_source_event_maps_to_legacy_substrate_without_new_event(tmp_path: P
 
     stream = tuple(events.read(event.course_id))
     state = events.projection(event.course_id).state
-    assert stream == (event,)
+    assert len(stream) == 1
+    assert isinstance(stream[0], EventEnvelope)
+    assert stream[0].event_id == event.event_id
     legacy_substrate_id = str(normalized_binding["id"]).replace(
         "sha256:", "substrate:sha256:"
     )
@@ -124,7 +127,7 @@ def test_v01_projection_lazy_substrate_migration_is_one_shot_and_read_only_safe(
     old_registry = EventRegistry()
     old_registry.register_event(
         SOURCE_REVISION_INGESTED,
-        SOURCE_REVISION_SCHEMA_VERSION,
+        SOURCE_REVISION_INGESTED_V1[1],
         lambda candidate: decode_source_revision_event(candidate, blobs.get),
         legacy_reduce,
     )

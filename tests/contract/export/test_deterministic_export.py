@@ -168,8 +168,11 @@ def test_answer_export_omits_model_trace_adapter_and_verbatim_snippet(
     tmp_path: Path,
 ) -> None:
     blobs, stored_events, _, _ = _stack(tmp_path)
-    base_stream = tuple(stored_events.read(COURSE))
-    source = decode_source_revision_ingested(base_stream[1].payload)
+    base_stream = tuple(stored_events._read_records(COURSE))
+    source = decode_source_revision_ingested(
+        base_stream[1].payload,
+        receipt_created_at=base_stream[1].occurred_at,
+    )
     chunk = source.chunks[0]
     run_id = RunId("run-sensitive")
     question_id = InteractionId("interaction-question")
@@ -321,7 +324,7 @@ def _at_sequence(event: DomainEvent, sequence: int) -> DomainEvent:
 
 def test_malformed_session_event_order_fails_replay(tmp_path: Path) -> None:
     blobs, events, _, _ = _stack(tmp_path)
-    stream = tuple(events.read(COURSE))
+    stream = tuple(events._read_records(COURSE))
     resumed_without_suspend = DomainEvent(
         EventId("event-invalid-resume"),
         COURSE,
@@ -349,7 +352,7 @@ def test_malformed_session_event_order_fails_replay(tmp_path: Path) -> None:
 
 def test_unknown_or_corrupt_event_fails_closed(tmp_path: Path) -> None:
     blobs, events, _, _ = _stack(tmp_path)
-    stream = tuple(events.read(COURSE))
+    stream = tuple(events._read_records(COURSE))
 
     class CorruptEvents:
         def append(self, course_id, expected_sequence, values):  # type: ignore[no-untyped-def]

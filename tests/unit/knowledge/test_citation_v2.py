@@ -1,33 +1,37 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from hashlib import sha256
 
 import pytest
 
-from study_agent.domain import (
-    Citation as LegacyCitation,
-)
-from study_agent.domain import (
-    CitationFailure,
-    CitationFailureKind,
+from study_agent.api.sources import (
     DerivedRef,
     FigureCitationV1,
+    TextCitationV2,
+)
+from study_agent.domain import Citation as LegacyCitation
+from study_agent.domain import (
     RetrievableUnit,
     RevisionId,
     SelectionStatus,
     SourceId,
-    TextCitationV2,
     TextSpan,
     UnitKind,
     UnitMeta,
     substrate_id_for,
     unit_id_for,
 )
+from study_agent.domain.citation_v2 import (
+    CitationFailure,
+    CitationFailureKind,
+    citation_from_bytes,
+    citation_from_json,
+)
 from study_agent.domain.identifiers import ChunkId
 from study_agent.domain.lineage import RevisionRef
 from study_agent.knowledge.citation import (
     text_citation_for,
-    upgrade_v1_citation,
     verify_figure_citation,
     verify_text_citation,
 )
@@ -236,7 +240,7 @@ def test_derived_text_cannot_be_created_without_a_canonical_subject() -> None:
 def test_derived_text_is_rejected_by_the_verifier() -> None:
     derived = DerivedRef("model", "v1", "testo", cite())
     with pytest.raises(CitationFailure) as error:
-        verify_text_citation(derived, substrate_bytes=BYTES, unit=unit(), selection_status=CURRENT)  # type: ignore[arg-type]
+        verify_text_citation(derived, substrate_bytes=BYTES, unit=unit(), selection_status=CURRENT)
     assert kind_of(error) is CitationFailureKind.NOT_A_CITATION
 
 
@@ -287,40 +291,6 @@ def legacy(quoted: str | None) -> LegacyCitation:
     )
 
 
-def test_a_v01_citation_upgrades_when_its_snippet_matches_canonical_bytes() -> None:
-    upgraded = upgrade_v1_citation(
-        legacy(TEXT[3:20]), unit=unit(), substrate_bytes=BYTES
-    )
-    assert upgraded.start == 3
-    assert upgraded.end == 20
-    assert upgraded.locator == "p. 1"
-    resolved = verify_text_citation(
-        upgraded, substrate_bytes=BYTES, unit=unit(), selection_status=CURRENT
-    )
-    assert resolved.text == TEXT[3:20]
-
-
-def test_a_v01_citation_whose_snippet_drifted_fails_instead_of_re_anchoring() -> None:
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(legacy("testo che non c'e' piu'"), unit=unit(), substrate_bytes=BYTES)
-    assert kind_of(error) is CitationFailureKind.MISMATCHED_CHECKSUM
-
-
-def test_a_v01_citation_without_a_snippet_upgrades_on_offsets_alone() -> None:
-    upgraded = upgrade_v1_citation(legacy(None), unit=unit(), substrate_bytes=BYTES)
-    assert upgraded.quoted_sha256 == sha256(TEXT[3:20].encode()).hexdigest()
-
-
-def test_upgrading_with_a_foreign_unit_is_rejected() -> None:
-    foreign = RetrievableUnit(
-        unit().unit_id, SourceId("altra"), REVISION, UnitKind.PASSAGE, 3,
-        ("doc",), TextSpan(SUBSTRATE, 0, len(TEXT)), META,
-    )
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(legacy(None), unit=foreign, substrate_bytes=BYTES)
-    assert kind_of(error) is CitationFailureKind.REFERENCE_MISMATCH
-
-
 def test_the_v01_contract_itself_is_untouched() -> None:
     original = legacy(TEXT[3:20])
     assert original.chunk_id == ChunkId("chunk-sha256:" + "d" * 64)
@@ -347,15 +317,6 @@ def test_minting_from_invalid_utf8_fails_closed_with_a_typed_reason() -> None:
     assert kind_of(error) is CitationFailureKind.CORRUPT
 
 
-def test_a_legacy_snippet_with_a_lone_surrogate_fails_closed() -> None:
-    broken = LegacyCitation(
-        SOURCE, REVISION, ChunkId("chunk-sha256:" + "d" * 64), 3, 20, "p. 1", "ab\ud800cd"
-    )
-    with pytest.raises(CitationFailure) as error:
-        upgrade_v1_citation(broken, unit=unit(), substrate_bytes=BYTES)
-    assert kind_of(error) is CitationFailureKind.CORRUPT
-
-
 def test_selection_status_must_be_stated_explicitly() -> None:
     with pytest.raises(TypeError):
         verify_text_citation(cite(), substrate_bytes=BYTES, unit=unit())  # type: ignore[call-arg]
@@ -367,3 +328,85 @@ def test_a_locator_cannot_carry_a_paragraph() -> None:
             SOURCE, REVISION, unit().unit_id, SUBSTRATE, 0, 6,
             sha256(TEXT[0:6].encode()).hexdigest(), "x" * 5000,
         )
+
+
+# --- canonical citation bytes --------------------------------------------
+
+
+def test_malformed_unicode_citation_bytes_fail_as_corrupt() -> None:
+    malformed = cite().to_bytes().replace(b'"dispensa"', b'"\\ud800"')
+
+    with pytest.raises(CitationFailure) as error:
+        TextCitationV2.from_bytes(malformed)
+
+    assert kind_of(error) is CitationFailureKind.CORRUPT
+
+
+def test_noncanonical_citation_bytes_fail_as_corrupt() -> None:
+    noncanonical = cite().to_bytes().replace(b",", b", ", 1)
+
+    with pytest.raises(CitationFailure) as error:
+        citation_from_bytes(noncanonical)
+
+    assert kind_of(error) is CitationFailureKind.CORRUPT
+
+
+def test_text_codec_maps_unknown_versions_to_a_typed_failure() -> None:
+    payload = dict(cite().to_json())
+    payload["version"] = 99
+
+    with pytest.raises(CitationFailure) as json_error:
+        TextCitationV2.from_json(payload)
+    assert type(json_error.value) is CitationFailure
+    assert kind_of(json_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+    with pytest.raises(CitationFailure) as bytes_error:
+        citation_from_bytes(cite().to_bytes().replace(b'"version":2', b'"version":99'))
+    assert type(bytes_error.value) is CitationFailure
+    assert kind_of(bytes_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+
+def test_figure_codec_maps_unknown_versions_to_a_typed_failure() -> None:
+    image = b"figure"
+    figure = FigureCitationV1(sha256(image).hexdigest(), len(image))
+    payload = dict(figure.to_json())
+    payload["version"] = 99
+
+    with pytest.raises(CitationFailure) as json_error:
+        FigureCitationV1.from_json(payload)
+    assert type(json_error.value) is CitationFailure
+    assert kind_of(json_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+    with pytest.raises(CitationFailure) as bytes_error:
+        FigureCitationV1.from_bytes(figure.to_bytes().replace(b'"version":1', b'"version":99'))
+    assert type(bytes_error.value) is CitationFailure
+    assert kind_of(bytes_error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+
+def test_public_dispatch_maps_unknown_versions_to_a_typed_failure() -> None:
+    payload = {"version": 99}
+
+    with pytest.raises(CitationFailure) as error:
+        citation_from_json(payload)
+
+    assert type(error.value) is CitationFailure
+    assert kind_of(error) is CitationFailureKind.UNSUPPORTED_VERSION
+
+
+@pytest.mark.parametrize(
+    "decoder",
+    [
+        TextCitationV2.from_bytes,
+        FigureCitationV1.from_bytes,
+        DerivedRef.from_bytes,
+        citation_from_bytes,
+    ],
+)
+def test_public_codecs_map_malformed_bytes_to_a_typed_failure(
+    decoder: Callable[[bytes], object],
+) -> None:
+    with pytest.raises(CitationFailure) as error:
+        decoder(b"not-json")
+
+    assert type(error.value) is CitationFailure
+    assert kind_of(error) is CitationFailureKind.CORRUPT

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import cast
 
 import pytest
@@ -27,6 +29,7 @@ from study_agent.capabilities import (
     ProfiledCapabilityBinding,
     StudyCapabilityGateway,
     SuspendedCapabilityOutcome,
+    TutorCapabilityId,
 )
 from study_agent.capabilities.worker_adapter import ProfiledWorkerExecutionDescriptor
 from study_agent.domain import (
@@ -407,6 +410,37 @@ def _persisted_receipt(continuation: CapabilityContinuation) -> ProfileSelection
     return ProfileSelectionReceipt.from_bytes(value.encode())
 
 
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _input_fingerprint(inputs: Mapping[str, object]) -> str:
+    return sha256(
+        b"study-agent-capability-input-v1\0"
+        + _canonical_json({"inputs": inputs})
+    ).hexdigest()
+
+
+def _serialized_tamper(
+    continuation: CapabilityContinuation,
+    field: str,
+    value: object,
+) -> CapabilityContinuation:
+    payload = cast(dict[str, object], json.loads(continuation.to_bytes()))
+    payload[field] = value
+    if field == "inputs":
+        payload["input_fingerprint"] = _input_fingerprint(
+            cast(Mapping[str, object], value)
+        )
+    return CapabilityContinuation.from_bytes(_canonical_json(payload))
+
+
 def test_dispatcher_discovers_one_public_manifest_and_routes_default_and_explicit() -> None:
     dispatcher, _, _, _ = _dispatcher()
     assert dispatcher.discover() == (PROPOSE_FLASHCARDS_MANIFEST,)
@@ -545,21 +579,17 @@ def test_resume_rejects_tampered_receipt_pins_definition_authority_and_generatio
     started = asyncio.run(dispatcher.start(PUBLIC_INPUTS, _context()))
     assert isinstance(started, SuspendedCapabilityOutcome)
     continuation = started.continuation
+    wire = cast(dict[str, object], json.loads(continuation.to_bytes()))
+    inputs = dict(cast(Mapping[str, object], wire["inputs"]))
+    inputs[PROFILE_SELECTION_RECEIPT_INPUT] = "{}"
+    pins = dict(cast(Mapping[str, object], wire["pins"]))
+    pins["prompt"] = {"id": "tampered_prompt", "version": str(V1)}
     tampered = (
-        replace(
-            continuation,
-            inputs={**continuation.inputs, PROFILE_SELECTION_RECEIPT_INPUT: "{}"},
-        ),
-        replace(
-            continuation,
-            pins=replace(
-                continuation.pins,
-                prompt=ArtifactReference("tampered_prompt", V1),
-            ),
-        ),
-        replace(continuation, definition_fingerprint="0" * 64),
-        replace(continuation, authority_fingerprint="0" * 64),
-        replace(continuation, checkpoint_fingerprint="0" * 64),
+        _serialized_tamper(continuation, "inputs", inputs),
+        _serialized_tamper(continuation, "pins", pins),
+        _serialized_tamper(continuation, "definition_fingerprint", "0" * 64),
+        _serialized_tamper(continuation, "authority_fingerprint", "0" * 64),
+        _serialized_tamper(continuation, "checkpoint_fingerprint", "0" * 64),
     )
     for value in tampered:
         with pytest.raises(CapabilityGatewayError) as raised:
@@ -767,7 +797,7 @@ def test_profiled_worker_descriptor_keeps_receipt_out_of_public_payload() -> Non
     task = GenerationWorkerTask(
         "lesson-1:page-0",
         GenerationWorkerTaskKind.FLASHCARD_BUNDLE,
-        binding.manifest.id,
+        cast(TutorCapabilityId, binding.manifest.id),
         binding.manifest.version,
         binding.manifest_fingerprint,
         binding.manifest.required_authority,

@@ -5,18 +5,38 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
+from typing import TYPE_CHECKING
 
 from study_agent.domain import (
+    ArtifactRevisionId,
+    ArtifactRevisionStatus,
+    AttemptId,
     CourseId,
     CriterionStatus,
     GradeId,
     GradeLifecycle,
     GradeStatus,
+    PresentationId,
+    SessionId,
 )
+from study_agent.domain._validation import require_text
+from study_agent.domain.provenance import SourceCommitment
+from study_agent.ports.artifact import ArtifactViewPort
 from study_agent.ports.assessment import AssessmentViewPort
 from study_agent.state import canonical_json_bytes
 
-from .contracts import AssessmentSnapshot, GradeRecord
+from .contracts import (
+    AssessmentSnapshot,
+    AttemptRecord,
+    CriterionResult,
+    DeterministicGradeProvenance,
+    GradeRecord,
+    PresentationRecord,
+    RationalScore,
+)
+
+if TYPE_CHECKING:
+    from study_agent.artifacts.contracts import ArtifactRevisionRecord
 
 
 class EvidenceDimension(StrEnum):
@@ -118,6 +138,203 @@ class ProjectionLearnerEvidenceView:
 
     def get(self, course_id: CourseId) -> LearnerEvidenceSnapshot:
         return learner_evidence_from(self._assessments.get(course_id))
+
+
+@dataclass(frozen=True, slots=True)
+class LearningEvidenceRecord:
+    """One assessment observation joined to its accepted artifact provenance.
+
+    This is deliberately a fact projection, not a mastery estimate.  The
+    current event schema does not observe assistance or confidence, so the
+    projection emits ``None`` for both fields and never infers a value.
+    """
+
+    course_id: CourseId
+    session_id: SessionId
+    revision_id: ArtifactRevisionId
+    presentation_id: PresentationId
+    attempt_id: AttemptId
+    grade_id: GradeId
+    source_commitments: tuple[SourceCommitment, ...]
+    content_fingerprint: str
+    grading_policy_id: str
+    grading_policy_version: str
+    grading_policy_fingerprint: str
+    rubric_fingerprint: str
+    score: RationalScore
+    grade_status: GradeStatus
+    grade_lifecycle: GradeLifecycle
+    criterion_results: tuple[CriterionResult, ...]
+    assistance: str | None
+    confidence_bps: int | None
+    event_sequence: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.course_id, CourseId) or not isinstance(self.session_id, SessionId):
+            raise TypeError("learning evidence scope is invalid")
+        if not isinstance(self.revision_id, ArtifactRevisionId):
+            raise TypeError("learning evidence revision is invalid")
+        if not isinstance(self.presentation_id, PresentationId) or not isinstance(
+            self.attempt_id, AttemptId
+        ) or not isinstance(self.grade_id, GradeId):
+            raise TypeError("learning evidence identities are invalid")
+        if not isinstance(self.score, RationalScore):
+            raise TypeError("learning evidence score is invalid")
+        if not isinstance(self.grade_status, GradeStatus) or not isinstance(
+            self.grade_lifecycle, GradeLifecycle
+        ):
+            raise TypeError("learning evidence grade state is invalid")
+        criteria = tuple(self.criterion_results)
+        if not all(isinstance(item, CriterionResult) for item in criteria):
+            raise TypeError("learning evidence criteria are invalid")
+        object.__setattr__(self, "criterion_results", criteria)
+        commitments = tuple(self.source_commitments)
+        if not commitments or not all(isinstance(item, SourceCommitment) for item in commitments):
+            raise ValueError("learning evidence requires accepted source commitments")
+        object.__setattr__(self, "source_commitments", commitments)
+        _fingerprint(self.content_fingerprint, "content_fingerprint")
+        for value, name in (
+            (self.grading_policy_id, "grading_policy_id"),
+            (self.grading_policy_version, "grading_policy_version"),
+            (self.grading_policy_fingerprint, "grading_policy_fingerprint"),
+            (self.rubric_fingerprint, "rubric_fingerprint"),
+        ):
+            require_text(value, name)
+        _fingerprint(self.grading_policy_fingerprint, "grading_policy_fingerprint")
+        _fingerprint(self.rubric_fingerprint, "rubric_fingerprint")
+        if self.assistance is not None:
+            require_text(self.assistance, "assistance")
+        if self.confidence_bps is not None and (
+            type(self.confidence_bps) is not int or not 0 <= self.confidence_bps <= 10000
+        ):
+            raise ValueError("confidence_bps must be in 0..10000 or absent")
+        if type(self.event_sequence) is not int or self.event_sequence <= 0:
+            raise ValueError("learning evidence event sequence must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class LearningEvidenceSnapshot:
+    course_id: CourseId
+    through_sequence: int
+    records: tuple[LearningEvidenceRecord, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.course_id, CourseId):
+            raise TypeError("learning evidence snapshot requires CourseId")
+        if type(self.through_sequence) is not int or self.through_sequence < 0:
+            raise ValueError("learning evidence snapshot sequence is invalid")
+        values = tuple(self.records)
+        if any(item.course_id != self.course_id for item in values):
+            raise ValueError("learning evidence record course differs from snapshot")
+        if tuple(item.event_sequence for item in values) != tuple(
+            sorted(item.event_sequence for item in values)
+        ):
+            raise ValueError("learning evidence records are not in event order")
+        if len({item.grade_id for item in values}) != len(values):
+            raise ValueError("learning evidence records are duplicated")
+        if any(item.event_sequence > self.through_sequence for item in values):
+            raise ValueError("learning evidence record exceeds snapshot sequence")
+        object.__setattr__(self, "records", values)
+
+
+class ProjectionLearningEvidenceView:
+    """Fail-closed read-only join of assessment facts and artifact provenance."""
+
+    def __init__(self, assessments: AssessmentViewPort, artifacts: ArtifactViewPort) -> None:
+        self._assessments = assessments
+        self._artifacts = artifacts
+
+    def get(self, course_id: CourseId) -> LearningEvidenceSnapshot:
+        assessment = self._assessments.get(course_id)
+        artifact = self._artifacts.get(course_id)
+        if assessment.course_id != course_id or artifact.course_id != course_id:
+            raise ValueError("learning evidence views returned another course")
+        if assessment.sequence != artifact.sequence:
+            raise ValueError("learning evidence views have divergent high-water marks")
+        records: list[LearningEvidenceRecord] = []
+        for grade in sorted(assessment.grades, key=lambda item: item.event_sequence):
+            attempt = assessment.attempt(grade.attempt_id)
+            presentation = assessment.presentation(attempt.presentation_id)
+            _check_scope(grade, attempt, presentation, course_id)
+            revision = artifact.revision(presentation.revision_id)
+            _check_revision(revision, presentation.content_fingerprint)
+            policy = _policy_fields(grade)
+            records.append(
+                LearningEvidenceRecord(
+                    course_id,
+                    grade.session_id,
+                    revision.id,
+                    presentation.id,
+                    attempt.id,
+                    grade.id,
+                    tuple(revision.provenance.source_commitments),
+                    presentation.content_fingerprint,
+                    *policy,
+                    grade.score,
+                    grade.status,
+                    grade.lifecycle,
+                    tuple(grade.criterion_results),
+                    None,
+                    None,
+                    grade.event_sequence,
+                )
+            )
+        return LearningEvidenceSnapshot(course_id, assessment.sequence, tuple(records))
+
+
+def _check_scope(
+    grade: GradeRecord,
+    attempt: AttemptRecord,
+    presentation: PresentationRecord,
+    course_id: CourseId,
+) -> None:
+    if (
+        grade.course_id != course_id
+        or attempt.course_id != course_id
+        or presentation.course_id != course_id
+    ):
+        raise ValueError("learning evidence join contains a foreign course")
+    if grade.session_id != attempt.session_id or attempt.session_id != presentation.session_id:
+        raise ValueError("learning evidence join contains mismatched sessions")
+    if grade.attempt_id != attempt.id or attempt.presentation_id != presentation.id:
+        raise ValueError("learning evidence join identity is inconsistent")
+    if grade.event_sequence <= 0:
+        raise ValueError("learning evidence grade sequence is missing")
+
+
+def _check_revision(revision: ArtifactRevisionRecord, content_fingerprint: str) -> None:
+    from hashlib import sha256
+
+    if revision.status is not ArtifactRevisionStatus.ACCEPTED:
+        raise ValueError("learning evidence requires an accepted artifact revision")
+    if sha256(revision.content.to_bytes()).hexdigest() != content_fingerprint:
+        raise ValueError("learning evidence presentation content differs from artifact")
+    if not revision.provenance.source_commitments:
+        raise ValueError("learning evidence artifact has no source commitments")
+
+
+def _policy_fields(grade: GradeRecord) -> tuple[str, str, str, str]:
+    provenance = grade.provenance
+    if isinstance(provenance, DeterministicGradeProvenance):
+        return (
+            provenance.policy_id,
+            provenance.policy_version,
+            provenance.policy_fingerprint,
+            provenance.rubric_fingerprint,
+        )
+    return (
+        provenance.capability_id,
+        provenance.capability_version,
+        provenance.capability_fingerprint,
+        provenance.rubric_fingerprint,
+    )
+
+
+def _fingerprint(value: str, name: str) -> None:
+    if type(value) is not str or len(value) != 64 or any(
+        c not in "0123456789abcdef" for c in value
+    ):
+        raise ValueError(f"{name} must be a lowercase SHA-256 fingerprint")
 
 
 def learner_evidence_from(snapshot: AssessmentSnapshot) -> LearnerEvidenceSnapshot:
@@ -251,7 +468,10 @@ __all__ = [
     "LearnerEvidenceEstimate",
     "LearnerEvidenceReference",
     "LearnerEvidenceSnapshot",
+    "LearningEvidenceRecord",
+    "LearningEvidenceSnapshot",
     "ProjectionLearnerEvidenceView",
+    "ProjectionLearningEvidenceView",
     "criterion_evidence_key",
     "learner_evidence_from",
 ]

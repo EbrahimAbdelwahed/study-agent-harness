@@ -1,11 +1,10 @@
 """SQLite persistence adapters."""
 
+from ._database import SQLiteConnectionIdentityError
 from .event_store import (
     EventBatchError,
     ProjectionConsistencyError,
     SequenceConflictError,
-    SQLiteConnectionIdentityError,
-    SQLiteConnectionIdentityGuard,
     SQLiteEventStore,
     UnsupportedSQLiteDatabaseError,
 )
@@ -49,7 +48,6 @@ __all__ = [
     "RetrievalIndexIntegrityError",
     "RunStoreCorruptionError",
     "SQLiteConnectionIdentityError",
-    "SQLiteConnectionIdentityGuard",
     "SQLiteEventStore",
     "SQLiteFtsRetrieval",
     "SQLiteLexicalCapabilityError",

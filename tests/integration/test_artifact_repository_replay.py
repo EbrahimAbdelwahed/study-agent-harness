@@ -66,7 +66,11 @@ def test_artifact_repository_opens_replays_and_exports_without_canonical_rewrite
             context=context(),
         )
         repository.session_service.start(context(session_scoped=True))
-        source = decode_source_revision_ingested(repository.events.read(COURSE)[1].payload)
+        source_event = repository.events.read(COURSE)[1]
+        source = decode_source_revision_ingested(
+            source_event.payload,
+            receipt_created_at=source_event.occurred_at,
+        )
         chunk = source.chunks[0]
         commitment = SourceCommitment(
             chunk.source_id,
@@ -135,7 +139,7 @@ def test_public_study_tool_surface_remains_the_same_seven_identified_tools() -> 
     ) == tuple(item.name for item in manifests)
 
 
-def test_export_registration_advertises_explicit_v2_without_changing_default() -> None:
+def test_export_registration_advertises_explicit_v3_without_changing_default() -> None:
     registration = registration_for("export")
     descriptor = registration.to_json()
     arguments = cast(tuple[dict[str, object], ...], descriptor["arguments"])
@@ -152,5 +156,5 @@ def test_export_registration_advertises_explicit_v2_without_changing_default() -
     }
     assert descriptor["verification"] == (
         "study-agent --json --repository REPOSITORY export COURSE_ID "
-        "--output PATH --version 2"
+        "--output PATH --version 3"
     )

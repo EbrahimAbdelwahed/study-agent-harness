@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -21,11 +21,12 @@ from study_agent.domain import (
     ExecutionContext,
     PrincipalKind,
     SourceId,
+    substrate_id_for,
 )
+from study_agent.domain.source import SourceRevision
 from study_agent.ingestion import (
     CHUNKER_VERSION,
     SOURCE_REVISION_INGESTED,
-    SOURCE_REVISION_SCHEMA_VERSION,
     SOURCE_REVISION_SELECTED,
     ChunkingConfig,
     IngestionErrorCode,
@@ -35,11 +36,11 @@ from study_agent.ingestion import (
     TextIngestionService,
     chunk_text,
     decode_source_revision_ingested,
+    normalize_utf8,
     register_source_revision_events,
-    source_event_id_for,
-    source_revision_payload,
 )
-from study_agent.ingestion.identity import legacy_revision_id_for
+from study_agent.ingestion.legacy import _historical_source_event_id_for, _legacy_revision_id_for
+from study_agent.ingestion.projection import source_revision_payload_v1
 from study_agent.ports.storage import EventSequenceConflictError
 from study_agent.state import EventRegistry
 from tests.course_fixtures import ExistingCourseView, create_canonical_course
@@ -108,7 +109,12 @@ def test_ingestion_preserves_original_and_normalized_bytes_and_exact_event(
         for chunk in result.chunks
     )
     event = events.read(context().course_id)[1]
-    decoded = decode_source_revision_ingested(event.payload)
+    decoded = decode_source_revision_ingested(
+        event.payload, receipt_created_at=event.occurred_at
+    )
+    source_payload = event.payload["source"]
+    assert isinstance(source_payload, Mapping)
+    assert "created_at" not in source_payload
     assert decoded.source == result.source
     assert decoded.chunks == result.chunks
     assert event.actor.principal_id == "trusted-ingestion"
@@ -128,6 +134,7 @@ def test_identical_ingestion_is_idempotent_and_changed_bytes_create_revision(
     assert first.status is IngestionStatus.EMITTED
     assert identical.status is IngestionStatus.IDEMPOTENT
     assert identical.source.revision_id == first.source.revision_id
+    assert identical.source.created_at == first.source.created_at
     assert identical.committed_sequence == 2
     assert changed.status is IngestionStatus.EMITTED
     assert changed.source.revision_id != first.source.revision_id
@@ -135,6 +142,29 @@ def test_identical_ingestion_is_idempotent_and_changed_bytes_create_revision(
     assert len(events.read(context().course_id)) == 3
     assert blobs.get(first.source.blob) == b"# Heart\n\nFirst revision."
     assert events.verify_projection(context().course_id)
+    blobs.close()
+
+
+def test_service_revision_identity_matches_the_facade_manifest(tmp_path: Path) -> None:
+    service, blobs, _ = make_service(tmp_path)
+    result = ingest(service, b"Facade and service identity")
+    normalized = normalize_utf8(b"Facade and service identity")
+    facade_revision = SourceRevision.create(
+        source_id=result.source.source_id,
+        content=b"Facade and service identity",
+        media_type=result.source.media_type,
+        created_at=result.source.created_at,
+        normalization_version=normalized.version,
+        substrate_id=substrate_id_for(normalized.content),
+        metadata={
+            "kind": result.source.kind.value,
+            "source_role": result.source.source_role,
+            "title": result.source.title,
+            "trust_level": result.source.trust_level,
+        },
+    )
+
+    assert result.source.revision_id == facade_revision.revision_id
     blobs.close()
 
 
@@ -209,7 +239,7 @@ class CountingBlobStore:
         self.contents: dict[str, bytes] = {}
         self.mismatch = mismatch
 
-    def put(self, content: bytes) -> BlobRef:
+    def put(self, content: bytes, ref: BlobRef | None = None) -> BlobRef:
         self.puts.append(content)
         digest = sha256(content).hexdigest()
         if self.mismatch:
@@ -431,7 +461,7 @@ def test_lost_selection_output_reconciles_and_explicit_cas_remains_retryable() -
     assert caught.value.retryable
 
 
-def test_alternate_chunk_size_changes_revision_and_is_persisted_exactly() -> None:
+def test_alternate_chunk_size_keeps_revision_identity_and_rejects_duplicate_state() -> None:
     blobs = CountingBlobStore()
     events = MemoryEventStore()
     first_service = TextIngestionService(
@@ -449,19 +479,26 @@ def test_alternate_chunk_size_changes_revision_and_is_persisted_exactly() -> Non
         chunking=ChunkingConfig(max_characters=10),
     )
 
-    first = ingest(first_service, b"Same bytes with several words")
-    second = ingest(second_service, b"Same bytes with several words")
+    ingest(first_service, b"Same bytes with several words")
+    with pytest.raises(TextIngestionError) as caught:
+        second_service.ingest(
+            filename="cardiology.md",
+            content=b"Same bytes with several words",
+            source_id=SourceId("source-cardiology"),
+            title="Cardiology notes",
+            trust_level=90,
+            source_role="primary",
+            context=context(),
+        )
 
-    assert first.source.revision_id != second.source.revision_id
-    decoded_first = decode_source_revision_ingested(events.events[0].payload)
-    decoded_second = decode_source_revision_ingested(events.events[1].payload)
+    assert caught.value.code is IngestionErrorCode.INVALID_CONTENT
+    assert len(events.events) == 1
+    decoded_first = decode_source_revision_ingested(
+        events.events[0].payload, receipt_created_at=events.events[0].occurred_at
+    )
     assert (decoded_first.chunking.version, decoded_first.chunking.max_characters) == (
         CHUNKER_VERSION,
         20,
-    )
-    assert (decoded_second.chunking.version, decoded_second.chunking.max_characters) == (
-        CHUNKER_VERSION,
-        10,
     )
 
 
@@ -563,14 +600,14 @@ def test_expected_sequence_does_not_reconcile_a_concurrent_winner() -> None:
     assert len(events.events) == 1
 
 
-def test_unchanged_legacy_revision_is_current_without_v2_duplicate() -> None:
+def test_legacy_revision_is_replay_only_and_current_ingestion_emits_v3() -> None:
     blobs = CountingBlobStore()
     events = MemoryEventStore()
     service = TextIngestionService(
         blobs=blobs, events=events, clock=FixedClock(), courses=ExistingCourseView()
     )
     first = ingest(service, b"Legacy identity content")
-    legacy_id = legacy_revision_id_for(
+    legacy_id = _legacy_revision_id_for(
         original_sha256=first.source.checksum_sha256,
         source_id=first.source.source_id,
         kind=first.source.kind,
@@ -588,31 +625,31 @@ def test_unchanged_legacy_revision_is_current_without_v2_duplicate() -> None:
     )
     events.events = [
         DomainEvent(
-            source_event_id_for(context().course_id, legacy_id),
+            _historical_source_event_id_for(context().course_id, legacy_id),
             context().course_id,
             1,
             SOURCE_REVISION_INGESTED,
-            SOURCE_REVISION_SCHEMA_VERSION,
+                1,
             Actor(context().principal_kind, context().principal_id),
             legacy_source.created_at,
             context().correlation_id,
-            source_revision_payload(legacy_source, legacy_chunks),
-        )
-    ]
+                source_revision_payload_v1(legacy_source, legacy_chunks),
+            )
+        ]
     puts_before = tuple(blobs.puts)
 
     result = ingest(service, b"Legacy identity content")
 
-    assert result.status is IngestionStatus.IDEMPOTENT
-    assert result.source.revision_id == legacy_id
+    assert result.status is IngestionStatus.EMITTED
+    assert result.source.revision_id != legacy_id
     assert tuple(blobs.puts) == puts_before
-    assert len(events.events) == 1
+    assert len(events.events) == 2
 
     changed = ingest(service, b"Changed after legacy")
     selected = ingest(service, b"Legacy identity content")
 
-    assert changed.source.revision_id != legacy_id
+    assert changed.source.revision_id != result.source.revision_id
     assert selected.status is IngestionStatus.EMITTED
-    assert selected.source.revision_id == legacy_id
+    assert selected.source.revision_id == result.source.revision_id
     assert events.events[-1].event_type == SOURCE_REVISION_SELECTED
-    assert len(events.events) == 3
+    assert len(events.events) == 4

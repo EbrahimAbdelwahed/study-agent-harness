@@ -5,17 +5,24 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from typing import cast
 
+from study_agent.domain.errors import (
+    HarnessError,
+    InternalFailure,
+    ValidationFailure,
+)
 from study_agent.domain.identifiers import RunId
+from study_agent.ports.storage import RunNotFoundError, RunStoreConflictFailure
 
-from .event_store import SQLiteConnectionGuard, _writable_nofollow_uri
+from ._database import _SQLiteAccess, _SQLiteDatabase
 
 
-class UnsupportedSQLiteRunDatabaseError(ValueError):
+class UnsupportedSQLiteRunDatabaseError(ValidationFailure, ValueError):
     """The run store requires a durable path-backed SQLite database."""
 
 
-class RunStoreCorruptionError(RuntimeError):
+class RunStoreCorruptionError(InternalFailure):
     """A persisted run row does not satisfy the run-store byte contract."""
 
 
@@ -33,8 +40,6 @@ class SQLiteRunStore:
     def __init__(
         self,
         database: str | Path,
-        *,
-        connection_identity_guard: SQLiteConnectionGuard | None = None,
     ) -> None:
         self._database = str(database)
         normalized = self._database.strip().lower()
@@ -42,28 +47,25 @@ class SQLiteRunStore:
             raise UnsupportedSQLiteRunDatabaseError(
                 "SQLiteRunStore requires a path-backed database"
             )
-        self._connection_identity_guard = connection_identity_guard
-        with closing(self._connect()) as connection:
-            try:
+        self._sqlite_database = _SQLiteDatabase.for_path(
+            database,
+            access=_SQLiteAccess.READ_WRITE_EXISTING,
+            busy_timeout_ms=30_000,
+            isolation_level=None,
+        )
+        try:
+            with closing(self._connect()) as connection:
                 connection.executescript(_SCHEMA)
-            except sqlite3.DatabaseError as error:
-                raise RunStoreCorruptionError(
-                    "playbook_runs schema cannot be initialized"
-                ) from error
-            self._validate_schema(connection)
+                self._validate_schema(connection)
+        except HarnessError:
+            raise
+        except sqlite3.DatabaseError as error:
+            raise RunStoreCorruptionError(
+                "playbook_runs schema cannot be initialized"
+            ) from error
 
     def _connect(self) -> sqlite3.Connection:
-        if self._connection_identity_guard is None:
-            connection = sqlite3.connect(self._database, isolation_level=None, timeout=30)
-        else:
-            uri = _writable_nofollow_uri(self._database)
-            connection = self._connection_identity_guard.connect(
-                lambda: sqlite3.connect(
-                    uri, isolation_level=None, timeout=30, uri=True
-                )
-            )
-        connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        return cast(sqlite3.Connection, self._sqlite_database.connect())
 
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -99,40 +101,65 @@ class SQLiteRunStore:
 
     def create(self, run_id: RunId, payload: bytes) -> bool:
         _require_bytes(payload, "payload")
-        with closing(self._connect()) as connection:
-            cursor = connection.execute(
-                "INSERT OR IGNORE INTO playbook_runs (run_id, payload) VALUES (?, ?)",
-                (str(run_id), payload),
-            )
-            return cursor.rowcount == 1
+        if not isinstance(run_id, RunId):
+            raise ValidationFailure("run_id must be RunId")
+        try:
+            with closing(self._connect()) as connection:
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO playbook_runs (run_id, payload) VALUES (?, ?)",
+                    (str(run_id), payload),
+                )
+                return cursor.rowcount == 1
+        except HarnessError:
+            raise
+        except sqlite3.Error as error:
+            raise InternalFailure("operational store is unavailable") from error
 
     def compare_and_set(
         self, run_id: RunId, expected: bytes, replacement: bytes
-    ) -> bool:
+    ) -> bool | RunStoreConflictFailure:
         _require_bytes(expected, "expected")
         _require_bytes(replacement, "replacement")
-        with closing(self._connect()) as connection:
-            cursor = connection.execute(
-                """
-                UPDATE playbook_runs
-                SET payload = ?
-                WHERE run_id = ? AND payload = ?
-                """,
-                (replacement, str(run_id), expected),
-            )
-            return cursor.rowcount == 1
+        if not isinstance(run_id, RunId):
+            raise ValidationFailure("run_id must be RunId")
+        try:
+            with closing(self._connect()) as connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE playbook_runs
+                    SET payload = ?
+                    WHERE run_id = ? AND payload = ?
+                    """,
+                    (replacement, str(run_id), expected),
+                )
+                if cursor.rowcount == 1:
+                    return True
+                return RunStoreConflictFailure(
+                    "operational run changed before compare-and-set"
+                )
+        except HarnessError:
+            raise
+        except sqlite3.Error as error:
+            raise InternalFailure("operational store is unavailable") from error
 
     def load(self, run_id: RunId) -> bytes:
-        with closing(self._connect()) as connection:
-            row = connection.execute(
-                "SELECT payload, typeof(payload) FROM playbook_runs WHERE run_id = ?",
-                (str(run_id),),
-            ).fetchone()
-        if row is None:
-            raise KeyError(run_id)
-        if row[1] != "blob" or not isinstance(row[0], bytes):
-            raise RunStoreCorruptionError(f"run {run_id} payload is not a SQLite BLOB")
-        return row[0]
+        if not isinstance(run_id, RunId):
+            raise ValidationFailure("run_id must be RunId")
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    "SELECT payload, typeof(payload) FROM playbook_runs WHERE run_id = ?",
+                    (str(run_id),),
+                ).fetchone()
+            if row is None:
+                raise RunNotFoundError(run_id)
+            if row[1] != "blob" or not isinstance(row[0], bytes):
+                raise RunStoreCorruptionError(f"run {run_id} payload is not a SQLite BLOB")
+            return row[0]
+        except HarnessError:
+            raise
+        except sqlite3.Error as error:
+            raise InternalFailure("operational store is unavailable") from error
 
 
 def _require_bytes(value: object, name: str) -> None:

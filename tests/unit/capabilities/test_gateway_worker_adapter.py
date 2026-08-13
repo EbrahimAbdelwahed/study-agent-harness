@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import overload
 
 import pytest
 
@@ -18,6 +19,7 @@ from study_agent.capabilities import (
     StudyCapabilityGateway,
     SuspendedCapabilityOutcome,
     TerminatedCapabilityOutcome,
+    TutorCapabilityId,
     explain_concept_binding,
 )
 from study_agent.capabilities.bindings import CapabilityBinding, ProfiledCapabilityBinding
@@ -88,9 +90,33 @@ class MemoryProofStore:
 
 
 class RecordingGateway(StudyCapabilityGateway):
-    def __init__(self, result: CapabilityOutcome | BaseException) -> None:
+    def __init__(
+        self, result: CapabilityOutcome | TerminatedCapabilityOutcome | BaseException
+    ) -> None:
         self.result = result
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    @overload
+    async def _start_bound(
+        self,
+        binding: CapabilityBinding,
+        public_inputs: JsonObject,
+        execution_inputs: JsonObject,
+        context: ExecutionContext,
+        *,
+        cancellation: Callable[[], bool] | None = None,
+    ) -> CapabilityOutcome: ...
+
+    @overload
+    async def _start_bound(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        public_inputs: JsonObject,
+        execution_inputs: JsonObject,
+        context: ExecutionContext,
+        *,
+        cancellation: Callable[[], bool] | None = None,
+    ) -> CapabilityOutcome: ...
 
     async def _start_bound(
         self,
@@ -98,11 +124,35 @@ class RecordingGateway(StudyCapabilityGateway):
         public_inputs: JsonObject,
         execution_inputs: JsonObject,
         context: ExecutionContext,
-    ) -> CapabilityOutcome:
+        *,
+        cancellation: Callable[[], bool] | None = None,
+    ) -> CapabilityOutcome | TerminatedCapabilityOutcome:
         self.calls.append(("start", (binding, public_inputs, execution_inputs, context)))
         if isinstance(self.result, BaseException):
             raise self.result
         return self.result
+
+    @overload
+    async def _resume_bound(
+        self,
+        binding: CapabilityBinding,
+        continuation: CapabilityContinuation,
+        response: JsonValue,
+        context: ExecutionContext,
+        *,
+        cancellation: Callable[[], bool] | None = None,
+    ) -> CapabilityOutcome: ...
+
+    @overload
+    async def _resume_bound(
+        self,
+        binding: CapabilityBinding | ProfiledCapabilityBinding,
+        continuation: CapabilityContinuation,
+        response: JsonValue,
+        context: ExecutionContext,
+        *,
+        cancellation: Callable[[], bool] | None = None,
+    ) -> CapabilityOutcome: ...
 
     async def _resume_bound(
         self,
@@ -110,7 +160,9 @@ class RecordingGateway(StudyCapabilityGateway):
         continuation: CapabilityContinuation,
         response: JsonValue,
         context: ExecutionContext,
-    ) -> CapabilityOutcome:
+        *,
+        cancellation: Callable[[], bool] | None = None,
+    ) -> CapabilityOutcome | TerminatedCapabilityOutcome:
         self.calls.append(("resume", (binding, continuation, response, context)))
         if isinstance(self.result, BaseException):
             raise self.result
@@ -158,10 +210,12 @@ def _expected() -> tuple[ValidationExpectation, ...]:
 
 def _task() -> GenerationWorkerTask:
     binding = _binding()
+    capability_id = binding.manifest.id
+    assert isinstance(capability_id, TutorCapabilityId)
     return GenerationWorkerTask(
         "lesson-1:explain",
         GenerationWorkerTaskKind.FLASHCARD_BUNDLE,
-        binding.manifest.id,
+        capability_id,
         binding.manifest.version,
         binding.manifest_fingerprint,
         binding.manifest.required_authority,
@@ -309,13 +363,14 @@ def _continuation() -> CapabilityContinuation:
 
 
 def _adapter(
-    result: CapabilityOutcome | BaseException,
+    result: CapabilityOutcome | TerminatedCapabilityOutcome | BaseException,
 ) -> tuple[GatewayIsolatedCapabilityRunAdapter, RecordingGateway]:
     return _adapter_with_store(result, MemoryProofStore())
 
 
 def _adapter_with_store(
-    result: CapabilityOutcome | BaseException, store: MemoryProofStore
+    result: CapabilityOutcome | TerminatedCapabilityOutcome | BaseException,
+    store: MemoryProofStore,
 ) -> tuple[GatewayIsolatedCapabilityRunAdapter, RecordingGateway]:
     gateway = RecordingGateway(result)
     adapter = GatewayIsolatedCapabilityRunAdapter(

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from study_agent.domain._validation import JsonObject, freeze_object
-from study_agent.domain.events import DomainEvent
+from study_agent.domain.events import DomainEvent, EventEnvelope
 from study_agent.domain.identifiers import CourseId
 
 from .registry import EventRegistry
@@ -35,9 +35,10 @@ class Projection:
 
 
 def apply_event(
-    projection: Projection, event: DomainEvent, registry: EventRegistry
+    projection: Projection, event: DomainEvent | EventEnvelope, registry: EventRegistry
 ) -> Projection:
     """Return a new projection without mutating the prior projection or event."""
+    event = registry.prepare(event)
     expected = projection.sequence + 1
     if event.course_id != projection.course_id:
         raise ProjectionSequenceError("event course does not match projection course")
@@ -50,9 +51,25 @@ def apply_event(
 
 
 def replay(
-    course_id: CourseId, events: Sequence[DomainEvent], registry: EventRegistry
+    course_id: CourseId,
+    events: Sequence[DomainEvent | EventEnvelope],
+    registry: EventRegistry,
 ) -> Projection:
+    """Replay canonical history, preserving exact registered old schemas."""
+
     projection = Projection(course_id)
     for event in events:
-        projection = apply_event(projection, event, registry)
+        expected = projection.sequence + 1
+        prepared = registry.prepare_for_replay(event)
+        if prepared.course_id != projection.course_id:
+            raise ProjectionSequenceError("event course does not match projection course")
+        if prepared.course_sequence != expected:
+            raise ProjectionSequenceError(
+                f"expected event sequence {expected}, got {prepared.course_sequence}"
+            )
+        projection = Projection(
+            prepared.course_id,
+            prepared.course_sequence,
+            registry.reduce_for_replay(projection.state, prepared),
+        )
     return projection

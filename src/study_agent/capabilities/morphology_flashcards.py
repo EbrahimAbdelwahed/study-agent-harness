@@ -17,6 +17,7 @@ from study_agent.capabilities.bindings import (
     ProfiledCapabilityBinding,
 )
 from study_agent.capabilities.builtin import PROPOSE_FLASHCARDS_MANIFEST
+from study_agent.capabilities.contracts import TutorCapabilityId
 from study_agent.capabilities.worker_adapter import ProfiledWorkerExecutionDescriptor
 from study_agent.domain import ExecutionContext
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_object
@@ -256,9 +257,14 @@ class MorphologyFlashcardTaskBinding:
             ProfileSelectionMode.EXPLICIT_REQUEST,
         }:
             raise ValueError("morphology requires trusted metadata or explicit request")
+        capability_id = binding.manifest.id
+        if not isinstance(capability_id, TutorCapabilityId):
+            raise ValueError("morphology binding must use a tutor capability id")
+        if capability_id is not TutorCapabilityId.PROPOSE_FLASHCARDS:
+            raise ValueError("morphology binding must use propose_flashcards")
         expected = ProfileTaskExpectation(
             receipt,
-            binding.manifest.id,
+            capability_id,
             binding.manifest.version,
             binding.manifest_fingerprint,
             binding.manifest.required_authority,

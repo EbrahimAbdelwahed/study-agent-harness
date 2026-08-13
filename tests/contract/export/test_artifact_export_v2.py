@@ -308,8 +308,11 @@ def _artifact_history(
     tmp_path: Path,
 ) -> tuple[FilesystemBlobStore, tuple[DomainEvent, ...]]:
     blobs, stored, _, _ = _stack(tmp_path)
-    base = list(stored.read(COURSE))
-    source = decode_source_revision_ingested(base[1].payload)
+    base = list(stored._read_records(COURSE))
+    source = decode_source_revision_ingested(
+        base[1].payload,
+        receipt_created_at=base[1].occurred_at,
+    )
     chunk = source.chunks[0]
     commitment = SourceCommitment(
         chunk.source_id,
@@ -539,7 +542,10 @@ def test_artifact_history_requires_v2_and_exports_deterministically_with_lineage
 
 def test_v1_artifact_guard_scans_past_earlier_v2_only_events(tmp_path: Path) -> None:
     blobs, history = _artifact_history(tmp_path)
-    source = decode_source_revision_ingested(history[1].payload).source
+    source = decode_source_revision_ingested(
+        history[1].payload,
+        receipt_created_at=history[1].occurred_at,
+    ).source
     selected = DomainEvent(
         source_revision_selected_event_id_for(
             COURSE, source.source_id, source.revision_id, 5
@@ -571,7 +577,7 @@ def test_v1_artifact_guard_matches_only_exact_artifact_event_types(
     tmp_path: Path,
 ) -> None:
     blobs, stored, _, _ = _stack(tmp_path)
-    stream = tuple(stored.read(COURSE))
+    stream = tuple(stored._read_records(COURSE))
     similarly_prefixed_unknown = DomainEvent(
         EventId("event-similarly-prefixed-unknown"),
         COURSE,
@@ -678,7 +684,10 @@ def test_v2_export_rejects_artifact_commitment_to_absent_source_chunk(
     tmp_path: Path,
 ) -> None:
     blobs, valid = _artifact_history(tmp_path)
-    source = decode_source_revision_ingested(valid[1].payload)
+    source = decode_source_revision_ingested(
+        valid[1].payload,
+        receipt_created_at=valid[1].occurred_at,
+    )
     chunk = source.chunks[0]
     commitment = SourceCommitment(
         chunk.source_id,
@@ -738,7 +747,10 @@ def test_v2_export_rejects_acceptance_with_invalid_supersession(
 
 def test_v2_export_preserves_only_verified_media_metadata(tmp_path: Path) -> None:
     blobs, valid = _artifact_history(tmp_path)
-    source = decode_source_revision_ingested(valid[1].payload)
+    source = decode_source_revision_ingested(
+        valid[1].payload,
+        receipt_created_at=valid[1].occurred_at,
+    )
     chunk = source.chunks[0]
     commitment = SourceCommitment(
         chunk.source_id,

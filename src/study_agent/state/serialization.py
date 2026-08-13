@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from study_agent.domain._validation import JsonObject, JsonValue, freeze_object
-from study_agent.domain.events import Actor, DomainEvent, PrincipalKind
+from study_agent.domain.events import Actor, DomainEvent, EventEnvelope, PrincipalKind
 from study_agent.domain.identifiers import CorrelationId, CourseId, EventId, SessionId
 
 
@@ -33,7 +33,15 @@ def canonical_json_bytes(value: JsonObject) -> bytes:
 
 def canonical_json_object(data: bytes) -> JsonObject:
     """Decode JSON bytes and return a deeply immutable JSON object."""
-    decoded: Any = json.loads(data)
+    def pairs(values: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+        result: dict[str, JsonValue] = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError("canonical state contains a duplicate object key")
+            result[key] = value
+        return result
+
+    decoded: Any = json.loads(data, object_pairs_hook=pairs)
     if not isinstance(decoded, dict):
         raise ValueError("canonical state must be a JSON object")
     return freeze_object(cast(dict[str, JsonValue], decoded))
@@ -43,8 +51,10 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def event_to_bytes(event: DomainEvent) -> bytes:
-    """Serialize a complete domain event envelope canonically."""
+def event_to_bytes(event: DomainEvent | EventEnvelope) -> bytes:
+    """Serialize an event, preserving the historical DomainEvent bytes."""
+    if isinstance(event, EventEnvelope):
+        return event.canonical_bytes()
     envelope: dict[str, JsonValue] = {
         "actor": {"kind": event.actor.kind.value, "principal_id": event.actor.principal_id},
         "causation_id": str(event.causation_id) if event.causation_id else None,
@@ -75,8 +85,24 @@ def _required_int(envelope: Mapping[str, JsonValue], key: str) -> int:
     return value
 
 
-def event_from_bytes(data: bytes) -> DomainEvent:
-    """Deserialize a canonical event envelope into the public domain type."""
+def envelope_to_bytes(event: EventEnvelope) -> bytes:
+    """Serialize the curated versioned envelope canonically."""
+    return event.canonical_bytes()
+
+
+def envelope_from_bytes(data: bytes) -> EventEnvelope:
+    """Deserialize a canonical versioned envelope."""
+    return EventEnvelope.from_bytes(data)
+
+
+def event_from_bytes(data: bytes) -> DomainEvent | EventEnvelope:
+    """Deserialize either the legacy or curated event representation."""
+    try:
+        decoded = json.loads(data)
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("event bytes are not valid JSON") from error
+    if isinstance(decoded, Mapping) and "stream_id" in decoded:
+        return EventEnvelope.from_bytes(data)
     envelope = canonical_json_object(data)
     if canonical_json_bytes(envelope) != data:
         raise ValueError("event bytes are not canonical")

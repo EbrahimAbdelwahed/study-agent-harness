@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from hashlib import sha256
 
+from study_agent.capabilities.contracts import TutorCapabilityId
 from study_agent.domain import (
     ChunkId,
     Citation,
@@ -169,6 +170,7 @@ def test_task_factory_and_flow_keep_analysis_read_only_and_provider_neutral() ->
     task = ExamAnalysisTaskFactory(binding).build(request, "opaque-key-1")
 
     assert task.payload == request.to_json()
+    assert task.capability_id is TutorCapabilityId.ANALYZE_EXAM_SAMPLE
     assert task.required_authority == ("course:read",)
     assert task.index_references == ()
     assert task.evidence_references == ("exam-revision",)

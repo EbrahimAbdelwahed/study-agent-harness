@@ -4,7 +4,14 @@ Notable public changes are recorded here. Study Agent Harness is alpha
 software; an entry describes released or explicitly prepared behaviour, not a
 promise of publication.
 
-## [0.2.0] — Unreleased source release candidate
+## [0.3.0] — Cardine adoption release
+
+- Prepared the explicit provider-neutral runtime and curated artifact,
+  assessment, recall, source, capability, storage, and authority facades.
+- Added dependency-free wheel/sdist verification and positive/negative
+  downstream namespace collision gates for Cardine adoption.
+
+## [0.2.0] — Source release candidate
 
 - Added the contemporary Knowledge Base evidence pipeline while preserving the
   event stream as canonical state.

@@ -293,7 +293,11 @@ def test_export_rejects_context_event_with_orphan_origin(tmp_path: Path) -> None
             _context(course_id),
         )
         repository.session_service.start(_context(course_id, session_id=session_id))
-        stream = tuple(repository.events.read(course_id))
+        stream = tuple(
+            item
+            for item in repository.events._read_records(course_id)
+            if isinstance(item, DomainEvent)
+        )
         sequence = stream[-1].course_sequence
         event_id = study_context_event_id_for(
             course_id, session_id, "orphan-origin", "record"
@@ -318,5 +322,5 @@ def test_export_rejects_context_event_with_orphan_origin(tmp_path: Path) -> None
             session_id,
         )
 
-        with pytest.raises(ExportStateError, match="contextual events"):
+        with pytest.raises(ExportStateError, match="event stream cannot be replayed"):
             ExportService(_StaticEvents((*stream, malformed))).assemble(course_id)

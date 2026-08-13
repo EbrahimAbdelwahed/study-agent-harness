@@ -535,6 +535,9 @@ def test_append_race_is_retryable_and_does_not_forge_success(tmp_path: Path) -> 
         def read(self, course_id: CourseId, after_sequence: int = 0):  # type: ignore[no-untyped-def]
             return events.read(course_id, after_sequence)
 
+        def _read_records(self, course_id: CourseId, after_sequence: int = 0):  # type: ignore[no-untyped-def]
+            return events._read_records(course_id, after_sequence)
+
         def append(self, course_id: CourseId, expected_sequence: int, batch):  # type: ignore[no-untyped-def]
             raise EventSequenceConflictError(course_id, expected_sequence, expected_sequence + 1)
 
