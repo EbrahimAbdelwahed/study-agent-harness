@@ -85,6 +85,19 @@ duplicating their registries.
   redacted payloads remain diagnostic-local operational data, retained for 14
   days by default, with no default remote telemetry.
 
+## Release and Cardine adoption status
+
+- Harness `0.3.0` is the locally verified Cardine-adoption artifact. The
+  package foundation through PF-10 is integrated on
+  `codex/integrate-foundation-main`.
+- Cardine has **not** adopted the installed package boundary yet. Its active
+  recovery checkout still contains a private copy under `src/study_agent` and
+  does not declare `study-agent-harness` as a dependency.
+- PF-11 remains blocked by the external Cardine CA-08 installed-distribution
+  parity gate. The future-runtime HR lane remains blocked by PF-11 and the
+  external CA-10 copied-core-removal gate. Neither external gate may be inferred
+  complete from the Harness release alone.
+
 ## Source owners
 
 Use the owning module or decision rather than copying its roster here:

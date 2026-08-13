@@ -20,7 +20,7 @@ flowchart LR
   Models[Model/provider adapters\ntransport only]
   Trace[Decision Trace + ops telemetry]
   Decisions[Human/policy decisions\nproposal approval]
-  Cardine[Future Cardine consumer\nversioned package]
+  Cardine[Cardine downstream consumer\nadoption pending]
 
   Host --> Runtime --> Kernel
   Kernel --> Gateway
@@ -53,6 +53,10 @@ flowchart LR
 - The reference CLI and browser are demonstration/reference hosts, not the
   production composition boundary. See [`src/study_agent/cli/`](src/study_agent/cli/)
   and [`src/study_agent/demo/`](src/study_agent/demo/).
+- Version `0.3.0` is the locally verified adoption artifact. Cardine still runs
+  its copied `src/study_agent` core, so installed-distribution parity (CA-08)
+  and copied-core removal (CA-10) remain external prerequisites rather than
+  completed Harness work.
 
 ## Approved Target
 
@@ -97,5 +101,8 @@ flowchart LR
   complete production behavior today.
 - Cross-user approvals and sharing remain out of scope; one learner approval
   boundary is the current contract.
+- Cardine package adoption remains a downstream gap: PF-11 cannot promote the
+  stable facade until CA-08 evidence exists, and the future-runtime lane cannot
+  begin until Cardine completes CA-10.
 
 See [`ROADMAP.md`](ROADMAP.md) for the public sequence and non-goals.
