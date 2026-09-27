@@ -10,7 +10,7 @@ from study_agent.courses import course_profile_manifest
 from study_agent.domain import ChunkId, Citation, ExecutionContext, RevisionId, SourceId, SourceKind
 from study_agent.domain._validation import JsonObject, freeze_object
 from study_agent.ports import CourseViewPort, RetrievalPort, RetrievalQuery, SourceContentPort
-from study_agent.ports.retrieval import MAX_RETRIEVAL_QUERY_CHARS, RetrievalCatalogPort
+from study_agent.ports.retrieval import RetrievalCatalogPort
 from study_agent.sessions import SessionService, summary_payload
 from study_agent.sessions.events import grounded_answer_manifest
 from study_agent.state import canonical_json_bytes
@@ -65,9 +65,6 @@ def _array(items: JsonObject, *, maximum: int | None = None) -> JsonObject:
 
 
 _TEXT: JsonObject = {"type": "string", "minLength": 1}
-_QUERY_TEXT: JsonObject = {
-    "type": "string", "minLength": 1, "maxLength": MAX_RETRIEVAL_QUERY_CHARS,
-}
 _STRING: JsonObject = {"type": "string"}
 _NULLABLE_STRING: JsonObject = {"type": ("string", "null")}
 _BOOL: JsonObject = {"type": "boolean"}
@@ -246,7 +243,7 @@ class SourceSearchTool:
         "source.search",
         _object(
             {
-                "query": _QUERY_TEXT,
+                "query": _TEXT,
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                 "revision_ids": _array(_TEXT, maximum=100),
                 "minimum_trust_level": _TRUST,
@@ -407,7 +404,7 @@ class GroundingAskTool:
     service: GroundingAskService | GroundingAskServiceProvider
     manifest = _manifest(
         "grounding.ask",
-        _object({"question": _QUERY_TEXT}, ("question",)),
+        _object({"question": _TEXT}, ("question",)),
         _object(
             {
                 "answer_record_json": _TEXT,

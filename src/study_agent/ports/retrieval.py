@@ -11,7 +11,6 @@ from study_agent.domain._validation import require_text
 from study_agent.domain.identifiers import ChunkId, CourseId, RevisionId, SourceId
 from study_agent.domain.source import Citation, ResolvedCitation, SourceChunk, SourceKind
 
-MAX_RETRIEVAL_QUERY_CHARS = 512
 MAX_RETRIEVAL_LIMIT = 100
 
 
@@ -63,8 +62,6 @@ class RetrievalQuery:
         object.__setattr__(self, "source_roles", tuple(self.source_roles))
         if not self.text.strip():
             raise ValueError("text must be non-empty")
-        if len(self.text) > MAX_RETRIEVAL_QUERY_CHARS:
-            raise ValueError("text exceeds the retrieval query limit")
         if not 1 <= self.limit <= MAX_RETRIEVAL_LIMIT:
             raise ValueError("limit must be between 1 and 100")
         if not 0 <= self.minimum_trust_level <= 100:

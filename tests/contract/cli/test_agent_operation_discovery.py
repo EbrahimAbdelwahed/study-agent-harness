@@ -73,7 +73,7 @@ _TOOL_FINGERPRINTS = {
     "citation.resolve": "1b7f74005dfaee7879322edd8f60ca7892e9e20d024b1807aafac0af5ecfcb71",
     "course.create": "27bcd30f06fa8ff27ea734319200c4b642d8a267afa671a441d1c6865d2ea169",
     "course.get": "ccfeca393bc56a3de08abc0d91ef68a9104255a43f0d428312c46d841008934b",
-    "grounding.ask": "4df885ec8cfc02dfa024ef721ce773647212ecf250d90e078ce927b79add983c",
+    "grounding.ask": "7452676719dfcfa31f4824f45ed1d1a417dcbbb7522494522955f762850eec0e",
     "session.get_context": "ea60a58728e9d9d96c11fa3cc69bc85e73e7fcbbb7fab9ce2b7821229734d3ba",
     "session.end": "b6a1d96f9f465869a44a107f22367a19e38f7e5e3e43e4256f25c7d9a674ddc2",
     "session.record_learner_turn": (
@@ -85,7 +85,7 @@ _TOOL_FINGERPRINTS = {
     "session.suspend": "72bdbcf84d6c0d582daca704a915996e88699c1330b324eb0b0eaefb771682fe",
     "source.ingest_text": "1e118a962a0f401578e79264b4d432953c75491fac94ce9a889c57b4b403f626",
     "source.list": "387d629a6bd69ffad34dae41a5fe1c88f2619bda4637fcfeb3be96ac21cef24b",
-    "source.search": "b4ce1c7390e780ab8bf94db92726ccdb12ec8d6f3ea1399ac03f4d89269ef0c0",
+    "source.search": "f66b9bf4a901367ab9867efeab53bd749218e8d01f1639282300abb55b2f5c97",
 }
 _PARSER_INVOCATIONS = {
     "ask": ("ask", "course-1", "question"),

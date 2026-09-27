@@ -50,7 +50,6 @@ from study_agent.ports import (
     SourceContentPort,
 )
 from study_agent.ports.retrieval import (
-    MAX_RETRIEVAL_QUERY_CHARS,
     RetrievalCatalogPort,
     RetrievalDocument,
     retrieval_catalog_fingerprint,
@@ -507,11 +506,6 @@ def _question(value: str) -> str:
         raise GroundingAskError(
             GroundingAskErrorCode.INVALID_REQUEST,
             "question must be non-empty trimmed text",
-        )
-    if len(value) > MAX_RETRIEVAL_QUERY_CHARS:
-        raise GroundingAskError(
-            GroundingAskErrorCode.INVALID_REQUEST,
-            f"question must not exceed {MAX_RETRIEVAL_QUERY_CHARS} characters",
         )
     return value
 

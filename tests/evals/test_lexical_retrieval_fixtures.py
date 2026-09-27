@@ -237,3 +237,17 @@ def test_literal_search_keeps_legitimate_technical_terms(tmp_path: Path, term: s
     result = retrieval.search(RetrievalQuery(CourseId("course-1"), term))
     assert result.status is EvidenceStatus.SUFFICIENT
     assert tuple(item.chunk.chunk_id for item in result.evidence) == (document.chunk.chunk_id,)
+
+
+def test_relevance_counts_coverage_before_truncating_common_term_matches(tmp_path: Path) -> None:
+    common = tuple(
+        fixture_document(f"alpha-{index:03}", f"notes-{index:03}", "alpha")
+        for index in range(64)
+    )
+    target = fixture_document("target", "target-notes", "alpha beta")
+    documents = (*common, target)
+    retrieval = SQLiteFtsRetrieval(tmp_path / "common.sqlite3", FixtureContent(documents))
+    retrieval.index(documents)
+    result = retrieval.search(RetrievalQuery(CourseId("course-1"), "alpha beta gamma"))
+    assert result.status is EvidenceStatus.SUFFICIENT
+    assert tuple(item.chunk.chunk_id for item in result.evidence) == (target.chunk.chunk_id,)

@@ -32,7 +32,7 @@ TOOL_SNAPSHOT = (
     (
         "grounding.ask",
         "1.0.0",
-        "4df885ec8cfc02dfa024ef721ce773647212ecf250d90e078ce927b79add983c",
+        "7452676719dfcfa31f4824f45ed1d1a417dcbbb7522494522955f762850eec0e",
     ),
     (
         "session.get_context",
@@ -52,7 +52,7 @@ TOOL_SNAPSHOT = (
     (
         "source.search",
         "1.0.0",
-        "b4ce1c7390e780ab8bf94db92726ccdb12ec8d6f3ea1399ac03f4d89269ef0c0",
+        "f66b9bf4a901367ab9867efeab53bd749218e8d01f1639282300abb55b2f5c97",
     ),
 )
 

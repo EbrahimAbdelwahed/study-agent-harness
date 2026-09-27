@@ -1,22 +1,26 @@
 # Automatic review fixes for PR #58
 
 The adaptive tutor branch includes main at 11c21b1 through merge 3599bbc.
-This change addresses the three Codex GitHub review findings on that merge.
+The fixes address five Codex GitHub review findings across two submitted heads.
 
-- Literal FTS lookup now uses all safely quoted tokens before any stop-word filtering.
+- Literal FTS lookup uses all safely quoted tokens before stop-word filtering.
   Technical terms such as source, developer, table, column and value remain searchable.
-  Instruction-shaped text remains inert searchable source text; retrieval cannot grant authority.
-- Bounded relevance fallback runs only for at most six informative terms. Longer
-  queries can still match literally but cannot promote evidence from only two terms.
-- Both public search/question schemas declare the existing 512-character retrieval
-  limit. Grounding validates the same limit before creating a run or emitting events.
-  The two intentional manifest fingerprint changes are reflected in all discovery snapshots.
+  Instruction-shaped text stays inert searchable data and cannot grant authority.
+- Relevance fallback is limited to at most six informative terms. Longer questions
+  may match literally but cannot promote evidence from only two terms.
+- Term coverage is aggregated in SQL before the final result limit. A relevant
+  intersection after 64 single-term chunks is retained; all scope, revision,
+  trust and role filters still apply to the final candidate set.
+- The exact seven public v1 manifests and fingerprints remain byte-stable.
+  Remove the new downstream 512-character cap rather than narrow the existing
+  unbounded public schemas. Longer grounding requests complete normally and
+  repeated requests keep their canonical idempotency guarantees.
 
-Nine new regression cases failed before the fixes. Full offline pytest now reports
-2176 passed and 4 skipped. Ruff passes; mypy passes on all 474 source files.
-The model smoke tests remain opt-in. Distribution tests are exercised by CI after
-building its wheel and source archive. No local semantic reviewer was launched.
+Both rounds included red-before-fix regressions. The final offline suite reports
+2177 passed and 4 skipped. Ruff passes; mypy passes on all 474 source files.
+Model smoke tests remain opt-in; CI builds and verifies the distribution artifacts.
+No local semantic reviewer was launched.
 
-Existing local README, .gitignore, Build Week artifacts and duplicate files were
-preserved outside this scoped commit. CI and automatic review must assess the new
-submitted head before merge; earlier green results do not establish that outcome.
+Existing local README, .gitignore, Build Week artifacts and duplicate files are
+preserved outside these scoped commits. Current-head CI and automatic review are
+required before merge; earlier green results do not establish that outcome.

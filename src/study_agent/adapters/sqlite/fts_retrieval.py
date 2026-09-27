@@ -30,8 +30,6 @@ INDEX_VERSION = "sqlite-fts5-unicode61-v1"
 RETRIEVAL_STRATEGY_ID = "sqlite_fts5_bm25"
 RETRIEVAL_STRATEGY_VERSION = "1.1.0"
 _MAX_RELEVANCE_QUERY_TERMS = 6
-_MAX_RELEVANCE_SOURCE_TERMS = 32
-_RELEVANCE_CANDIDATE_LIMIT = 64
 _QUERY_STOP_WORDS = frozenset(
     {
         "a", "about", "and", "briefly", "by", "can", "could", "di", "e", "explain",
@@ -499,7 +497,9 @@ class SQLiteFtsRetrieval:
         return canonical
 
 
-def _search_sql(query: RetrievalQuery, compiled: str) -> tuple[str, tuple[object, ...]]:
+def _search_sql(
+    query: RetrievalQuery, compiled: str, *, coverage_tokens: tuple[str, ...] = ()
+) -> tuple[str, tuple[object, ...]]:
     conditions = [
         "retrieval_fts MATCH ?",
         "m.course_id = ?",
@@ -516,24 +516,47 @@ def _search_sql(query: RetrievalQuery, compiled: str) -> tuple[str, tuple[object
         if values:
             conditions.append(f"{column} IN ({','.join('?' for _ in values)})")
             parameters.extend(values)
+    coverage_cte = ""
+    coverage_join = ""
+    coverage_order = ""
+    coverage_parameters: list[object] = []
+    if coverage_tokens:
+        # Count every term match before limiting results. Per-term truncation
+        # can erase the only intersection when common terms have many hits.
+        matches = " UNION ALL ".join(
+            "SELECT chunk_id FROM retrieval_fts WHERE retrieval_fts MATCH ?"
+            for _ in coverage_tokens
+        )
+        coverage_cte = f"""
+            WITH term_matches AS ({matches}),
+            coverage AS (
+                SELECT chunk_id, COUNT(*) AS term_coverage
+                FROM term_matches GROUP BY chunk_id HAVING COUNT(*) >= 2
+            )
+        """
+        coverage_parameters = [_quote_query_tokens((token,)) for token in coverage_tokens]
+        coverage_join = "JOIN coverage AS c ON c.chunk_id = m.chunk_id"
+        coverage_order = "c.term_coverage DESC, "
     sql = f"""
+        {coverage_cte}
         SELECT f.text, bm25(retrieval_fts), m.chunk_id, m.source_id, m.revision_id,
                m.start_offset, m.end_offset, m.section_path, m.ordinal,
                m.checksum_sha256, m.chunker_version, m.chunk_metadata
         FROM retrieval_fts AS f
         JOIN retrieval_documents AS m ON m.chunk_id = f.chunk_id
+        {coverage_join}
         WHERE {' AND '.join(conditions)}
-        ORDER BY bm25(retrieval_fts) ASC, m.chunk_id ASC
+        ORDER BY {coverage_order}bm25(retrieval_fts) ASC, m.chunk_id ASC
         LIMIT ?
     """
     parameters.append(query.limit)
-    return sql, tuple(parameters)
+    return sql, tuple((*coverage_parameters, *parameters))
 
 
-def _quote_query_tokens(tokens: tuple[str, ...]) -> str | None:
+def _quote_query_tokens(tokens: tuple[str, ...], *, joiner: str = "AND") -> str | None:
     if not tokens:
         return None
-    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+    return f" {joiner} ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
 
 
 def _bounded_relevance_rows(
@@ -541,53 +564,16 @@ def _bounded_relevance_rows(
     query: RetrievalQuery,
     tokens: tuple[str, ...],
 ) -> tuple[tuple[object, ...], ...]:
-    """Recover concise agent queries without broadening arbitrary learner text."""
+    """Recover concise queries with coverage computed before the result limit."""
 
-    unique_tokens = tuple(dict.fromkeys(tokens))[:_MAX_RELEVANCE_SOURCE_TERMS]
-    if len(unique_tokens) < 2:
+    unique_tokens = tuple(dict.fromkeys(tokens))
+    if not 2 <= len(unique_tokens) <= _MAX_RELEVANCE_QUERY_TERMS:
         return ()
-    candidate_query = RetrievalQuery(
-        query.course_id,
-        query.text,
-        limit=max(query.limit, _RELEVANCE_CANDIDATE_LIMIT),
-        revision_ids=query.revision_ids,
-        minimum_trust_level=query.minimum_trust_level,
-        source_kinds=query.source_kinds,
-        source_roles=query.source_roles,
-        include_superseded=query.include_superseded,
-    )
-    token_rows: list[tuple[int, str, tuple[tuple[object, ...], ...]]] = []
-    for position, token in enumerate(unique_tokens):
-        compiled = _quote_query_tokens((token,))
-        if compiled is None:  # pragma: no cover - non-empty token contract
-            continue
-        sql, parameters = _search_sql(candidate_query, compiled)
-        rows = tuple(connection.execute(sql, parameters).fetchall())
-        if rows:
-            token_rows.append((position, token, rows))
-    selected = tuple(
-        sorted(token_rows, key=lambda item: (len(item[2]), item[0], item[1]))[
-            :_MAX_RELEVANCE_QUERY_TERMS
-        ]
-    )
-    if len(selected) < 2:
+    compiled = _quote_query_tokens(unique_tokens, joiner="OR")
+    if compiled is None:  # pragma: no cover - at least two non-empty tokens
         return ()
-    matches: dict[str, list[tuple[object, ...]]] = {}
-    for _position, _token, rows in selected:
-        for row in rows:
-            matches.setdefault(str(row[2]), []).append(row)
-    minimum_coverage = 2
-    ranked = tuple(
-        sorted(
-            (
-                (len(rows), sum(float(str(row[1])) for row in rows), rows[0])
-                for rows in matches.values()
-                if len(rows) >= minimum_coverage
-            ),
-            key=lambda item: (-item[0], item[1], str(item[2][2])),
-        )
-    )
-    return tuple(item[2] for item in ranked[: query.limit])
+    sql, parameters = _search_sql(query, compiled, coverage_tokens=unique_tokens)
+    return tuple(connection.execute(sql, parameters).fetchall())
 
 
 def _informative_query_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
