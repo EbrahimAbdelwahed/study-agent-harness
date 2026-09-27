@@ -1,0 +1,8 @@
+{
+  "workflow": ".github/workflows/ci.yml",
+  "name": "CI",
+  "required_jobs": [
+    "python (3.12)",
+    "python (3.13)"
+  ]
+}
