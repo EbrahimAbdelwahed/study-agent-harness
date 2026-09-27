@@ -1,7 +1,7 @@
 # Automatic review fixes for PR #58
 
 The adaptive tutor branch includes main at 11c21b1 through merge 3599bbc.
-The fixes address six Codex GitHub review findings across three submitted heads.
+The fixes address seven Codex GitHub review findings across four submitted heads.
 
 - Literal FTS lookup uses all safely quoted tokens before stop-word filtering.
   Technical terms such as source, developer, table, column and value remain searchable.
@@ -13,12 +13,13 @@ The fixes address six Codex GitHub review findings across three submitted heads.
   intersection after 64 single-term chunks is retained; all scope, revision,
   trust and role filters still apply to the final candidate set.
 - The exact seven public v1 manifests and fingerprints remain byte-stable.
-  Remove the new downstream 512-character cap rather than narrow the existing
+  Remove the new downstream 512-character and 100-result caps rather than narrow the existing
   unbounded public schemas. Longer grounding requests complete normally and
-  repeated requests keep their canonical idempotency guarantees.
+  repeated requests keep their canonical idempotency guarantees. Grounding
+  configurations above 100 keep their previously supported positive limits.
 
-All three rounds included red-before-fix regressions. The final offline suite reports
-2178 passed and 4 skipped. Ruff passes; mypy passes on all 474 source files.
+All four rounds included red-before-fix regressions. The final offline suite reports
+2179 passed and 4 skipped. Ruff passes; mypy passes on all 474 source files.
 Model smoke tests remain opt-in; CI builds and verifies the distribution artifacts.
 No local semantic reviewer was launched.
 

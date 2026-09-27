@@ -11,8 +11,6 @@ from study_agent.domain._validation import require_text
 from study_agent.domain.identifiers import ChunkId, CourseId, RevisionId, SourceId
 from study_agent.domain.source import Citation, ResolvedCitation, SourceChunk, SourceKind
 
-MAX_RETRIEVAL_LIMIT = 100
-
 
 class EvidenceStatus(StrEnum):
     SUFFICIENT = "sufficient"
@@ -62,8 +60,8 @@ class RetrievalQuery:
         object.__setattr__(self, "source_roles", tuple(self.source_roles))
         if not self.text.strip():
             raise ValueError("text must be non-empty")
-        if not 1 <= self.limit <= MAX_RETRIEVAL_LIMIT:
-            raise ValueError("limit must be between 1 and 100")
+        if self.limit < 1:
+            raise ValueError("limit must be positive")
         if not 0 <= self.minimum_trust_level <= 100:
             raise ValueError("minimum_trust_level must be between 0 and 100")
         for name, values in (

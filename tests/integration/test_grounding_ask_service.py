@@ -619,3 +619,20 @@ def test_long_v1_grounding_question_completes_without_a_downstream_cap(tmp_path:
         factory.model.assert_exhausted()
     finally:
         blobs.close()
+
+
+def test_existing_grounding_limit_above_100_completes_normally(tmp_path: Path) -> None:
+    service, events, retrieval, factory, _, blobs = composition(tmp_path)
+    service._configuration = replace(service._configuration, retrieval_limit=101)
+    before = len(events.read(COURSE))
+    try:
+        first = asyncio.run(service.ask("absent", context()))
+        second = asyncio.run(service.ask("absent", context()))
+        assert first == second
+        assert first.answer.answer.status.value == "insufficient_evidence"
+        assert len(events.read(COURSE)) == before + 3
+        assert factory.created == 1
+        assert retrieval.search_calls == 1
+        factory.model.assert_exhausted()
+    finally:
+        blobs.close()

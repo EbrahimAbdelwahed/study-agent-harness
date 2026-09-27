@@ -201,12 +201,13 @@ def test_empty_and_matched_results_use_only_insufficient_or_sufficient(tmp_path:
     assert missing.read_set_fingerprint != matched.read_set_fingerprint
 
 
-def test_retrieval_query_preserves_v1_text_and_bounds_result_limit() -> None:
+def test_retrieval_query_preserves_v1_text_and_positive_result_limits() -> None:
     assert RetrievalQuery(CourseId("course-1"), "x" * 513).text == "x" * 513
+    assert RetrievalQuery(CourseId("course-1"), "valve", limit=101).limit == 101
     with pytest.raises(ValueError, match="non-empty"):
         RetrievalQuery(CourseId("course-1"), " ")
-    with pytest.raises(ValueError, match="between 1 and 100"):
-        RetrievalQuery(CourseId("course-1"), "valve", limit=101)
+    with pytest.raises(ValueError, match="positive"):
+        RetrievalQuery(CourseId("course-1"), "valve", limit=0)
 
 
 def test_index_and_search_share_the_exact_content_version(tmp_path: Path) -> None:
