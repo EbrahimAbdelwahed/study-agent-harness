@@ -49,12 +49,18 @@ def compile_unicode61_query(text: str) -> str | None:
 
 def compile_unicode61_query_on(connection: sqlite3.Connection, text: str) -> str | None:
     return _quote_tokens(
-        _fts_tokens(
-            connection,
-            text,
-            table_name="retrieval_query_tokens",
-            tokenize_ddl="'unicode61'",
-        )
+        unicode61_tokens_on(connection, text)
+    )
+
+
+def unicode61_tokens_on(connection: sqlite3.Connection, text: str) -> tuple[str, ...]:
+    """Return inert unicode61 terms for bounded relevance matching."""
+
+    return _fts_tokens(
+        connection,
+        text,
+        table_name="retrieval_query_tokens",
+        tokenize_ddl="'unicode61'",
     )
 
 
@@ -93,4 +99,5 @@ __all__ = [
     "compile_query",
     "compile_unicode61_query",
     "compile_unicode61_query_on",
+    "unicode61_tokens_on",
 ]

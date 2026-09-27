@@ -21,7 +21,8 @@ from study_agent.tools import (
     ToolManifest,
     ToolResult,
 )
-from study_agent.tools.builtin import builtin_tools
+from study_agent.tools.builtin import GroundingAskTool, SourceSearchTool, builtin_tools
+from study_agent.tools.schema import validate_json
 from tests.integration.test_grounding_ask_service import COURSE, SESSION, composition
 
 _MANIFEST_SNAPSHOT = {
@@ -399,3 +400,13 @@ def test_citation_resolution_rejects_a_context_for_another_course(tmp_path: Path
     assert resolved.error is not None
     assert resolved.error.code in {ToolErrorCode.NOT_FOUND, ToolErrorCode.UNAUTHORIZED}
     blobs.close()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "field"),
+    ((SourceSearchTool.manifest, "query"), (GroundingAskTool.manifest, "question")),
+)
+def test_v1_search_question_schema_preserves_long_inputs(
+    manifest: ToolManifest, field: str
+) -> None:
+    validate_json({field: "x" * 513}, manifest.input_schema)
