@@ -566,8 +566,10 @@ def _bounded_relevance_rows(
 ) -> tuple[tuple[object, ...], ...]:
     """Recover concise queries with coverage computed before the result limit."""
 
+    if not 2 <= len(tokens) <= _MAX_RELEVANCE_QUERY_TERMS:
+        return ()
     unique_tokens = tuple(dict.fromkeys(tokens))
-    if not 2 <= len(unique_tokens) <= _MAX_RELEVANCE_QUERY_TERMS:
+    if len(unique_tokens) < 2:
         return ()
     compiled = _quote_query_tokens(unique_tokens, joiner="OR")
     if compiled is None:  # pragma: no cover - at least two non-empty tokens
@@ -579,7 +581,7 @@ def _bounded_relevance_rows(
 def _informative_query_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         token
-        for token in dict.fromkeys(tokens)
+        for token in tokens
         if token not in _QUERY_STOP_WORDS
     )
 

@@ -216,12 +216,21 @@ def test_instruction_shaped_text_is_searched_as_inert_literals(tmp_path: Path) -
     assert tuple(item.chunk.chunk_id for item in result.evidence) == (document.chunk.chunk_id,)
 
 
-def test_verbose_informative_query_does_not_match_two_terms(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "question",
+    (
+        "alpha beta gamma delta epsilon zeta eta",
+        "alpha beta gamma delta epsilon zeta alpha",
+    ),
+)
+def test_verbose_informative_query_does_not_match_two_terms(
+    tmp_path: Path, question: str
+) -> None:
     document = fixture_document("partial", "partial-notes", "alpha beta")
     retrieval = SQLiteFtsRetrieval(tmp_path / "long-query.sqlite3", FixtureContent((document,)))
     retrieval.index((document,))
     result = retrieval.search(
-        RetrievalQuery(CourseId("course-1"), "alpha beta gamma delta epsilon zeta eta")
+        RetrievalQuery(CourseId("course-1"), question)
     )
     assert result.status is EvidenceStatus.INSUFFICIENT
     assert result.evidence == ()
