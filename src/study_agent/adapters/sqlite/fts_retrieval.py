@@ -35,7 +35,7 @@ _RELEVANCE_CANDIDATE_LIMIT = 64
 _QUERY_STOP_WORDS = frozenset(
     {
         "a", "about", "and", "briefly", "by", "can", "could", "di", "e", "explain",
-        "fonte", "fonti", "from", "il", "in", "instructions", "la", "le", "materiale",
+        "fonte", "fonti", "from", "how", "il", "in", "instructions", "la", "le", "materiale",
         "materiali", "of", "or", "please", "prompt", "source", "spiega", "spiegami",
         "the", "to", "uploaded", "what", "with", "ignore", "previous", "developer",
         "assistant", "drop", "table", "column", "value",
@@ -308,19 +308,16 @@ class SQLiteFtsRetrieval:
             )
         with closing(self._connect()) as connection:
             tokens = unicode61_tokens_on(connection, query.text)
-            informative_tokens = _informative_query_tokens(tokens)
-            if not informative_tokens:
-                return _evidence_set(
-                    EvidenceStatus.INSUFFICIENT, (), fingerprint, index_version
-                )
+            # Literal lookup retains every term, including technical words that
+            # are unhelpful only when broadening a natural-language question.
             rows: tuple[tuple[object, ...], ...] = ()
-            if len(informative_tokens) <= _MAX_RELEVANCE_QUERY_TERMS:
-                compiled = _quote_query_tokens(informative_tokens)
-                if compiled is not None:
-                    sql, parameters = _search_sql(query, compiled)
-                    rows = tuple(connection.execute(sql, parameters).fetchall())
+            compiled = _quote_query_tokens(tokens)
+            if compiled is not None:
+                sql, parameters = _search_sql(query, compiled)
+                rows = tuple(connection.execute(sql, parameters).fetchall())
             evidence = tuple(self._resolve_row(row) for row in rows)
-            if not evidence:
+            informative_tokens = _informative_query_tokens(tokens)
+            if not evidence and 0 < len(informative_tokens) <= _MAX_RELEVANCE_QUERY_TERMS:
                 relevance_rows = _bounded_relevance_rows(
                     connection, query, informative_tokens
                 )

@@ -13,6 +13,7 @@ from study_agent.adapters.filesystem import FilesystemBlobStore
 from study_agent.application import GroundingAskService
 from study_agent.domain import CorrelationId, CourseId, ExecutionContext, PrincipalKind
 from study_agent.domain._validation import JsonObject
+from study_agent.ports.retrieval import MAX_RETRIEVAL_QUERY_CHARS
 from study_agent.tools import (
     IdempotencyMode,
     StudyToolRegistry,
@@ -21,7 +22,8 @@ from study_agent.tools import (
     ToolManifest,
     ToolResult,
 )
-from study_agent.tools.builtin import builtin_tools
+from study_agent.tools.builtin import GroundingAskTool, SourceSearchTool, builtin_tools
+from study_agent.tools.schema import SchemaValidationError, validate_json
 from tests.integration.test_grounding_ask_service import COURSE, SESSION, composition
 
 _MANIFEST_SNAPSHOT = {
@@ -43,7 +45,7 @@ _MANIFEST_SNAPSHOT = {
     ),
     "grounding.ask": (
         "1.0.0",
-        "7452676719dfcfa31f4824f45ed1d1a417dcbbb7522494522955f762850eec0e",
+        "4df885ec8cfc02dfa024ef721ce773647212ecf250d90e078ce927b79add983c",
         ToolEffect.ORCHESTRATION,
         ("study:ask",),
         IdempotencyMode.REQUIRED,
@@ -80,7 +82,7 @@ _MANIFEST_SNAPSHOT = {
     ),
     "source.search": (
         "1.0.0",
-        "f66b9bf4a901367ab9867efeab53bd749218e8d01f1639282300abb55b2f5c97",
+        "b4ce1c7390e780ab8bf94db92726ccdb12ec8d6f3ea1399ac03f4d89269ef0c0",
         ToolEffect.READ_ONLY,
         ("study:read",),
         IdempotencyMode.NOT_APPLICABLE,
@@ -399,3 +401,15 @@ def test_citation_resolution_rejects_a_context_for_another_course(tmp_path: Path
     assert resolved.error is not None
     assert resolved.error.code in {ToolErrorCode.NOT_FOUND, ToolErrorCode.UNAUTHORIZED}
     blobs.close()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "field"),
+    ((SourceSearchTool.manifest, "query"), (GroundingAskTool.manifest, "question")),
+)
+def test_search_question_cap_is_enforced_before_tool_execution(
+    manifest: ToolManifest, field: str
+) -> None:
+    validate_json({field: "x" * MAX_RETRIEVAL_QUERY_CHARS}, manifest.input_schema)
+    with pytest.raises(SchemaValidationError):
+        validate_json({field: "x" * (MAX_RETRIEVAL_QUERY_CHARS + 1)}, manifest.input_schema)

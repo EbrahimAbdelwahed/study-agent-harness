@@ -602,3 +602,20 @@ def test_cancelled_playbook_result_is_existing_safe_failure_not_runtime_mismatch
     assert retrieval.search_calls == 0
     assert factory.created == 0
     blobs.close()
+
+
+def test_oversized_grounding_question_has_no_run_or_canonical_effects(tmp_path: Path) -> None:
+    from study_agent.ports.retrieval import MAX_RETRIEVAL_QUERY_CHARS
+
+    service, events, retrieval, factory, _, blobs = composition(tmp_path)
+    before = tuple(events.read(COURSE))
+    try:
+        with pytest.raises(GroundingAskError) as error:
+            asyncio.run(service.ask("x" * (MAX_RETRIEVAL_QUERY_CHARS + 1), context()))
+        assert error.value.code is GroundingAskErrorCode.INVALID_REQUEST
+        assert tuple(events.read(COURSE)) == before
+        assert factory.created == 0
+        assert factory.store.values == {}
+        assert retrieval.search_calls == 0
+    finally:
+        blobs.close()
