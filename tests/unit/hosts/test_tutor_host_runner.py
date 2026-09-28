@@ -15,18 +15,22 @@ from study_agent.domain import (
     SessionId,
 )
 from study_agent.hosts import (
+    AskLearnerDecision,
     AssistantMessageDecision,
     HostActionIdentity,
     HostRetryReceipt,
     ScriptedDecision,
     ScriptedDecisionError,
     ScriptedTutorDecisionPort,
+    StopDecision,
     TutorContinuationRecord,
+    TutorDecision,
     TutorHostContext,
     TutorHostLimits,
     TutorHostRunner,
     TutorHostRunResult,
     TutorHostRunStatus,
+    TutorStopReason,
     decision_fingerprint,
 )
 from study_agent.hosts.contracts import AdvertisedCapability, PendingContinuationDescriptor
@@ -190,6 +194,42 @@ def test_runner_returns_bounded_assistant_message_without_gateway_effect() -> No
     )
     assert result.status is TutorHostRunStatus.ASSISTANT_MESSAGE
     assert result.learner_text == "hello"
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_status", "expected_text"),
+    (
+        (
+            AskLearnerDecision("What should we review?"),
+            TutorHostRunStatus.NEEDS_LEARNER_INPUT,
+            "What should we review?",
+        ),
+        (
+            StopDecision(TutorStopReason.COMPLETED),
+            TutorHostRunStatus.COMPLETED,
+            None,
+        ),
+        (
+            StopDecision(TutorStopReason.NO_SAFE_ACTION),
+            TutorHostRunStatus.STOPPED,
+            None,
+        ),
+    ),
+)
+def test_runner_preserves_ask_and_unambiguous_stop_flows(
+    decision: TutorDecision,
+    expected_status: TutorHostRunStatus,
+    expected_text: str | None,
+) -> None:
+    context = _context()
+    adapter = ScriptedTutorDecisionPort(((context.fingerprint, decision),))
+
+    result = asyncio.run(
+        _runner(adapter).run(CourseId("course"), SessionId("session"), "turn-1", _Token())
+    )
+
+    assert result.status is expected_status
+    assert result.learner_text == expected_text
 
 
 def test_continuation_record_codec_is_canonical_and_reconstructs_authority() -> None:
